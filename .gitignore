@@ -1,0 +1,23 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test & coverage
+*.test
+*.out
+coverage.*
+
+# Offensive content — keep local, never publish
+/skills/
+/targets/
+*.vmstate
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
