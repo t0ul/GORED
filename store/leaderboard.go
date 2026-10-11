@@ -3,6 +3,7 @@ package store
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 // LeaderboardRow is the aggregate for one (model, skill_temp, difficulty) cell: the
@@ -159,6 +160,72 @@ func (s *Store) ColdWarmLift() ([]Lift, error) {
 		}
 		return out[i].Model < out[j].Model
 	})
+	return out, nil
+}
+
+// IsComboName reports whether a contestant name denotes a combo. Combo clients
+// name themselves with a parenthesized composition (e.g. "planexec(a->b)",
+// "selfcons(a,k=3)"); solo models never contain a parenthesis.
+func IsComboName(name string) bool { return strings.ContainsRune(name, '(') }
+
+// ComboVsSolo is one combo's standing against the best solo in the same
+// (skill_temp, difficulty) cell — the basis for the plan's rule "keep only combos
+// beating the best solo."
+type ComboVsSolo struct {
+	SkillTemp    string
+	Difficulty   string
+	Combo        string
+	ComboRate    float64
+	BestSolo     string
+	BestSoloRate float64
+	Beats        bool
+}
+
+// ComboComparison compares each combo to the best solo in its (skill_temp,
+// difficulty) cell. Cells without both a combo and a solo are skipped.
+func (s *Store) ComboComparison() ([]ComboVsSolo, error) {
+	rows, err := s.Leaderboard()
+	if err != nil {
+		return nil, err
+	}
+	type key struct{ temp, diff string }
+	type cell struct {
+		combos       []LeaderboardRow
+		bestSolo     string
+		bestSoloRate float64
+		haveSolo     bool
+	}
+	cells := map[key]*cell{}
+	var order []key
+	for _, r := range rows {
+		k := key{r.SkillTemp, r.Difficulty}
+		c, ok := cells[k]
+		if !ok {
+			c = &cell{}
+			cells[k] = c
+			order = append(order, k)
+		}
+		if IsComboName(r.Model) {
+			c.combos = append(c.combos, r)
+		} else if !c.haveSolo || r.CaptureRate > c.bestSoloRate {
+			c.haveSolo, c.bestSolo, c.bestSoloRate = true, r.Model, r.CaptureRate
+		}
+	}
+	var out []ComboVsSolo
+	for _, k := range order {
+		c := cells[k]
+		if !c.haveSolo {
+			continue
+		}
+		for _, cb := range c.combos {
+			out = append(out, ComboVsSolo{
+				SkillTemp: k.temp, Difficulty: k.diff,
+				Combo: cb.Model, ComboRate: cb.CaptureRate,
+				BestSolo: c.bestSolo, BestSoloRate: c.bestSoloRate,
+				Beats: cb.CaptureRate > c.bestSoloRate,
+			})
+		}
+	}
 	return out, nil
 }
 

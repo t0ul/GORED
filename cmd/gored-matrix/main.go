@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,7 +66,7 @@ func main() {
 		OnCell: func(c gored.Cell, res gored.RunResult) {
 			done++
 			log.Printf("[%d/%d] %-26s %-4s %-14s trial %d -> %-8s (%d calls, %dms)",
-				done, total, modelName(c.Model), c.Temp, c.Flag, c.Trial, res.Outcome, res.ToolCalls, res.WallMS)
+				done, total, c.Model, c.Temp, c.Flag, c.Trial, res.Outcome, res.ToolCalls, res.WallMS)
 		},
 	}
 	ran, err := mx.Run(ctx)
@@ -74,27 +75,66 @@ func main() {
 
 	printLeaderboard(st)
 	printLift(st)
+	printComboVerdict(st)
 	ok, n := audit.Verify()
 	fmt.Printf("\ntrace: %s (hash-chain verified=%v over %d records)\nstore: %s\n", *traceP, ok, n, *dbPath)
 }
 
+// gooseProvider boots a contestant from a spec. A spec is either a plain GGUF
+// filename (a solo model) or a combo:
+//
+//	planexec:<plannerFile>:<executorFile>   two models, planner plans / executor formats
+//	selfcons:<file>:<K>                     one model, majority vote over K samples
 func gooseProvider(dir string, port int) gored.ModelProvider {
-	return func(ctx context.Context, model string) (gored.ModelClient, func(), error) {
-		cfg := goserve.Config{
-			Dir: dir, Reclaim: true, ReadyTimeout: 120 * time.Second, Stdout: io.Discard,
-			Models: []goserve.Model{{Name: "attacker", File: model, Port: port, Ctx: 2048}},
+	return func(ctx context.Context, spec string) (gored.ModelClient, func(), error) {
+		parts := strings.Split(spec, ":")
+		bootCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
+		boot := func(models []goserve.Model) (*goserve.Harness, error) {
+			cfg := goserve.Config{Dir: dir, Reclaim: true, ReadyTimeout: 150 * time.Second, Stdout: io.Discard, Models: models}
+			if ok, msg := cfg.Available(); !ok {
+				return nil, fmt.Errorf("%s", msg)
+			}
+			return goserve.Start(bootCtx, cfg)
 		}
-		if ok, msg := cfg.Available(); !ok {
-			return nil, nil, fmt.Errorf("%s", msg)
+		switch {
+		case parts[0] == "planexec" && len(parts) == 3:
+			h, err := boot([]goserve.Model{
+				{Name: "planner", File: parts[1], Port: port, Ctx: 2048},
+				{Name: "executor", File: parts[2], Port: port + 1, Ctx: 2048},
+			})
+			if err != nil {
+				cancel()
+				return nil, nil, err
+			}
+			client := gored.NewPlannerExecutor(
+				modelclient.New(h.ChatURL("planner"), modelName(parts[1])),
+				modelclient.New(h.ChatURL("executor"), modelName(parts[2])),
+			)
+			return client, func() { h.Close(); cancel() }, nil
+
+		case parts[0] == "selfcons" && len(parts) == 3:
+			k, err := strconv.Atoi(parts[2])
+			if err != nil {
+				cancel()
+				return nil, nil, fmt.Errorf("selfcons K: %w", err)
+			}
+			h, err := boot([]goserve.Model{{Name: "attacker", File: parts[1], Port: port, Ctx: 2048}})
+			if err != nil {
+				cancel()
+				return nil, nil, err
+			}
+			client := gored.NewSelfConsistency(modelclient.New(h.ChatURL("attacker"), modelName(parts[1])), k, 0.7)
+			return client, func() { h.Close(); cancel() }, nil
+
+		default: // solo
+			h, err := boot([]goserve.Model{{Name: "attacker", File: spec, Port: port, Ctx: 2048}})
+			if err != nil {
+				cancel()
+				return nil, nil, err
+			}
+			client := modelclient.New(h.ChatURL("attacker"), modelName(spec))
+			return client, func() { h.Close(); cancel() }, nil
 		}
-		bootCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
-		h, err := goserve.Start(bootCtx, cfg)
-		if err != nil {
-			cancel()
-			return nil, nil, err
-		}
-		client := modelclient.New(h.ChatURL("attacker"), modelName(model))
-		return client, func() { h.Close(); cancel() }, nil
 	}
 }
 
@@ -138,6 +178,28 @@ func printLift(st *store.Store) {
 		fmt.Printf("| %s | %s | %.2f | %.2f | %+.2f | %d | %d |\n",
 			l.Model, l.Difficulty, l.ColdRate, l.WarmRate, l.Lift, l.NCold, l.NWarm)
 	}
+}
+
+func printComboVerdict(st *store.Store) {
+	cmp, err := st.ComboComparison()
+	must(err)
+	if len(cmp) == 0 {
+		return
+	}
+	fmt.Println("\n==== Combo vs best solo (keep only combos that beat the best solo) ====")
+	fmt.Println("| skill | difficulty | combo | combo_rate | best_solo | best_rate | verdict |")
+	fmt.Println("|---|---|---|--:|---|--:|---|")
+	kept := 0
+	for _, c := range cmp {
+		verdict := "drop"
+		if c.Beats {
+			verdict = "KEEP"
+			kept++
+		}
+		fmt.Printf("| %s | %s | %s | %.2f | %s | %.2f | %s |\n",
+			c.SkillTemp, c.Difficulty, c.Combo, c.ComboRate, c.BestSolo, c.BestSoloRate, verdict)
+	}
+	fmt.Printf("\ncombos kept (beat the best solo in their cell): %d of %d\n", kept, len(cmp))
 }
 
 func split(s string) []string {
