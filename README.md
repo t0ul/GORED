@@ -36,9 +36,13 @@ leaderboard → combos → ADD integration). Done:
   typed blackboard (scrubbed via goflage), a cold and a warm skill, and a SQLite
   run store; the per-step trace goes to a gledger audit log. Capture is detected
   only by the oracle, never by the model's self-report.
+- **Phase 2 — matrix + leaderboard.** A `Matrix` runner loops models × {cold,warm}
+  × flags × N trials (booting one model at a time), and a leaderboard aggregation
+  reports capture rate (with N and standard error), efficiency medians among
+  captures, and the cold→warm lift per model and difficulty.
 
 Expect the interfaces (`ModelClient`, `Tool`, `Skill`, `Target`, `Blackboard`,
-`RunStore`) to keep moving until the matrix lands in phase 2.
+`RunStore`) to keep moving until combos land in phase 3.
 
 ## Scope & safety
 
