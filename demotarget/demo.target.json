@@ -1,0 +1,20 @@
+{
+  "name": "demotarget",
+  "description": "Self-contained benign CTF target for GORED (IDOR + loopback SSRF). Flags are random per run and held server-side by the oracle.",
+  "flags": [
+    {
+      "id": "idor-notes",
+      "class": "idor",
+      "difficulty": "easy",
+      "where": "GET /api/notes/{id} with a valid session but no per-record ownership check; admin note id 1000 holds the flag",
+      "detect": "oracle records capture when the admin note's flag is served"
+    },
+    {
+      "id": "ssrf-internal",
+      "class": "ssrf",
+      "difficulty": "medium",
+      "where": "GET /api/fetch?url= proxies to loopback without an intended-host allowlist; GET /internal/flag holds the flag behind a header only the proxy sets",
+      "detect": "oracle records capture when /internal/flag is served through the proxy"
+    }
+  ]
+}
