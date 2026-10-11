@@ -25,10 +25,20 @@ sub-target.
 
 ## Status
 
-Early. Design lives with the author; the runtime is being built in phases
-(target + oracle → single-agent MVP → model × skill leaderboard → combos → ADD
-integration). Expect the interfaces (`ModelClient`, `Sandbox`, `Tool`, `Skill`,
-`Target`, `Scorer`, `Blackboard`, `RunStore`) to move until phase 2.
+Early, built in phases (target + oracle → single-agent MVP → model × skill
+leaderboard → combos → ADD integration). Done:
+
+- **Phase 0 — target + oracle.** A benign demo target (`demotarget`) with a
+  planted IDOR and a loopback-scoped SSRF, each guarding an unforgeable flag held
+  by a server-side `Oracle`; a strict manifest loader.
+- **Phase 1 — MVP agent.** An objective loop driving a local OSS model (booted via
+  goserve) with `http_request`/`exec` primitives behind an egress allowlist, a
+  typed blackboard (scrubbed via goflage), a cold and a warm skill, and a SQLite
+  run store; the per-step trace goes to a gledger audit log. Capture is detected
+  only by the oracle, never by the model's self-report.
+
+Expect the interfaces (`ModelClient`, `Tool`, `Skill`, `Target`, `Blackboard`,
+`RunStore`) to keep moving until the matrix lands in phase 2.
 
 ## Scope & safety
 

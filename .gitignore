@@ -21,3 +21,9 @@ coverage.*
 *.swp
 .idea/
 .vscode/
+
+# Run artifacts (local only)
+*.db
+*.db-wal
+*.db-shm
+*.jsonl
