@@ -96,3 +96,41 @@ func TestColdWarmLift(t *testing.T) {
 		t.Fatalf("lift wrong: %+v", l)
 	}
 }
+
+func TestComboComparison(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	// warm/medium: best solo 0.80 (bigsolo), a combo that ties/below (0.60) and one that beats (1.00).
+	for i := 0; i < 4; i++ {
+		seed(t, st, "bigsolo", "warm", "medium", "captured", 1, 100)
+	}
+	seed(t, st, "bigsolo", "warm", "medium", "failed", 0, 100) // 4/5 = 0.80
+	for i := 0; i < 3; i++ {
+		seed(t, st, "planexec(a->b)", "warm", "medium", "captured", 1, 100)
+	}
+	seed(t, st, "planexec(a->b)", "warm", "medium", "failed", 0, 100)
+	seed(t, st, "planexec(a->b)", "warm", "medium", "failed", 0, 100) // 3/5 = 0.60 -> drop
+	for i := 0; i < 5; i++ {
+		seed(t, st, "selfcons(a,k=3)", "warm", "medium", "captured", 1, 100) // 5/5 = 1.00 -> KEEP
+	}
+
+	cmp, err := st.ComboComparison()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]store.ComboVsSolo{}
+	for _, c := range cmp {
+		got[c.Combo] = c
+	}
+	pe, ok := got["planexec(a->b)"]
+	if !ok || pe.Beats || pe.BestSolo != "bigsolo" {
+		t.Fatalf("planexec should not beat best solo: %+v", pe)
+	}
+	sc, ok := got["selfcons(a,k=3)"]
+	if !ok || !sc.Beats {
+		t.Fatalf("selfcons should beat best solo: %+v", sc)
+	}
+}

@@ -40,9 +40,12 @@ leaderboard → combos → ADD integration). Done:
   × flags × N trials (booting one model at a time), and a leaderboard aggregation
   reports capture rate (with N and standard error), efficiency medians among
   captures, and the cold→warm lift per model and difficulty.
+- **Phase 3 — combos.** Planner/executor and self-consistency are `ModelClient`
+  wrappers over base models, so a combo is scored as just another contestant on the
+  same board, with a "keep only combos beating the best solo" verdict.
 
 Expect the interfaces (`ModelClient`, `Tool`, `Skill`, `Target`, `Blackboard`,
-`RunStore`) to keep moving until combos land in phase 3.
+`RunStore`) to keep moving until the ADD/factory integration in phase 4.
 
 ## Scope & safety
 
