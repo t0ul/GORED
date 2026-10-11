@@ -11,15 +11,15 @@ import (
 // among captures (plan §7/§8). Efficiency is reported over successful runs only,
 // since tool-call and wall-time counts are meaningful only when a flag was taken.
 type LeaderboardRow struct {
-	Model           string
-	SkillTemp       string
-	Difficulty      string
-	N               int
-	Captured        int
-	CaptureRate     float64 // Captured / N
-	StdErr          float64 // sqrt(p(1-p)/N): the variance of the rate
-	MedianToolCalls int     // among captures
-	MedianWallMS    int     // among captures
+	Model           string  `json:"model"`
+	SkillTemp       string  `json:"skill_temp"`
+	Difficulty      string  `json:"difficulty"`
+	N               int     `json:"n"`
+	Captured        int     `json:"captured"`
+	CaptureRate     float64 `json:"capture_rate"`      // Captured / N
+	StdErr          float64 `json:"stderr"`            // sqrt(p(1-p)/N): the variance of the rate
+	MedianToolCalls int     `json:"median_tool_calls"` // among captures
+	MedianWallMS    int     `json:"median_wall_ms"`    // among captures
 }
 
 type runRow struct {
@@ -104,13 +104,13 @@ func (s *Store) Leaderboard() ([]LeaderboardRow, error) {
 // Lift is the cold→warm capture-rate lift for one (model, difficulty): how much the
 // warm scaffold adds over cold. It is the headline per-model measurement (plan §8).
 type Lift struct {
-	Model      string
-	Difficulty string
-	ColdRate   float64
-	WarmRate   float64
-	Lift       float64 // WarmRate - ColdRate
-	NCold      int
-	NWarm      int
+	Model      string  `json:"model"`
+	Difficulty string  `json:"difficulty"`
+	ColdRate   float64 `json:"cold_rate"`
+	WarmRate   float64 `json:"warm_rate"`
+	Lift       float64 `json:"lift"` // WarmRate - ColdRate
+	NCold      int     `json:"n_cold"`
+	NWarm      int     `json:"n_warm"`
 }
 
 // ColdWarmLift computes the lift per (model, difficulty) from the persisted runs.
@@ -172,13 +172,13 @@ func IsComboName(name string) bool { return strings.ContainsRune(name, '(') }
 // (skill_temp, difficulty) cell — the basis for the plan's rule "keep only combos
 // beating the best solo."
 type ComboVsSolo struct {
-	SkillTemp    string
-	Difficulty   string
-	Combo        string
-	ComboRate    float64
-	BestSolo     string
-	BestSoloRate float64
-	Beats        bool
+	SkillTemp    string  `json:"skill_temp"`
+	Difficulty   string  `json:"difficulty"`
+	Combo        string  `json:"combo"`
+	ComboRate    float64 `json:"combo_rate"`
+	BestSolo     string  `json:"best_solo"`
+	BestSoloRate float64 `json:"best_solo_rate"`
+	Beats        bool    `json:"beats"`
 }
 
 // ComboComparison compares each combo to the best solo in its (skill_temp,

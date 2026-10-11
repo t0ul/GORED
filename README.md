@@ -43,9 +43,11 @@ leaderboard → combos → ADD integration). Done:
 - **Phase 3 — combos.** Planner/executor and self-consistency are `ModelClient`
   wrappers over base models, so a combo is scored as just another contestant on the
   same board, with a "keep only combos beating the best solo" verdict.
-
-Expect the interfaces (`ModelClient`, `Tool`, `Skill`, `Target`, `Blackboard`,
-`RunStore`) to keep moving until the ADD/factory integration in phase 4.
+- **Phase 4 — ADD + factory seam.** `addcase.AutonomousAdversary` runs the live
+  agent against a vulnerable and a hardened build and reports an `add.Outcome`, so
+  the agentic adversary joins the ADD coverage grid (live-tagged, skipped offline,
+  so the scorecard keeps its determinism). `gored-leaderboard` exports the board as
+  JSON for the factory's model-select to read.
 
 ## Scope & safety
 
