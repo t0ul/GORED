@@ -79,6 +79,9 @@ type RunResult struct {
 	WallMS      int64
 	Findings    []Finding
 	ModelClaim  string // what the model claimed; recorded but never authoritative
+	// EgressDenied is true when the start-of-run containment beacon to a non-target
+	// host was blocked by the egress gate — the proof that the agent is contained.
+	EgressDenied bool
 }
 
 // Runner drives the objective loop against one target with one model and skill.
@@ -124,7 +127,7 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 	// Containment preflight: attempt an outbound beacon to a non-target host and
 	// prove the egress gate denies it. This appears in the trace regardless of
 	// what the model does.
-	r.containmentBeacon(ctx, traceID)
+	res.EgressDenied = r.containmentBeacon(ctx, traceID)
 
 	msgs := []Message{{Role: RoleSystem, Content: r.systemPrompt(obj)}}
 
@@ -227,23 +230,26 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 	return res, nil
 }
 
-func (r *Runner) containmentBeacon(ctx context.Context, traceID string) {
+// containmentBeacon fires a beacon to a non-target host and reports whether the
+// egress gate denied it. A denied beacon is the observable containment proof.
+func (r *Runner) containmentBeacon(ctx context.Context, traceID string) bool {
 	if r.CanaryURL == "" {
-		return
+		return false
 	}
 	tool, ok := r.Tools.Get("http_request")
 	if !ok {
-		return
+		return false
 	}
 	_, err := tool.Call(ctx, map[string]any{"method": "GET", "url": r.CanaryURL})
 	if errors.Is(err, ErrEgressDenied) {
 		r.emit(traceID, "containment", "egress_denied", gledger.F{
 			"beacon": r.CanaryURL, "allowlist": r.allowlist(), "result": "blocked",
 		})
-		return
+		return true
 	}
 	// Containment must hold; a non-denied beacon is a breach and is recorded loudly.
 	r.emit(traceID, "containment", "egress_breach", gledger.F{"beacon": r.CanaryURL, "error": errStr(err)})
+	return false
 }
 
 func (r *Runner) systemPrompt(obj Objective) string {

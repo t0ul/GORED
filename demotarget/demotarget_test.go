@@ -153,3 +153,30 @@ func TestManifestMatchesTrackedJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestHardenedClosesBothVulns(t *testing.T) {
+	s, err := New(WithHardened())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	// IDOR closed: admin note refused even with a valid session.
+	if code, _ := get(t, ts, "/api/notes/1000", map[string]string{"X-Session": sessionToken}); code != http.StatusForbidden {
+		t.Fatalf("hardened: want 403 on admin note, got %d", code)
+	}
+	if captured(s, "idor-notes") {
+		t.Fatal("hardened build disclosed the IDOR flag")
+	}
+	// Owned notes still work.
+	if code, _ := get(t, ts, "/api/notes/1", map[string]string{"X-Session": sessionToken}); code != http.StatusOK {
+		t.Fatalf("hardened: owned note should still read, got %d", code)
+	}
+	// SSRF closed: proxy refuses the internal route.
+	if code, _ := get(t, ts, "/api/fetch?url="+ts.URL+"/internal/flag", nil); code != http.StatusForbidden {
+		t.Fatalf("hardened: want 403 proxying internal route, got %d", code)
+	}
+	if captured(s, "ssrf-internal") {
+		t.Fatal("hardened build disclosed the SSRF flag")
+	}
+}
