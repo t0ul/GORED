@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 
 	gored "github.com/t0ul/GORED"
 )
@@ -20,9 +21,10 @@ func main() {
 		dbPath = flag.String("db", "", "path to the findings SQLite DB (e.g. RiskRancher's data/riskrancher.db)")
 		table  = flag.String("table", "tickets", "findings table")
 		where  = flag.String("where", "", "optional SQL filter (without WHERE)")
-		app    = flag.String("app", "", "only findings whose asset app == this")
-		list   = flag.Bool("list", false, "print each finding line")
-		source = flag.String("source", "", "path to the app's source tree; whitebox-analyses each finding to a rung (present/reachable/ruled-out)")
+		app       = flag.String("app", "", "only findings whose asset app == this")
+		list      = flag.Bool("list", false, "print each finding line")
+		source    = flag.String("source", "", "path to the app's source tree; whitebox-analyses each finding to a rung (present/reachable/ruled-out)")
+		correlate = flag.Bool("correlate", false, "collapse findings that share a route/file/module into one ranked issue (dedup + triage)")
 	)
 	flag.Parse()
 	if *dbPath == "" {
@@ -47,11 +49,13 @@ func main() {
 	bySource, byApp, byCWE, byRung := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
 	reach, ruledOut, unknown := 0, 0, 0
 	kept := 0
+	keptFindings := make([]gored.ScannerFinding, 0, len(findings))
 	for _, f := range findings {
 		if *app != "" && f.App != *app {
 			continue
 		}
 		kept++
+		keptFindings = append(keptFindings, f)
 		bySource[f.Source]++
 		byApp[f.App]++
 		if f.CWE != "" {
@@ -88,6 +92,60 @@ func main() {
 		fmt.Printf("whitebox (%s source): %s\n", analyzer.Lang(), sortedCounts(byRung))
 	}
 	fmt.Printf("\nruled-out (not reachable / not present) are deprioritized; reachable + access-control findings go to the validator next.\n")
+
+	if *correlate {
+		printCorrelated(keptFindings, analyzer)
+	}
+}
+
+// printCorrelated collapses the findings into ranked issues and prints them, showing how
+// many raw rows became how many issues — the triage reduction. When a source analyzer is
+// available each issue also shows the best (most advanced) static rung across its members.
+func printCorrelated(findings []gored.ScannerFinding, analyzer gored.SourceAnalyzer) {
+	issues := gored.Correlate(findings)
+	fmt.Printf("\n==== correlated issues (dedup + triage) ====\n")
+	fmt.Printf("%d findings -> %d issues\n\n", len(findings), len(issues))
+	for _, c := range issues {
+		reach := "reach=unknown"
+		if c.Reachable != nil {
+			if *c.Reachable {
+				reach = "reachable"
+			} else {
+				reach = "ruled-out"
+			}
+		}
+		rung := ""
+		if analyzer != nil {
+			rung = " rung=" + string(bestRung(c, analyzer))
+		}
+		cwe := ""
+		if len(c.CWEs) > 0 {
+			cwe = "  cwe=" + strings.Join(c.CWEs, ",")
+		}
+		fmt.Printf("  [%s %s%s] %s:%s  x%d  sources=%s%s\n",
+			c.Severity, reach, rung, c.App, c.Locus, c.Count(), strings.Join(c.Sources, "+"), cwe)
+	}
+}
+
+// bestRung combines the static rungs of an issue's findings into one. Precedence is
+// reachable > ruled-out > present > unknown: a proven-reachable path wins, but a proven
+// not-reachable verdict (ruled-out) outranks a bare "present" from a presence-only
+// scanner — determining reachability is strictly more information than noting presence,
+// so present + ruled-out on the same dependency is ruled-out, not present.
+func bestRung(c gored.CorrelatedIssue, analyzer gored.SourceAnalyzer) gored.Rung {
+	// RungAbsent and RungRuledOut share the string "ruled-out", so one key covers both.
+	order := map[gored.Rung]int{
+		gored.RungUnknown: 0, gored.RungPresent: 1,
+		gored.RungRuledOut: 2, gored.RungReachable: 3,
+	}
+	best := gored.RungUnknown
+	for _, f := range c.Findings {
+		r, _ := analyzer.Analyze(f)
+		if order[r] > order[best] {
+			best = r
+		}
+	}
+	return best
 }
 
 func sortedCounts(m map[string]int) string {
