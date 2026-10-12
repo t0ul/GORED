@@ -328,6 +328,50 @@ func trunc(s string, n int) string {
 	return s
 }
 
+// CurlFor renders an http_request tool call as a curl command, so a finding comes
+// with a human-runnable reproduction. It does NOT invent the session cookie (that
+// is held in the agent's jar, established by an earlier login request); a full
+// verification script re-runs that login first. Use it for the repro line in a
+// write-up; use a harness-emitted script for a fully self-contained re-run.
+func CurlFor(base string, args map[string]any) string {
+	method := strings.ToUpper(asString(args["method"]))
+	if method == "" {
+		method = "GET"
+	}
+	where := asString(args["url"])
+	if where == "" {
+		p := asString(args["path"])
+		if p != "" && !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		where = strings.TrimRight(base, "/") + p
+	}
+	var b strings.Builder
+	b.WriteString("curl -i")
+	if method != "GET" {
+		fmt.Fprintf(&b, " -X %s", method)
+	}
+	if hdrs, ok := args["headers"].(map[string]any); ok {
+		keys := make([]string, 0, len(hdrs))
+		for k := range hdrs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(&b, " -H %s", shellQuote(k+": "+asString(hdrs[k])))
+		}
+	}
+	if body := asString(args["body"]); body != "" {
+		fmt.Fprintf(&b, " --data %s", shellQuote(body))
+	}
+	fmt.Fprintf(&b, " %s", shellQuote(where))
+	return b.String()
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func asString(v any) string {
 	switch t := v.(type) {
 	case string:

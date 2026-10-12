@@ -82,6 +82,10 @@ type RunResult struct {
 	// EgressDenied is true when the start-of-run containment beacon to a non-target
 	// host was blocked by the egress gate — the proof that the agent is contained.
 	EgressDenied bool
+	// CaptureRequest is the tool-call args of the request that caused capture (the
+	// exact request a human re-runs to verify the finding). Nil if no capture or if
+	// capture was not tied to a single request.
+	CaptureRequest map[string]any
 }
 
 // Runner drives the objective loop against one target with one model and skill.
@@ -226,8 +230,9 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 			// disclose the planted marker to this (unauthorized) agent?
 			if r.Detector != nil {
 				if cap, via := r.Detector(out); cap {
-					res.Outcome, res.CapturedVia = "captured", via
+					res.Outcome, res.CapturedVia, res.CaptureRequest = "captured", via, act.Args
 					r.emit(traceID, "oracle", "capture_detected", gledger.F{"via": via, "step": step, "source": "canary"})
+					r.emit(traceID, "verify", "repro", gledger.F{"curl": CurlFor(obj.Base, act.Args), "note": "the capturing request; its session is established by the login request earlier in this run"})
 					break
 				}
 			}
@@ -235,8 +240,9 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 
 		// Oracle-authoritative capture check after every tool call.
 		if via, got := r.capturedVia(obj.FlagID); got {
-			res.Outcome, res.CapturedVia = "captured", via
+			res.Outcome, res.CapturedVia, res.CaptureRequest = "captured", via, act.Args
 			r.emit(traceID, "oracle", "capture_detected", gledger.F{"flag_id": obj.FlagID, "via": via, "step": step})
+			r.emit(traceID, "verify", "repro", gledger.F{"curl": CurlFor(obj.Base, act.Args), "note": "the capturing request; prior requests in this run establish any needed session"})
 			break
 		}
 	}
