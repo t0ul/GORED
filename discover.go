@@ -192,6 +192,10 @@ func crawlable(p string) bool {
 	if strings.ContainsAny(p, "{}") {
 		return false // a route template like /api/tickets/{id}, not a real URL
 	}
+	lower := strings.ToLower(p)
+	if strings.Contains(lower, "logout") || strings.Contains(lower, "signout") || strings.Contains(lower, "sign-out") {
+		return false // following a logout link mid-crawl would drop our own session
+	}
 	if strings.HasSuffix(p, ".js") {
 		return true
 	}

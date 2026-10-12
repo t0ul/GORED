@@ -50,6 +50,60 @@ func authFixture() http.Handler {
 	return mux
 }
 
+// logoutFixture serves an authenticated page that links both a deeper authenticated
+// page and a logout link. The deeper page's API route is only visible while logged
+// in. A crawl that follows the logout link (it sorts alphabetically before "/more")
+// clears its own cookie and then misses the deep route — so reaching it proves the
+// crawl skipped logout.
+func logoutFixture() http.Handler {
+	authed := func(r *http.Request) bool {
+		c, err := r.Cookie("sess")
+		return err == nil && c.Value == "ok"
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "sess", Value: "ok", Path: "/"})
+	})
+	mux.HandleFunc("/logout", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "sess", Value: "", Path: "/", MaxAge: -1})
+	})
+	mux.HandleFunc("/app", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(r) {
+			http.Error(w, "login required", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`<a href="/logout">out</a><a href="/more">more</a>`))
+	})
+	mux.HandleFunc("/more", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(r) {
+			http.Error(w, "login required", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`<a href="/api/deep">deep</a>`))
+	})
+	return mux
+}
+
+func TestAuthenticatedCrawlSkipsLogout(t *testing.T) {
+	ts := httptest.NewServer(logoutFixture())
+	t.Cleanup(ts.Close)
+
+	httpTool, disc := gored.WebRecon(ts.URL, gored.NewEgress(authority(t, ts.URL)), nil)
+	ctx := context.Background()
+	if _, err := httpTool.Call(ctx, map[string]any{"method": "POST", "path": "/login", "session": "rh"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := disc.Call(ctx, map[string]any{"path": "/app", "session": "rh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// /api/deep lives one page past a logout link; reaching it means the crawl did not
+	// log itself out on the way.
+	if !strings.Contains(out, "/api/deep") {
+		t.Errorf("crawl missed /api/deep — it likely followed the logout link and lost the session:\n%s", out)
+	}
+}
+
 func TestAuthenticatedDiscoveryNeedsLogin(t *testing.T) {
 	ts := httptest.NewServer(authFixture())
 	t.Cleanup(ts.Close)
