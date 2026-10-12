@@ -77,29 +77,47 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 		return rep, fmt.Errorf("hunt discover: %w", err)
 	}
 	resources := testableResources(out)
+	templates := itemTemplates(out)
 	rep.Discovered, rep.SurfaceCount = resources, len(resources)
-	h.emit(traceID, "hunt", "discovered", gledger.F{"testable": len(resources), "as": h.Priv.Name})
+	h.emit(traceID, "hunt", "discovered", gledger.F{"testable": len(resources), "templates": len(templates), "as": h.Priv.Name})
 
-	// 1b. Optional canary seeding (6c): plant markers as the privileged identity so a
-	// disclosed marker turns a differential guess into a certainty.
+	// 1b. Optional canary seeding (6c + 7a): plant markers as the privileged identity
+	// so a disclosed marker is a certainty. Collection seeds yield item paths
+	// (collection/{id}); templated seeds plant at a caller-chosen id. The item paths
+	// are then read as the low-priv identity to catch object-level IDOR (7a).
 	var markers []string
+	itemPaths := map[string]bool{}
 	if h.Seeder != nil {
 		canaries, err := h.Seeder.Seed(ctx, resources)
 		if err != nil {
 			return rep, fmt.Errorf("hunt seed: %w", err)
 		}
-		markers = PlantedMarkers(canaries)
-		h.emit(traceID, "hunt", "seeded", gledger.F{"planted": len(markers)})
+		items, err := h.Seeder.SeedItems(ctx, templates)
+		if err != nil {
+			return rep, fmt.Errorf("hunt seed items: %w", err)
+		}
+		for _, c := range append(canaries, items...) {
+			if c.Planted {
+				markers = append(markers, c.Marker)
+				if c.ItemPath != "" {
+					itemPaths[c.ItemPath] = true
+				}
+			}
+		}
+		h.emit(traceID, "hunt", "seeded", gledger.F{"planted": len(markers), "item_paths": len(itemPaths)})
 	}
 
-	// 2. Differential sweep: canary-free broken-access-control discovery, with any
-	// planted canaries as a certainty overlay.
+	// 2. Differential sweep over the testable collections plus the seeded item paths;
+	// planted canaries act as a certainty overlay.
 	oracle := &DifferentialOracle{
 		Base: h.Base, Egress: h.Egress, Sessions: h.Sessions,
 		Priv: h.Priv, Low: h.Low, Anon: h.Anon, Markers: markers,
 	}
-	mps := make([][2]string, 0, len(resources))
+	mps := make([][2]string, 0, len(resources)+len(itemPaths))
 	for _, p := range resources {
+		mps = append(mps, [2]string{"GET", p})
+	}
+	for p := range itemPaths {
 		mps = append(mps, [2]string{"GET", p})
 	}
 	findings, err := oracle.Sweep(ctx, mps)
@@ -113,8 +131,12 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 		if !f.Flagged() {
 			continue
 		}
+		cwe := "CWE-862" // missing authorization (collection-level)
+		if itemPaths[f.Path] {
+			cwe = "CWE-639" // IDOR: an object addressed by id, read by another owner
+		}
 		hf := HuntFinding{
-			Method: f.Method, Path: f.Path, CWE: "CWE-862", Verdict: f.Verdict,
+			Method: f.Method, Path: f.Path, CWE: cwe, Verdict: f.Verdict,
 			Confidence: f.Confidence, ConfidenceReason: f.ConfidenceReason,
 			Marker: f.Marker, Evidence: f.Evidence,
 		}
@@ -187,6 +209,25 @@ func testableResources(discoverOut string) []string {
 		}
 		seen[p] = true
 		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// itemTemplates returns the discovered `{id}`-style item endpoints (the ones
+// testableResources drops), which the seeder plants into and the id-swap step reads.
+func itemTemplates(discoverOut string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, line := range strings.Split(discoverOut, "\n") {
+		p := strings.TrimSpace(line)
+		if !strings.HasPrefix(p, "/") || seen[p] {
+			continue
+		}
+		if strings.ContainsAny(p, "{}") && !strings.HasPrefix(p, "/api/auth/") {
+			seen[p] = true
+			out = append(out, p)
+		}
 	}
 	sort.Strings(out)
 	return out

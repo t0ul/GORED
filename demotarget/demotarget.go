@@ -168,6 +168,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/notes/{id}", s.handleNote)
 	s.mux.HandleFunc("GET /api/memos", s.handleMemos)
 	s.mux.HandleFunc("GET /api/memos/mine", s.handleMyMemos)
+	s.mux.HandleFunc("GET /api/memos/{id}", s.handleGetMemo)
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
 	s.mux.HandleFunc("GET /api/fetch", s.handleFetch)
 	s.mux.HandleFunc("GET /internal/flag", s.handleInternalFlag)
@@ -239,6 +240,31 @@ func (s *Server) handleMemos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.listMemos(owner, s.hardened))
+}
+
+// handleGetMemo is the OBJECT-LEVEL IDOR (CWE-639): it reads a memo by id for any
+// valid session without checking the session owns it, so a low-privilege caller can
+// read another identity's memo by its id. It is the surface the id-swapping step
+// (phase 7a) exercises: plant a memo as the privileged identity, then read it by id
+// as the low-privilege one. The hardened build enforces per-record ownership.
+func (s *Server) handleGetMemo(w http.ResponseWriter, r *http.Request) {
+	owner := ownerForSession(r.Header.Get("X-Session"))
+	if owner == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid X-Session"})
+		return
+	}
+	s.mu.Lock()
+	m, ok := s.memos[r.PathValue("id")]
+	s.mu.Unlock()
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such memo"})
+		return
+	}
+	if s.hardened && m.Owner != owner {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden: not your record"})
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
 }
 
 // handleMyMemos is the correctly-scoped control: it always lists only the caller's

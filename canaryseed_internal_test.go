@@ -41,3 +41,32 @@ func TestInjectMarkerAddsNoteWhenNoString(t *testing.T) {
 		t.Errorf("marker not injected: %s", got)
 	}
 }
+
+func TestFillTemplate(t *testing.T) {
+	cases := map[string]string{
+		"/api/drafts/report/{id}": "/api/drafts/report/X9",
+		"/api/memos/{id}":         "/api/memos/X9",
+		"/api/tickets":            "", // no template segment
+	}
+	for tpl, want := range cases {
+		if got := fillTemplate(tpl, "X9"); got != want {
+			t.Errorf("fillTemplate(%q) = %q, want %q", tpl, got, want)
+		}
+	}
+}
+
+func TestExtractID(t *testing.T) {
+	cases := map[string]string{
+		`{"id":42,"title":"x"}`:        "42",
+		`{"id":"c1","owner":"admin"}`:  "c1",
+		`{"report_id":"r7"}`:           "r7",
+		`{"filename":"report.pdf"}`:    "report.pdf",
+		`{"no_id_here":true}`:          "",
+		`not json`:                     "",
+	}
+	for body, want := range cases {
+		if got := extractID(body); got != want {
+			t.Errorf("extractID(%q) = %q, want %q", body, got, want)
+		}
+	}
+}
