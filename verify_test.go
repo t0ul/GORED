@@ -4,6 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -68,5 +71,23 @@ func TestRenderCurlShape(t *testing.T) {
 	}})
 	if !strings.Contains(s, "curl -s -c") || !strings.Contains(s, "/secret") || !strings.Contains(s, "grep -q 'GORED{'") {
 		t.Fatalf("curl render missing expected parts:\n%s", s)
+	}
+}
+
+func TestRenderGoCompiles(t *testing.T) {
+	v := Verifier{Base: "http://127.0.0.1:1", Marker: "GORED{z}"}
+	src := v.renderGo(ReproPlan{Steps: []ReproStep{
+		{Method: "POST", Path: "/login", Body: `{"a":1}`, Headers: map[string]string{"Content-Type": "application/json"}},
+		{Method: "GET", Path: "/secret"},
+	}})
+	dir := t.TempDir()
+	f := filepath.Join(dir, "repro.go")
+	if err := os.WriteFile(f, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Really compile it — proves the generated Go is valid, not just string-shaped.
+	out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "repro"), f).CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated Go did not compile: %v\n%s\n--- src ---\n%s", err, out, src)
 	}
 }
