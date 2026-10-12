@@ -2,6 +2,7 @@ package gored_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -82,5 +83,112 @@ func TestDifferentialOracleHardenedClosesBAC(t *testing.T) {
 	}
 	if f.Flagged() {
 		t.Errorf("hardened build still flagged /api/memos: %s", f.Evidence)
+	}
+}
+
+// confidenceFixture serves, to any valid X-Id (anon is refused): three HTML pages
+// that are nothing but shared chrome (the same nav/scripts/footer on every page), a
+// JSON data endpoint, and an HTML page carrying chrome plus data unique to it. All
+// are byte-identical for two identities, so all flag BAC — the point is the oracle's
+// confidence should separate the shared shells (low, likely false positives) from
+// the real data disclosures (high).
+func confidenceFixture() http.Handler {
+	const chrome = `<nav>dashboard-navigation-sidebar</nav><script src="analytics-tracking-bundle.js"></script><footer>global-footer-copyright-2026</footer>`
+	authed := func(r *http.Request) bool { return r.Header.Get("X-Id") != "" }
+	mux := http.NewServeMux()
+	page := func(body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !authed(r) {
+				http.Error(w, "login required", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(body))
+		}
+	}
+	mux.HandleFunc("/shell1", page(chrome))
+	mux.HandleFunc("/shell2", page(chrome))
+	mux.HandleFunc("/shell3", page(chrome))
+	mux.HandleFunc("/report", page(chrome+`<main>confidential-acquisition-memo megacorp-financials-report board-resolution-draft</main>`))
+	mux.HandleFunc("/records", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(r) {
+			http.Error(w, "login required", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":1,"holder":"someone-else"}]`))
+	})
+	return mux
+}
+
+func TestDifferentialConfidenceRanksChromeLow(t *testing.T) {
+	ts := httptest.NewServer(confidenceFixture())
+	t.Cleanup(ts.Close)
+
+	oracle := &gored.DifferentialOracle{
+		Base: ts.URL, Egress: gored.NewEgress(authority(t, ts.URL)), Sessions: gored.NewSessions(),
+		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Id": "admin"}},
+		Low:  gored.Identity{Name: "user", Headers: map[string]string{"X-Id": "user"}},
+		Anon: &gored.Identity{Name: "anon"},
+	}
+	findings, err := oracle.Sweep(context.Background(), [][2]string{
+		{"GET", "/shell1"}, {"GET", "/shell2"}, {"GET", "/shell3"},
+		{"GET", "/report"}, {"GET", "/records"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := map[string]gored.Confidence{}
+	for _, f := range findings {
+		if !f.Flagged() {
+			t.Errorf("%s not flagged (want BAC): %s", f.Path, f.Evidence)
+		}
+		conf[f.Path] = f.Confidence
+	}
+	for _, shell := range []string{"/shell1", "/shell2", "/shell3"} {
+		if conf[shell] != gored.ConfLow {
+			t.Errorf("%s: shared chrome should be low confidence, got %q", shell, conf[shell])
+		}
+	}
+	if conf["/records"] != gored.ConfHigh {
+		t.Errorf("/records: JSON data should be high confidence, got %q", conf["/records"])
+	}
+	if conf["/report"] != gored.ConfMedium {
+		t.Errorf("/report: HTML with unique content is ambiguous without a canary, want medium, got %q", conf["/report"])
+	}
+}
+
+// TestDifferentialCanaryCertain shows a planted canary turns a flag certain: when the
+// low-priv response carries a marker the seeder planted, the verdict is BAC at
+// "certain" confidence regardless of the heuristic.
+func TestDifferentialCanaryCertain(t *testing.T) {
+	const marker = "GORED-CANARY-abc123"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/leak", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Id") == "" {
+			http.Error(w, "no", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte("record owner=admin note=" + marker))
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	oracle := &gored.DifferentialOracle{
+		Base: ts.URL, Egress: gored.NewEgress(authority(t, ts.URL)), Sessions: gored.NewSessions(),
+		Priv:    gored.Identity{Name: "admin", Headers: map[string]string{"X-Id": "admin"}},
+		Low:     gored.Identity{Name: "user", Headers: map[string]string{"X-Id": "user"}},
+		Anon:    &gored.Identity{Name: "anon"},
+		Markers: []string{marker},
+	}
+	f, err := oracle.Probe(context.Background(), "GET", "/leak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.Flagged() || f.Confidence != gored.ConfCertain {
+		t.Fatalf("want BAC/certain, got %s/%s (%s)", f.Verdict, f.Confidence, f.Evidence)
+	}
+	if f.Marker != marker {
+		t.Errorf("want canary marker %q, got %q", marker, f.Marker)
 	}
 }

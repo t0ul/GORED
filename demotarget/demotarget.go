@@ -25,7 +25,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	gored "github.com/t0ul/GORED"
@@ -71,6 +73,7 @@ type Server struct {
 	manifest  gored.Manifest
 	mux       *http.ServeMux
 	notes     map[string]note
+	mu        sync.Mutex      // guards memos (written by POST /api/memos)
 	memos     map[string]note // the differential-oracle surface: owned records, no planted flag
 	internalK string          // per-process secret header the fetch proxy injects
 	hardened  bool            // when true, the controls are wired and neither flag is reachable
@@ -165,6 +168,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/notes/{id}", s.handleNote)
 	s.mux.HandleFunc("GET /api/memos", s.handleMemos)
 	s.mux.HandleFunc("GET /api/memos/mine", s.handleMyMemos)
+	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
 	s.mux.HandleFunc("GET /api/fetch", s.handleFetch)
 	s.mux.HandleFunc("GET /internal/flag", s.handleInternalFlag)
 	s.mux.HandleFunc("GET /oracle/status", s.handleOracleStatus)
@@ -249,10 +253,43 @@ func (s *Server) handleMyMemos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.listMemos(owner, true))
 }
 
+// handleCreateMemo lets a session create a memo it owns. It is the resource-creating
+// endpoint the auto-canary-seeder plants into: a privileged identity POSTs a memo
+// carrying a unique marker, which then shows up in the unscoped list — the reachable
+// canary the test step confirms a low-privilege identity should not see.
+func (s *Server) handleCreateMemo(w http.ResponseWriter, r *http.Request) {
+	owner := ownerForSession(r.Header.Get("X-Session"))
+	if owner == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid X-Session"})
+		return
+	}
+	var in struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+		return
+	}
+	s.mu.Lock()
+	id := fmt.Sprintf("c%d", len(s.memos)+1)
+	m := note{ID: id, Owner: owner, Title: in.Title, Body: in.Body}
+	s.memos[id] = m
+	s.mu.Unlock()
+	writeJSON(w, http.StatusCreated, m)
+}
+
 // listMemos returns every memo, or only those the owner holds when scoped.
 func (s *Server) listMemos(owner string, scoped bool) []note {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.memos))
+	for id := range s.memos {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
 	out := []note{}
-	for _, id := range []string{"a1", "x9"} { // deterministic order
+	for _, id := range ids {
 		m := s.memos[id]
 		if scoped && m.Owner != owner {
 			continue

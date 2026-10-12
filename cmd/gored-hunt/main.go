@@ -47,6 +47,7 @@ func main() {
 		modelDir   = flag.String("modeldir", defaultModelDir(), "GGUF directory")
 		modelPort  = flag.Int("model-port", 11630, "verifier model server port")
 		noVerify   = flag.Bool("no-verify", false, "skip the model; report flags UNVERIFIED")
+		seed       = flag.Bool("seed", false, "plant canaries as the privileged identity first (6c), so a disclosed marker is a certain finding")
 		outP       = flag.String("out", "gored-hunt-report.json", "write the JSON report here")
 		traceP     = flag.String("trace", "gored-hunt-trace.jsonl", "replayable gledger trace")
 	)
@@ -81,6 +82,12 @@ func main() {
 		must(err)
 		defer hh.Close()
 		h.Model = modelclient.New(hh.ChatURL("verifier"), name(*modelF))
+	}
+
+	if *seed {
+		h.Seeder = &gored.CanarySeeder{
+			Base: *url, Egress: egress, Sessions: httpTool.Sessions, Priv: privID, Model: h.Model, Audit: audit,
+		}
 	}
 
 	rep, err := h.Run(ctx)
@@ -153,7 +160,7 @@ func printSummary(rep gored.HuntReport, outP, traceP string) {
 		} else if f.Verified {
 			status = "UNCONFIRMED (repro did not reproduce)"
 		}
-		fmt.Printf("  [%s] %s %s — %s\n      %s\n", f.CWE, f.Method, f.Path, status, f.Evidence)
+		fmt.Printf("  [%s] %s %s — confidence=%s, %s\n      %s\n", f.CWE, f.Method, f.Path, f.Confidence, status, f.Evidence)
 	}
 	fmt.Printf("\nconfirmed=%d unconfirmed=%d unverified=%d\n", rep.Confirmed, rep.Unconfirmed, rep.Unverified)
 	fmt.Printf("report: %s\nreplayable trace: %s\n  replay: gored-replay -trace %s\n", outP, traceP, traceP)

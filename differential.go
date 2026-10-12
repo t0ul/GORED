@@ -39,14 +39,29 @@ const (
 	VerdictBlocked BACVerdict = "blocked" // low-privilege identity is correctly refused
 )
 
+// Confidence ranks how likely a BAC flag is a real authorization bug rather than a
+// shared authenticated page both identities legitimately see. It is a canary-free
+// triage signal: without a planted marker the oracle cannot be certain, so it says
+// how much to trust the flag instead of hiding the uncertainty.
+type Confidence string
+
+const (
+	ConfCertain Confidence = "certain" // a planted canary was disclosed — ground truth, no false positive
+	ConfHigh    Confidence = "high"    // structured data, or page content unique to this resource, disclosed cross-identity
+	ConfMedium  Confidence = "medium"  // some unique content disclosed, mixed with shared chrome
+	ConfLow     Confidence = "low"     // response is mostly shared page chrome; high false-positive likelihood
+)
+
 // DiffFinding is one resource's differential result.
 type DiffFinding struct {
-	Method   string
-	Path     string
-	Verdict  BACVerdict
-	Evidence string         // one-line human summary (statuses + what overlapped)
-	Marker   string         // a privileged datum disclosed to the low-priv identity (for the 6b repro); "" unless BAC
-	Request  map[string]any // the low-priv capturing request, for CurlFor and the verifier facts
+	Method           string
+	Path             string
+	Verdict          BACVerdict
+	Confidence       Confidence // set for BAC; how likely it is a real bug vs a shared page
+	ConfidenceReason string
+	Evidence         string         // one-line human summary (statuses + what overlapped)
+	Marker           string         // a privileged datum disclosed to the low-priv identity (for the 6b repro); "" unless BAC
+	Request          map[string]any // the low-priv capturing request, for CurlFor and the verifier facts
 
 	privStatus, lowStatus, anonStatus int
 }
@@ -69,6 +84,12 @@ func (f DiffFinding) Flagged() bool { return f.Verdict == VerdictBAC }
 // refused there (e.g. an app routes admins to a different console), it yields no
 // content to compare, so use a privileged identity that can read the resource and a
 // low-privilege peer that should not see the same data.
+//
+// Because the signal is canary-free it cannot distinguish a leaked record from a
+// page every signed-in user shares, so each BAC flag carries a Confidence: JSON data
+// and content unique to one resource rank high; a response that is mostly chrome
+// common to other authenticated pages ranks low (see Sweep). An auto-seeded canary
+// (CanarySeeder) is the way to turn a high-likelihood flag into a certainty.
 type DifferentialOracle struct {
 	Base     string
 	Egress   *Egress
@@ -76,27 +97,75 @@ type DifferentialOracle struct {
 	Priv     Identity
 	Low      Identity
 	Anon     *Identity // optional public baseline; when set, content anon also sees is not privileged
+	Markers  []string  // planted canaries (6c); a low-priv response containing one is certain BAC
 	OnDeny   func(string)
 	Timeout  time.Duration
 }
 
 var tokenRE = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9_@./:-]{3,}`)
 
-// Sweep probes each resource and returns one finding per resource, classified.
+// probeResult is Sweep's richer per-resource record, kept so chrome (content shared
+// across pages) can be computed across the whole sweep before confidence is set.
+type probeResult struct {
+	finding   DiffFinding
+	privCT    string
+	leaked    map[string]bool // privileged-gated distinctive tokens disclosed to low
+	lowIsJSON bool
+	certain   bool // a planted canary was disclosed; confidence is already set, skip scoring
+}
+
+// Sweep probes each resource and returns one finding per resource, classified, with
+// a confidence set on every BAC flag. Confidence uses the whole sweep: tokens that
+// recur across many pages are treated as shared chrome and subtracted, so a flag
+// whose disclosed content is mostly chrome ranks low (a likely false positive) while
+// one disclosing data unique to the resource ranks high.
 func (d *DifferentialOracle) Sweep(ctx context.Context, methodPaths [][2]string) ([]DiffFinding, error) {
-	out := make([]DiffFinding, 0, len(methodPaths))
+	results := make([]probeResult, 0, len(methodPaths))
+	chromeCount := map[string]int{} // how many resources' privileged content a token appears in
+	pages := 0
 	for _, mp := range methodPaths {
-		f, err := d.Probe(ctx, mp[0], mp[1])
+		pr, err := d.probe(ctx, mp[0], mp[1])
 		if err != nil {
-			return out, err
+			return nil, err
+		}
+		results = append(results, pr)
+		if len(pr.leaked) > 0 {
+			pages++
+			for tok := range pr.leaked {
+				chromeCount[tok]++
+			}
+		}
+	}
+	// A token in at least half of the pages (and at least two) is shared chrome.
+	chromeMin := pages/2 + 1
+	isChrome := func(tok string) bool { return pages >= 2 && chromeCount[tok] >= chromeMin }
+
+	out := make([]DiffFinding, 0, len(results))
+	for _, pr := range results {
+		f := pr.finding
+		if f.Flagged() && !pr.certain {
+			f.Confidence, f.ConfidenceReason = scoreConfidence(pr, isChrome)
 		}
 		out = append(out, f)
 	}
 	return out, nil
 }
 
-// Probe tests one resource as each identity and classifies it.
+// Probe tests one resource as each identity and classifies it, with a confidence
+// scored from this resource alone (no cross-page chrome context — use Sweep for that).
 func (d *DifferentialOracle) Probe(ctx context.Context, method, path string) (DiffFinding, error) {
+	pr, err := d.probe(ctx, method, path)
+	if err != nil {
+		return pr.finding, err
+	}
+	f := pr.finding
+	if f.Flagged() && !pr.certain {
+		f.Confidence, f.ConfidenceReason = scoreConfidence(pr, func(string) bool { return false })
+	}
+	return f, nil
+}
+
+func (d *DifferentialOracle) probe(ctx context.Context, method, path string) (probeResult, error) {
 	if method == "" {
 		method = http.MethodGet
 	}
@@ -104,47 +173,62 @@ func (d *DifferentialOracle) Probe(ctx context.Context, method, path string) (Di
 	if len(d.Low.Headers) > 0 {
 		f.Request["headers"] = toAnyMap(d.Low.Headers)
 	}
+	pr := probeResult{}
 
-	privStatus, privBody, err := d.fetch(ctx, d.Priv, method, path)
+	privStatus, privCT, privBody, err := d.fetch(ctx, d.Priv, method, path)
 	if err != nil {
-		return f, err
+		pr.finding = f
+		return pr, err
 	}
-	lowStatus, lowBody, err := d.fetch(ctx, d.Low, method, path)
+	lowStatus, lowCT, lowBody, err := d.fetch(ctx, d.Low, method, path)
 	if err != nil {
-		return f, err
+		pr.finding = f
+		return pr, err
 	}
 	f.privStatus, f.lowStatus = privStatus, lowStatus
+	pr.privCT = privCT
+	pr.lowIsJSON = isJSON(lowCT, lowBody)
 
 	var anonBody string
 	anonOK := false
 	if d.Anon != nil {
-		as, ab, err := d.fetch(ctx, *d.Anon, method, path)
+		as, _, ab, err := d.fetch(ctx, *d.Anon, method, path)
 		if err != nil {
-			return f, err
+			pr.finding = f
+			return pr, err
 		}
 		f.anonStatus, anonBody, anonOK = as, ab, ok2xx(as)
 	}
 
-	// Low-priv correctly refused: not a finding.
 	if !ok2xx(lowStatus) {
 		f.Verdict, f.Evidence = VerdictBlocked, fmt.Sprintf("low-priv HTTP %d (refused); privileged HTTP %d", lowStatus, privStatus)
-		return f, nil
+		pr.finding = f
+		return pr, nil
 	}
 
-	// Privileged content that is NOT visible anonymously is what privilege gates.
+	// Ground truth first: a canary planted as the privileged identity (6c) showing up
+	// in the low-priv response is broken access control with certainty — no heuristic.
+	if m := firstContained(d.Markers, lowBody); m != "" {
+		f.Verdict, f.Marker = VerdictBAC, m
+		f.Confidence = ConfCertain
+		f.ConfidenceReason = "a canary planted as the privileged identity was disclosed to the low-privilege identity"
+		f.Evidence = fmt.Sprintf("planted canary disclosed to low-priv (HTTP %d)", lowStatus)
+		pr.finding, pr.certain = f, true
+		return pr, nil
+	}
+
 	privTokens := distinctiveTokens(privBody)
 	if anonOK {
 		privTokens = subtract(privTokens, tokenSetOf(anonBody))
 	}
-	// If privilege gates nothing beyond what anonymous already sees, the resource is
-	// public (or empty) — low-priv seeing it is not a disclosure.
 	if len(privTokens) == 0 {
 		f.Verdict, f.Evidence = VerdictPublic, fmt.Sprintf("no privileged-only content (anon HTTP %d, priv HTTP %d)", f.anonStatus, privStatus)
-		return f, nil
+		pr.finding = f
+		return pr, nil
 	}
 
-	// Does the low-priv response disclose that privileged-gated content?
 	leaked := intersect(privTokens, tokenSetOf(lowBody))
+	pr.leaked = leaked
 	identical := ok2xx(privStatus) && strings.TrimSpace(privBody) != "" && privBody == lowBody
 
 	if identical || len(leaked) >= 2 {
@@ -155,18 +239,49 @@ func (d *DifferentialOracle) Probe(ctx context.Context, method, path string) (Di
 		} else {
 			f.Evidence = fmt.Sprintf("low-priv discloses %d privileged-only token(s), e.g. %q", len(leaked), trunc(f.Marker, 48))
 		}
-		return f, nil
+		pr.finding = f
+		return pr, nil
 	}
 
 	f.Verdict, f.Evidence = VerdictScoped, fmt.Sprintf("low-priv sees only its own data (HTTP %d; no privileged-only overlap)", lowStatus)
-	return f, nil
+	pr.finding = f
+	return pr, nil
+}
+
+// scoreConfidence rates a BAC flag's likelihood of being a real authorization bug
+// rather than a shared authenticated page. Structured data (JSON) ranks high — APIs
+// return records, not page chrome. For HTML, it subtracts shared chrome (tokens the
+// isChrome predicate marks as recurring across pages) and rates by how much unique
+// content is left: lots of resource-unique content is a real disclosure; all chrome
+// is a likely false positive.
+func scoreConfidence(pr probeResult, isChrome func(string) bool) (Confidence, string) {
+	// Structured data disclosed cross-identity is the strong heuristic: an API returns
+	// a caller's records, not a page every signed-in user shares, so a match is rarely
+	// a false positive.
+	if pr.lowIsJSON {
+		return ConfHigh, "structured data (JSON) disclosed to a low-privilege identity; low false-positive likelihood"
+	}
+	// An HTML page is inherently ambiguous without a canary: two users seeing the same
+	// page can be a real data leak OR just a shared static page (a form, a builder).
+	// So HTML caps at medium, and a page that is only chrome shared across other pages
+	// drops to low. Plant a canary (6c) to turn either into a certainty.
+	unique := 0
+	for tok := range pr.leaked {
+		if !isChrome(tok) {
+			unique++
+		}
+	}
+	if unique == 0 {
+		return ConfLow, "HTML that is page chrome shared with other authenticated pages; high false-positive likelihood"
+	}
+	return ConfMedium, fmt.Sprintf("an HTML page with %d resource-specific token(s) disclosed cross-identity; could be user data or a shared page — plant a canary to confirm", unique)
 }
 
 // fetch does one read-only GET as an identity, through the egress gate, without
 // following redirects so the real status (401/403/3xx) is visible. The identity's
 // cookie jar (from the shared Sessions) carries a cookie login; its Headers carry a
-// header-based session.
-func (d *DifferentialOracle) fetch(ctx context.Context, id Identity, method, path string) (int, string, error) {
+// header-based session. It returns the status, content type, and body.
+func (d *DifferentialOracle) fetch(ctx context.Context, id Identity, method, path string) (int, string, string, error) {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
@@ -175,7 +290,7 @@ func (d *DifferentialOracle) fetch(ctx context.Context, id Identity, method, pat
 		if d.OnDeny != nil {
 			d.OnDeny(raw)
 		}
-		return 0, "", fmt.Errorf("%w: %s", ErrEgressDenied, raw)
+		return 0, "", "", fmt.Errorf("%w: %s", ErrEgressDenied, raw)
 	}
 	to := d.Timeout
 	if to == 0 {
@@ -188,21 +303,40 @@ func (d *DifferentialOracle) fetch(ctx context.Context, id Identity, method, pat
 	}
 	req, err := http.NewRequestWithContext(ctx, method, raw, nil)
 	if err != nil {
-		return 0, "", err
+		return 0, "", "", err
 	}
 	for k, v := range id.Headers {
 		req.Header.Set(k, v)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", err
+		return 0, "", "", err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
-	return resp.StatusCode, string(body), nil
+	return resp.StatusCode, resp.Header.Get("Content-Type"), string(body), nil
 }
 
 func ok2xx(status int) bool { return status >= 200 && status < 300 }
+
+// firstContained returns the first marker present in body, or "".
+func firstContained(markers []string, body string) string {
+	for _, m := range markers {
+		if m != "" && strings.Contains(body, m) {
+			return m
+		}
+	}
+	return ""
+}
+
+// isJSON reports whether a response is structured data rather than an HTML page.
+func isJSON(contentType, body string) bool {
+	if strings.Contains(strings.ToLower(contentType), "json") {
+		return true
+	}
+	t := strings.TrimSpace(body)
+	return strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")
+}
 
 // tokenSetOf returns the set of word-ish tokens in a body.
 func tokenSetOf(s string) map[string]bool {

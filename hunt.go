@@ -12,15 +12,17 @@ import (
 // HuntFinding is one broken-access-control candidate a hunt turned up, after the
 // verifier has (or has not) reproduced it.
 type HuntFinding struct {
-	Method    string
-	Path      string
-	CWE       string // "CWE-862" for broken access control / missing authorization
-	Verdict   BACVerdict
-	Verified  bool   // a verifier ran for this finding
-	Confirmed bool   // the model-written repro reproduced the disclosure
-	Marker    string // the privileged datum disclosed to the low-priv identity
-	Evidence  string
-	ReproGo   string // the executed, validated standalone Go repro (when confirmed)
+	Method           string
+	Path             string
+	CWE              string // "CWE-862" for broken access control / missing authorization
+	Verdict          BACVerdict
+	Confidence       Confidence // certain (canary) | high | medium | low (false-positive likelihood)
+	ConfidenceReason string
+	Verified         bool   // a verifier ran for this finding
+	Confirmed        bool   // the model-written repro reproduced the disclosure
+	Marker           string // the privileged datum disclosed to the low-priv identity
+	Evidence         string
+	ReproGo          string // the executed, validated standalone Go repro (when confirmed)
 }
 
 // HuntReport is the whole result of one hunt: what surface was mapped, which
@@ -52,6 +54,7 @@ type Hunt struct {
 	Model    ModelClient       // optional; nil leaves findings UNVERIFIED
 	Audit    *gledger.AuditLog // optional replayable trace
 	Start    string            // discovery start path (default "/")
+	Seeder   *CanarySeeder     // optional (6c); when set, plants canaries first so a disclosed marker is a certain finding
 }
 
 // Run discovers the surface, flags broken access control differentially, and
@@ -77,10 +80,23 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 	rep.Discovered, rep.SurfaceCount = resources, len(resources)
 	h.emit(traceID, "hunt", "discovered", gledger.F{"testable": len(resources), "as": h.Priv.Name})
 
-	// 2. Differential sweep: canary-free broken-access-control discovery.
+	// 1b. Optional canary seeding (6c): plant markers as the privileged identity so a
+	// disclosed marker turns a differential guess into a certainty.
+	var markers []string
+	if h.Seeder != nil {
+		canaries, err := h.Seeder.Seed(ctx, resources)
+		if err != nil {
+			return rep, fmt.Errorf("hunt seed: %w", err)
+		}
+		markers = PlantedMarkers(canaries)
+		h.emit(traceID, "hunt", "seeded", gledger.F{"planted": len(markers)})
+	}
+
+	// 2. Differential sweep: canary-free broken-access-control discovery, with any
+	// planted canaries as a certainty overlay.
 	oracle := &DifferentialOracle{
 		Base: h.Base, Egress: h.Egress, Sessions: h.Sessions,
-		Priv: h.Priv, Low: h.Low, Anon: h.Anon,
+		Priv: h.Priv, Low: h.Low, Anon: h.Anon, Markers: markers,
 	}
 	mps := make([][2]string, 0, len(resources))
 	for _, p := range resources {
@@ -97,7 +113,11 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 		if !f.Flagged() {
 			continue
 		}
-		hf := HuntFinding{Method: f.Method, Path: f.Path, CWE: "CWE-862", Verdict: f.Verdict, Marker: f.Marker, Evidence: f.Evidence}
+		hf := HuntFinding{
+			Method: f.Method, Path: f.Path, CWE: "CWE-862", Verdict: f.Verdict,
+			Confidence: f.Confidence, ConfidenceReason: f.ConfidenceReason,
+			Marker: f.Marker, Evidence: f.Evidence,
+		}
 		if h.Model != nil && f.Marker != "" {
 			hf.Verified = true
 			v := Verifier{Model: h.Model, Base: h.Base, Marker: f.Marker, Facts: h.facts(f.Path)}
@@ -107,6 +127,7 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 			}
 			h.emit(traceID, "verify", "result", gledger.F{"path": f.Path, "confirmed": hf.Confirmed, "attempts": vr.Attempts})
 		}
+		h.emit(traceID, "hunt", "flag", gledger.F{"path": f.Path, "cwe": hf.CWE, "confidence": string(hf.Confidence), "confirmed": hf.Confirmed})
 		rep.Findings = append(rep.Findings, hf)
 	}
 	for _, hf := range rep.Findings {
