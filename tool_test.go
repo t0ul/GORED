@@ -3,6 +3,7 @@ package gored_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -106,5 +107,67 @@ func TestToolboxResolveTolerant(t *testing.T) {
 	}
 	if _, _, ok := tb.Resolve("totally_unknown"); ok {
 		t.Fatal("unknown tool should not resolve")
+	}
+}
+
+func TestHTTPToolSessionPersistsAndShowsHeaders(t *testing.T) {
+	// A real app: /login sets a session cookie; /secret requires it. No mocks.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "sid", Value: "valid-token", Path: "/"})
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("logged in"))
+	})
+	mux.HandleFunc("/secret", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("sid"); err != nil || c.Value != "valid-token" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte("forbidden"))
+			return
+		}
+		_, _ = w.Write([]byte("TOP SECRET"))
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	tool := gored.NewHTTPRequestTool(ts.URL, gored.NewEgress(authority(t, ts.URL)), nil)
+	ctx := context.Background()
+
+	// Header visibility: the login response's Set-Cookie must surface to the agent.
+	login, err := tool.Call(ctx, map[string]any{"method": "GET", "path": "/login", "session": "attacker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(login), "set-cookie: sid=valid-token") {
+		t.Fatalf("login response did not surface Set-Cookie:\n%s", login)
+	}
+
+	// Session persistence: the same session reuses the cookie and reaches /secret.
+	got, err := tool.Call(ctx, map[string]any{"method": "GET", "path": "/secret", "session": "attacker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "TOP SECRET") {
+		t.Fatalf("session did not persist across calls:\n%s", got)
+	}
+
+	// A different session has no cookie and is refused — jars are isolated.
+	other, err := tool.Call(ctx, map[string]any{"method": "GET", "path": "/secret", "session": "victim"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(other, "HTTP 403") {
+		t.Fatalf("a fresh session should be refused, got:\n%s", other)
+	}
+}
+
+func TestDiffTool(t *testing.T) {
+	d := gored.DiffTool{}
+	eq, _ := d.Call(context.Background(), map[string]any{"a": "same", "b": "same"})
+	if !strings.Contains(eq, "identical") {
+		t.Fatalf("want identical, got %q", eq)
+	}
+	ne, _ := d.Call(context.Background(), map[string]any{"a": "line1\nX", "b": "line1\nY"})
+	if !strings.Contains(ne, "differ") || !strings.Contains(ne, "line 2") {
+		t.Fatalf("want a line-2 diff, got %q", ne)
 	}
 }

@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -127,27 +129,58 @@ type HTTPRequestTool struct {
 	Egress *Egress
 	// OnDeny is called with the denied URL so the loop can emit the beacon event.
 	OnDeny func(rawurl string)
-	client *http.Client
+	// AllowMethods, when non-nil, is the set of HTTP methods the agent may use
+	// (upper-case). It is the safety rail for pointing the agent at a real app you
+	// are building: restrict it to read-only verbs so a stochastic agent cannot
+	// mutate or destroy real data. Nil means every method is allowed.
+	AllowMethods map[string]bool
+
+	mu      sync.Mutex
+	clients map[string]*http.Client // per-session cookie jars; "" = default jarless
+	timeout time.Duration
 }
 
 func NewHTTPRequestTool(base string, e *Egress, onDeny func(string)) *HTTPRequestTool {
 	return &HTTPRequestTool{
-		Base:   strings.TrimRight(base, "/"),
-		Egress: e,
-		OnDeny: onDeny,
-		client: &http.Client{Timeout: 8 * time.Second},
+		Base:    strings.TrimRight(base, "/"),
+		Egress:  e,
+		OnDeny:  onDeny,
+		clients: map[string]*http.Client{},
+		timeout: 8 * time.Second,
 	}
+}
+
+// clientFor returns the HTTP client for a named session, lazily giving each
+// session its own cookie jar so the agent can authenticate and stay authenticated
+// as that identity. The empty session is jarless (stateless). Jars are per-tool,
+// which is per-run and per-agent, so trials stay independent.
+func (t *HTTPRequestTool) clientFor(session string) *http.Client {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if c, ok := t.clients[session]; ok {
+		return c
+	}
+	c := &http.Client{Timeout: t.timeout}
+	if session != "" {
+		jar, _ := cookiejar.New(nil)
+		c.Jar = jar
+	}
+	t.clients[session] = c
+	return c
 }
 
 func (*HTTPRequestTool) Name() string { return "http_request" }
 func (*HTTPRequestTool) Describe() string {
-	return `issue an HTTP request to the target. args: {"method":"GET|POST","path":"/...","headers":{...},"body":"..."}. Use "url" instead of "path" only for an absolute URL. Returns "HTTP <status>\n<body>".`
+	return `issue an HTTP request. args: {"method":"GET|POST","path":"/...","headers":{...},"body":"...","session":"name"}. "session" keeps cookies across calls under that name, so log in once and reuse it (use two names like "attacker" and "victim" to compare identities). Returns "HTTP <status>\n<key headers incl set-cookie/location>\n<body>".`
 }
 
 func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string, error) {
 	method := strings.ToUpper(asString(args["method"]))
 	if method == "" {
 		method = http.MethodGet
+	}
+	if t.AllowMethods != nil && !t.AllowMethods[method] {
+		return fmt.Sprintf("refused: method %s not permitted by policy (read-only)", method), nil
 	}
 	raw := asString(args["url"])
 	if raw == "" {
@@ -179,13 +212,33 @@ func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string
 			req.Header.Set(k, asString(v))
 		}
 	}
-	resp, err := t.client.Do(req)
+	resp, err := t.clientFor(asString(args["session"])).Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	return fmt.Sprintf("HTTP %d\n%s", resp.StatusCode, string(data)), nil
+	return fmt.Sprintf("HTTP %d\n%s%s", resp.StatusCode, headerLines(resp.Header), string(data)), nil
+}
+
+// interestingHeaders are surfaced to the agent: they carry the session, redirects,
+// content type, and auth challenges that drive access-control reasoning.
+var interestingHeaders = []string{"Set-Cookie", "Location", "Content-Type", "WWW-Authenticate", "Www-Authenticate"}
+
+func headerLines(h http.Header) string {
+	var sb strings.Builder
+	seen := map[string]bool{}
+	for _, name := range interestingHeaders {
+		key := strings.ToLower(name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		for _, v := range h.Values(name) {
+			fmt.Fprintf(&sb, "%s: %s\n", key, v)
+		}
+	}
+	return sb.String()
 }
 
 // ExecTool runs a short, allowlisted, non-network command in a bounded sandbox.
@@ -236,6 +289,42 @@ func (e *ExecTool) Call(ctx context.Context, args map[string]any) (string, error
 		return trimmed, fmt.Errorf("exec: %w", err)
 	}
 	return trimmed, nil
+}
+
+// DiffTool compares two texts (typically two identities' responses to the same
+// resource). The access-control signal is a diff: if a victim's resource comes
+// back byte-identical to an unauthorized request, authorization is broken.
+type DiffTool struct{}
+
+func (DiffTool) Name() string { return "diff" }
+func (DiffTool) Describe() string {
+	return `compare two responses. args: {"a":"...","b":"..."}. Reports whether they are identical and the first line that differs — use it to tell whether one identity sees another identity's data.`
+}
+
+func (DiffTool) Call(_ context.Context, args map[string]any) (string, error) {
+	a, b := asString(args["a"]), asString(args["b"])
+	if a == b {
+		return fmt.Sprintf("identical (%d bytes) — same bytes for both inputs", len(a)), nil
+	}
+	la, lb := strings.Split(a, "\n"), strings.Split(b, "\n")
+	n := len(la)
+	if len(lb) < n {
+		n = len(lb)
+	}
+	for i := 0; i < n; i++ {
+		if la[i] != lb[i] {
+			return fmt.Sprintf("differ: len(a)=%d len(b)=%d; first diff at line %d:\n  a: %s\n  b: %s",
+				len(a), len(b), i+1, trunc(la[i], 120), trunc(lb[i], 120)), nil
+		}
+	}
+	return fmt.Sprintf("differ only in length: len(a)=%d len(b)=%d (one is a prefix of the other)", len(a), len(b)), nil
+}
+
+func trunc(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }
 
 func asString(v any) string {

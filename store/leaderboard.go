@@ -1,0 +1,249 @@
+package store
+
+import (
+	"math"
+	"sort"
+	"strings"
+)
+
+// LeaderboardRow is the aggregate for one (model, skill_temp, difficulty) cell: the
+// capture rate with its sample size and standard error, and the efficiency medians
+// among captures (plan §7/§8). Efficiency is reported over successful runs only,
+// since tool-call and wall-time counts are meaningful only when a flag was taken.
+type LeaderboardRow struct {
+	Model           string  `json:"model"`
+	SkillTemp       string  `json:"skill_temp"`
+	Difficulty      string  `json:"difficulty"`
+	N               int     `json:"n"`
+	Captured        int     `json:"captured"`
+	CaptureRate     float64 `json:"capture_rate"`      // Captured / N
+	StdErr          float64 `json:"stderr"`            // sqrt(p(1-p)/N): the variance of the rate
+	MedianToolCalls int     `json:"median_tool_calls"` // among captures
+	MedianWallMS    int     `json:"median_wall_ms"`    // among captures
+}
+
+type runRow struct {
+	model, skillTemp, difficulty, outcome string
+	toolCalls, wallMS                     int
+}
+
+func (s *Store) allRuns() ([]runRow, error) {
+	rows, err := s.db.Query(`SELECT model, COALESCE(skill_temp,''), COALESCE(difficulty,''), COALESCE(outcome,''), COALESCE(tool_calls,0), COALESCE(wall_ms,0) FROM redteam_runs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []runRow
+	for rows.Next() {
+		var r runRow
+		if err := rows.Scan(&r.model, &r.skillTemp, &r.difficulty, &r.outcome, &r.toolCalls, &r.wallMS); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Leaderboard aggregates all persisted runs into per-cell rows, sorted by capture
+// rate (desc), then model, skill temperature, and difficulty.
+func (s *Store) Leaderboard() ([]LeaderboardRow, error) {
+	runs, err := s.allRuns()
+	if err != nil {
+		return nil, err
+	}
+	type key struct{ model, temp, diff string }
+	groups := map[key][]runRow{}
+	var order []key
+	for _, r := range runs {
+		k := key{r.model, r.skillTemp, r.difficulty}
+		if _, seen := groups[k]; !seen {
+			order = append(order, k)
+		}
+		groups[k] = append(groups[k], r)
+	}
+	var out []LeaderboardRow
+	for _, k := range order {
+		g := groups[k]
+		var captured int
+		var tcs, walls []int
+		for _, r := range g {
+			if r.outcome == "captured" {
+				captured++
+				tcs = append(tcs, r.toolCalls)
+				walls = append(walls, r.wallMS)
+			}
+		}
+		n := len(g)
+		p := 0.0
+		if n > 0 {
+			p = float64(captured) / float64(n)
+		}
+		out = append(out, LeaderboardRow{
+			Model: k.model, SkillTemp: k.temp, Difficulty: k.diff,
+			N: n, Captured: captured, CaptureRate: p,
+			StdErr:          math.Sqrt(p * (1 - p) / float64(max1(n))),
+			MedianToolCalls: medianInt(tcs),
+			MedianWallMS:    medianInt(walls),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CaptureRate != out[j].CaptureRate {
+			return out[i].CaptureRate > out[j].CaptureRate
+		}
+		if out[i].Model != out[j].Model {
+			return out[i].Model < out[j].Model
+		}
+		if out[i].SkillTemp != out[j].SkillTemp {
+			return out[i].SkillTemp < out[j].SkillTemp
+		}
+		return out[i].Difficulty < out[j].Difficulty
+	})
+	return out, nil
+}
+
+// Lift is the cold→warm capture-rate lift for one (model, difficulty): how much the
+// warm scaffold adds over cold. It is the headline per-model measurement (plan §8).
+type Lift struct {
+	Model      string  `json:"model"`
+	Difficulty string  `json:"difficulty"`
+	ColdRate   float64 `json:"cold_rate"`
+	WarmRate   float64 `json:"warm_rate"`
+	Lift       float64 `json:"lift"` // WarmRate - ColdRate
+	NCold      int     `json:"n_cold"`
+	NWarm      int     `json:"n_warm"`
+}
+
+// ColdWarmLift computes the lift per (model, difficulty) from the persisted runs.
+func (s *Store) ColdWarmLift() ([]Lift, error) {
+	rows, err := s.Leaderboard()
+	if err != nil {
+		return nil, err
+	}
+	type key struct{ model, diff string }
+	type acc struct {
+		coldRate, warmRate float64
+		nCold, nWarm       int
+		haveCold, haveWarm bool
+	}
+	m := map[key]*acc{}
+	var order []key
+	for _, r := range rows {
+		k := key{r.Model, r.Difficulty}
+		a, ok := m[k]
+		if !ok {
+			a = &acc{}
+			m[k] = a
+			order = append(order, k)
+		}
+		switch r.SkillTemp {
+		case "cold":
+			a.coldRate, a.nCold, a.haveCold = r.CaptureRate, r.N, true
+		case "warm":
+			a.warmRate, a.nWarm, a.haveWarm = r.CaptureRate, r.N, true
+		}
+	}
+	var out []Lift
+	for _, k := range order {
+		a := m[k]
+		if !a.haveCold || !a.haveWarm {
+			continue // lift needs both arms
+		}
+		out = append(out, Lift{
+			Model: k.model, Difficulty: k.diff,
+			ColdRate: a.coldRate, WarmRate: a.warmRate, Lift: a.warmRate - a.coldRate,
+			NCold: a.nCold, NWarm: a.nWarm,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Lift != out[j].Lift {
+			return out[i].Lift > out[j].Lift
+		}
+		return out[i].Model < out[j].Model
+	})
+	return out, nil
+}
+
+// IsComboName reports whether a contestant name denotes a combo. Combo clients
+// name themselves with a parenthesized composition (e.g. "planexec(a->b)",
+// "selfcons(a,k=3)"); solo models never contain a parenthesis.
+func IsComboName(name string) bool { return strings.ContainsRune(name, '(') }
+
+// ComboVsSolo is one combo's standing against the best solo in the same
+// (skill_temp, difficulty) cell — the basis for the plan's rule "keep only combos
+// beating the best solo."
+type ComboVsSolo struct {
+	SkillTemp    string  `json:"skill_temp"`
+	Difficulty   string  `json:"difficulty"`
+	Combo        string  `json:"combo"`
+	ComboRate    float64 `json:"combo_rate"`
+	BestSolo     string  `json:"best_solo"`
+	BestSoloRate float64 `json:"best_solo_rate"`
+	Beats        bool    `json:"beats"`
+}
+
+// ComboComparison compares each combo to the best solo in its (skill_temp,
+// difficulty) cell. Cells without both a combo and a solo are skipped.
+func (s *Store) ComboComparison() ([]ComboVsSolo, error) {
+	rows, err := s.Leaderboard()
+	if err != nil {
+		return nil, err
+	}
+	type key struct{ temp, diff string }
+	type cell struct {
+		combos       []LeaderboardRow
+		bestSolo     string
+		bestSoloRate float64
+		haveSolo     bool
+	}
+	cells := map[key]*cell{}
+	var order []key
+	for _, r := range rows {
+		k := key{r.SkillTemp, r.Difficulty}
+		c, ok := cells[k]
+		if !ok {
+			c = &cell{}
+			cells[k] = c
+			order = append(order, k)
+		}
+		if IsComboName(r.Model) {
+			c.combos = append(c.combos, r)
+		} else if !c.haveSolo || r.CaptureRate > c.bestSoloRate {
+			c.haveSolo, c.bestSolo, c.bestSoloRate = true, r.Model, r.CaptureRate
+		}
+	}
+	var out []ComboVsSolo
+	for _, k := range order {
+		c := cells[k]
+		if !c.haveSolo {
+			continue
+		}
+		for _, cb := range c.combos {
+			out = append(out, ComboVsSolo{
+				SkillTemp: k.temp, Difficulty: k.diff,
+				Combo: cb.Model, ComboRate: cb.CaptureRate,
+				BestSolo: c.bestSolo, BestSoloRate: c.bestSoloRate,
+				Beats: cb.CaptureRate > c.bestSoloRate,
+			})
+		}
+	}
+	return out, nil
+}
+
+func medianInt(xs []int) int {
+	if len(xs) == 0 {
+		return 0
+	}
+	sort.Ints(xs)
+	n := len(xs)
+	if n%2 == 1 {
+		return xs[n/2]
+	}
+	return (xs[n/2-1] + xs[n/2]) / 2
+}
+
+func max1(n int) int {
+	if n < 1 {
+		return 1
+	}
+	return n
+}
