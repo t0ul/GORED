@@ -175,7 +175,11 @@ func (h *Hunt) facts(path string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Target base URL: %s\n", h.Base)
 	if h.Low.LoginPath != "" {
-		fmt.Fprintf(&b, "You are a low-privilege user. Log in with POST %s, JSON body %s, Content-Type application/json.\n", h.Low.LoginPath, h.Low.LoginBody)
+		ct := h.Low.LoginContentType
+		if ct == "" {
+			ct = "application/json"
+		}
+		fmt.Fprintf(&b, "You are a low-privilege user. Log in with POST %s, Content-Type %s, body: %s.\n", h.Low.LoginPath, ct, h.Low.LoginBody)
 		fmt.Fprintf(&b, "Then GET %s — another user's data is disclosed there to your low-privilege account. Write the plan that logs in, then reads it.", path)
 	} else {
 		var hdr []string
