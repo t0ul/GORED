@@ -95,7 +95,13 @@ func (g *goAnalyzer) Analyze(f ScannerFinding) (Rung, string) {
 		return g.byReachability(f, "Go stdlib")
 
 	default:
-		// A dependency module path (e.g. golang.org/x/crypto).
+		// A dependency module path (e.g. golang.org/x/crypto). Anything that does not
+		// look like a Go module — a Dockerfile, an image, some other artifact — is not
+		// this analyzer's concern: return unknown rather than falsely ruling it out as a
+		// dependency that happens not to be in go.mod.
+		if !looksLikeModule(loc) {
+			return RungUnknown, "not a Go source artifact: " + loc
+		}
 		mod := modulePath(loc)
 		if !strings.Contains(g.goMod, mod) {
 			return RungAbsent, "dependency not in go.mod: " + mod
