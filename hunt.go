@@ -55,6 +55,11 @@ type Hunt struct {
 	Audit    *gledger.AuditLog // optional replayable trace
 	Start    string            // discovery start path (default "/")
 	Seeder   *CanarySeeder     // optional (6c); when set, plants canaries first so a disclosed marker is a certain finding
+	// SeedPaths are extra same-origin paths/URLs to test, from an external crawler
+	// (an OWASP ZAP ajax-spider run, a sitemap, a browser). Static discovery misses
+	// routes a SPA builds in JS at runtime; feeding a real crawler's URLs here closes
+	// that gap without coupling GORED to any one crawler.
+	SeedPaths []string
 }
 
 // Run discovers the surface, flags broken access control differentially, and
@@ -78,8 +83,14 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 	}
 	resources := testableResources(out)
 	templates := itemTemplates(out)
+	// Merge routes a real crawler (e.g. ZAP's ajax spider) found that static crawling
+	// missed — the SPA-depth gap.
+	seeded := 0
+	if len(h.SeedPaths) > 0 {
+		resources, seeded = mergeSeedPaths(resources, h.SeedPaths, h.Base)
+	}
 	rep.Discovered, rep.SurfaceCount = resources, len(resources)
-	h.emit(traceID, "hunt", "discovered", gledger.F{"testable": len(resources), "templates": len(templates), "as": h.Priv.Name})
+	h.emit(traceID, "hunt", "discovered", gledger.F{"testable": len(resources), "templates": len(templates), "seeded": seeded, "as": h.Priv.Name})
 
 	// 1b. Optional canary seeding (6c + 7a): plant markers as the privileged identity
 	// so a disclosed marker is a certainty. Collection seeds yield item paths
@@ -216,6 +227,33 @@ func testableResources(discoverOut string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// mergeSeedPaths adds externally-crawled URLs/paths to the testable set: each is
+// reduced to a same-origin path, filtered like any discovered resource, and deduped.
+// Returns the merged set and how many were newly added.
+func mergeSeedPaths(resources, seeds []string, base string) ([]string, int) {
+	have := map[string]bool{}
+	for _, r := range resources {
+		have[r] = true
+	}
+	out := append([]string{}, resources...)
+	added := 0
+	for _, s := range seeds {
+		s = strings.TrimSpace(s)
+		p := samePath(base, s)
+		if p == "" && strings.HasPrefix(s, "/") {
+			p = cleanPath(s)
+		}
+		if p == "" || have[p] || !testablePath(p) {
+			continue
+		}
+		have[p] = true
+		out = append(out, p)
+		added++
+	}
+	sort.Strings(out)
+	return out, added
 }
 
 // itemTemplates returns the discovered `{id}`-style item endpoints (the ones

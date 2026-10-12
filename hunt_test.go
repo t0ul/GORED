@@ -2,6 +2,7 @@ package gored_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	gored "github.com/t0ul/GORED"
@@ -63,4 +64,36 @@ func contains(ss []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestHuntMergesSeedPaths proves the ajax-spider-as-discovery path: URLs from an
+// external crawler are reduced to same-origin paths and merged into the testable
+// surface (closing the SPA-depth gap), while off-origin URLs are dropped.
+func TestHuntMergesSeedPaths(t *testing.T) {
+	_, base := liveTarget(t)
+	h := &gored.Hunt{
+		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
+		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
+		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Anon: &gored.Identity{Name: "anon"},
+		SeedPaths: []string{
+			base + "/api/spa-route",      // full same-origin URL from a crawler
+			"/api/xhr-endpoint",          // a bare path
+			"https://evil.example/pwn",   // off-origin: must be dropped
+		},
+	}
+	rep, err := h.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/api/spa-route", "/api/xhr-endpoint"} {
+		if !contains(rep.Discovered, want) {
+			t.Errorf("seeded path %s not merged into the surface: %v", want, rep.Discovered)
+		}
+	}
+	for _, p := range rep.Discovered {
+		if strings.Contains(p, "evil.example") {
+			t.Errorf("off-origin seed leaked into the surface: %s", p)
+		}
+	}
 }
