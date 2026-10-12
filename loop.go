@@ -95,6 +95,13 @@ type Runner struct {
 	Store     RunStore // optional
 	Bounds    Bounds
 	CanaryURL string // pinged once to prove egress denial (the beacon)
+	// Detector is the oracle for a real external app GORED does not instrument: it
+	// inspects each tool result for a planted canary. Capture via the Detector is
+	// authoritative because the tool result is the server's real HTTP response — the
+	// agent cannot fabricate the server's bytes — and the canary was planted through
+	// a privileged path, so its appearance in an unauthorized response is a genuine
+	// disclosure. Returns (true, via) when the canary is present.
+	Detector func(toolResult string) (captured bool, via string)
 }
 
 // Run executes the loop: a deterministic harness around the stochastic model. It
@@ -188,6 +195,15 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 		} else {
 			r.emit(traceID, "tool", "tool_result", gledger.F{"step": step, "result": out})
 			r.recordObservation(act, out, step)
+			// Canary oracle for an external app: did the server's real response
+			// disclose the planted marker to this (unauthorized) agent?
+			if r.Detector != nil {
+				if cap, via := r.Detector(out); cap {
+					res.Outcome, res.CapturedVia = "captured", via
+					r.emit(traceID, "oracle", "capture_detected", gledger.F{"via": via, "step": step, "source": "canary"})
+					break
+				}
+			}
 		}
 
 		// Oracle-authoritative capture check after every tool call.
