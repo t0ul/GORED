@@ -21,6 +21,7 @@ const (
 	FindVulnCandidate FindingType = "vuln-candidate"
 	FindObservation   FindingType = "observation"
 	FindFlagCandidate FindingType = "flag-candidate"
+	FindScanner       FindingType = "scanner" // an untrusted finding ingested from a scanner aggregator
 )
 
 // Finding is one typed note on the blackboard: a value, where it came from, and
@@ -75,6 +76,14 @@ func (b *Blackboard) Add(t FindingType, value string, step int, refs ...int) Fin
 		hook(f)
 	}
 	return f
+}
+
+// AddScannerFinding records a scanner finding as a typed, untrusted board node, so
+// ingested findings share the graph with what GORED discovers and the two can be
+// chained. The value is scrubbed like any other (secrets in a description never reach
+// the model prompt or the trace).
+func (b *Blackboard) AddScannerFinding(f ScannerFinding, step int) Finding {
+	return b.Add(FindScanner, f.Line(), step)
 }
 
 // Findings returns a copy of the board.
