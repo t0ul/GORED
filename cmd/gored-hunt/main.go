@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -53,6 +54,7 @@ func main() {
 		noVerify   = flag.Bool("no-verify", false, "skip the model; report flags UNVERIFIED")
 		seed       = flag.Bool("seed", false, "plant canaries as the privileged identity first (6c), so a disclosed marker is a certain finding")
 		seedURLs   = flag.String("seed-urls", "", "file of extra URLs/paths (one per line) from an external crawler (e.g. ZAP ajax spider) to merge into discovery")
+		openapi    = flag.String("openapi", "", "OpenAPI/Swagger spec (file path or http URL) to merge its routes into discovery")
 		outP       = flag.String("out", "gored-hunt-report.json", "write the JSON report here")
 		traceP     = flag.String("trace", "gored-hunt-trace.jsonl", "replayable gledger trace")
 	)
@@ -74,6 +76,7 @@ func main() {
 		Base: *url, Egress: egress, Sessions: httpTool.Sessions,
 		Priv: privID, Low: lowID, Anon: &gored.Identity{Name: "anon", Session: "anon"},
 		Audit: audit, Start: *start, SeedPaths: readSeedURLs(*seedURLs),
+		SpecPaths: readSpec(*openapi, egress),
 	}
 
 	if !*noVerify {
@@ -205,6 +208,37 @@ func readSeedURLs(path string) []string {
 		}
 	}
 	return out
+}
+
+// readSpec loads an OpenAPI/Swagger spec from a file or http URL (URL fetches go
+// through the egress gate) and parses its routes.
+func readSpec(src string, egress *gored.Egress) []gored.APIPath {
+	if src == "" {
+		return nil
+	}
+	var data []byte
+	var err error
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		if !egress.Allowed(src) {
+			log.Fatalf("-openapi URL %s is not on the target's egress allowlist", src)
+		}
+		resp, e := http.Get(src)
+		if e != nil {
+			log.Fatalf("fetch -openapi %s: %v", src, e)
+		}
+		defer resp.Body.Close()
+		data, err = io.ReadAll(resp.Body)
+	} else {
+		data, err = os.ReadFile(src)
+	}
+	if err != nil {
+		log.Fatalf("read -openapi %s: %v", src, err)
+	}
+	paths, err := gored.PathsFromOpenAPI(data)
+	if err != nil {
+		log.Fatalf("-openapi: %v", err)
+	}
+	return paths
 }
 
 func hostPort(base string) string {

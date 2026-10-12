@@ -60,6 +60,10 @@ type Hunt struct {
 	// routes a SPA builds in JS at runtime; feeding a real crawler's URLs here closes
 	// that gap without coupling GORED to any one crawler.
 	SeedPaths []string
+	// SpecPaths are routes from an API spec (OpenAPI/Swagger). For an API-first app the
+	// spec is a more complete surface than crawling — collections join the resources,
+	// {id} paths join the templates the id-swap step tests.
+	SpecPaths []APIPath
 }
 
 // Run discovers the surface, flags broken access control differentially, and
@@ -89,8 +93,13 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 	if len(h.SeedPaths) > 0 {
 		resources, seeded = mergeSeedPaths(resources, h.SeedPaths, h.Base)
 	}
+	if len(h.SpecPaths) > 0 {
+		resources, templates = mergeSpecPaths(resources, templates, h.SpecPaths)
+	}
 	rep.Discovered, rep.SurfaceCount = resources, len(resources)
-	h.emit(traceID, "hunt", "discovered", gledger.F{"testable": len(resources), "templates": len(templates), "seeded": seeded, "as": h.Priv.Name})
+	h.emit(traceID, "hunt", "discovered", gledger.F{
+		"testable": len(resources), "templates": len(templates), "seeded": seeded, "spec": len(h.SpecPaths), "as": h.Priv.Name,
+	})
 
 	// 1b. Optional canary seeding (6c + 7a): plant markers as the privileged identity
 	// so a disclosed marker is a certainty. Collection seeds yield item paths
