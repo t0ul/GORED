@@ -57,10 +57,8 @@ func SkillFor(class VulnClass, temp SkillTemp) (Skill, bool) {
 var ReconSkill = Skill{
 	Name: "cold-recon",
 	Temp: SkillCold,
-	Instruction: `You are the RECON agent of an authorized red team. Your only job is to map the app's surface and hand it off; do NOT try to exploit anything.
-1. Call the discover tool starting at "/" to list real paths. Do not guess paths — use what discover returns.
-2. For a few of the most interesting paths (APIs, admin, anything with an id or token), GET them and note the status: which need a session or a role (401/403), which are open.
-3. Report concisely what exists and what is protected. Then finish.`,
+	Instruction: `You are the RECON agent of an authorized red team. Your only job is to map the app's surface; do NOT exploit anything.
+Call the discover tool to list real paths — start at "/", then call it again on any interesting path it returns (an API root, a scripts path) to go one level deeper. Do not guess paths; only use discover. The paths you surface are handed to the exploit agent via the shared board. A few discover calls, then finish.`,
 }
 
 // ExploitSkill is the exploit half: read the surface the recon agent left on the
@@ -73,6 +71,7 @@ Reason from the surface to a weakness and try ONE thing at a time:
 - Broken object authorization (IDOR): request a resource that belongs to another user or an admin by changing an id in a path you were shown.
 - Broken access control: reach a role-gated route as a low-privilege or unauthenticated identity.
 - Server-side request forgery: if an endpoint fetches a URL you supply, point it at an internal path.
+If a request is refused for a missing or invalid session, GET "/" to read how to authenticate, then retry carrying that session.
 Use the "session" argument to hold a logged-in identity across calls, and a second session name to compare identities. When you read a GORED{...} value you are done.`,
 }
 

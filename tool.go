@@ -291,6 +291,42 @@ func (e *ExecTool) Call(ctx context.Context, args map[string]any) (string, error
 	return trimmed, nil
 }
 
+// DiffTool compares two texts (typically two identities' responses to the same
+// resource). The access-control signal is a diff: if a victim's resource comes
+// back byte-identical to an unauthorized request, authorization is broken.
+type DiffTool struct{}
+
+func (DiffTool) Name() string { return "diff" }
+func (DiffTool) Describe() string {
+	return `compare two responses. args: {"a":"...","b":"..."}. Reports whether they are identical and the first line that differs — use it to tell whether one identity sees another identity's data.`
+}
+
+func (DiffTool) Call(_ context.Context, args map[string]any) (string, error) {
+	a, b := asString(args["a"]), asString(args["b"])
+	if a == b {
+		return fmt.Sprintf("identical (%d bytes) — same bytes for both inputs", len(a)), nil
+	}
+	la, lb := strings.Split(a, "\n"), strings.Split(b, "\n")
+	n := len(la)
+	if len(lb) < n {
+		n = len(lb)
+	}
+	for i := 0; i < n; i++ {
+		if la[i] != lb[i] {
+			return fmt.Sprintf("differ: len(a)=%d len(b)=%d; first diff at line %d:\n  a: %s\n  b: %s",
+				len(a), len(b), i+1, trunc(la[i], 120), trunc(lb[i], 120)), nil
+		}
+	}
+	return fmt.Sprintf("differ only in length: len(a)=%d len(b)=%d (one is a prefix of the other)", len(a), len(b)), nil
+}
+
+func trunc(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}
+
 func asString(v any) string {
 	switch t := v.(type) {
 	case string:

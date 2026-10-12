@@ -159,3 +159,15 @@ func TestHTTPToolSessionPersistsAndShowsHeaders(t *testing.T) {
 		t.Fatalf("a fresh session should be refused, got:\n%s", other)
 	}
 }
+
+func TestDiffTool(t *testing.T) {
+	d := gored.DiffTool{}
+	eq, _ := d.Call(context.Background(), map[string]any{"a": "same", "b": "same"})
+	if !strings.Contains(eq, "identical") {
+		t.Fatalf("want identical, got %q", eq)
+	}
+	ne, _ := d.Call(context.Background(), map[string]any{"a": "line1\nX", "b": "line1\nY"})
+	if !strings.Contains(ne, "differ") || !strings.Contains(ne, "line 2") {
+		t.Fatalf("want a line-2 diff, got %q", ne)
+	}
+}

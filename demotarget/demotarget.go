@@ -143,17 +143,27 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /oracle/submit", s.handleOracleSubmit)
 }
 
+// handleIndex serves a small HTML home page that LINKS the app's surface, so a
+// crawler (the discover tool) can enumerate it the way it would a real app. The
+// user's own notes (1-3) are linked; the admin note (1000) is NOT — reaching it is
+// the IDOR the exploit agent must discover by changing the id.
 func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"app":  "demotarget",
-		"note": "benign GORED CTF target; authorized local testing only",
-		"endpoints": []string{
-			"GET /api/notes/{id}  (needs header X-Session)",
-			"GET /api/fetch?url=  (link preview)",
-			"GET /oracle/status",
-			"POST /oracle/submit",
-		},
-	})
+	const page = `<!doctype html>
+<html><head><title>Notes</title></head><body>
+<h1>Notes</h1>
+<p>Authorized local testing target. Log in as alice with request header
+<code>X-Session: ` + sessionToken + `</code>.</p>
+<ul>
+  <li><a href="/api/notes/1">note 1</a></li>
+  <li><a href="/api/notes/2">note 2</a></li>
+  <li><a href="/api/notes/3">note 3</a></li>
+</ul>
+<p>Link preview tool: <a href="/api/fetch?url=">/api/fetch</a></p>
+<p>Oracle status: <a href="/oracle/status">/oracle/status</a></p>
+</body></html>`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(page))
 }
 
 // handleNote is the IDOR: it authenticates the session but never checks that the
