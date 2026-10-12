@@ -22,6 +22,7 @@ func main() {
 		where  = flag.String("where", "", "optional SQL filter (without WHERE)")
 		app    = flag.String("app", "", "only findings whose asset app == this")
 		list   = flag.Bool("list", false, "print each finding line")
+		source = flag.String("source", "", "path to the app's source tree; whitebox-analyses each finding to a rung (present/reachable/ruled-out)")
 	)
 	flag.Parse()
 	if *dbPath == "" {
@@ -34,7 +35,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	bySource, byApp, byCWE := map[string]int{}, map[string]int{}, map[string]int{}
+	// Optional whitebox analysis: pick an analyzer by detecting the source language.
+	var analyzer gored.SourceAnalyzer
+	if *source != "" {
+		analyzer = gored.DetectAnalyzer(*source)
+		if analyzer == nil {
+			log.Printf("note: -source %s: unsupported language (no analyzer); skipping whitebox rungs", *source)
+		}
+	}
+
+	bySource, byApp, byCWE, byRung := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
 	reach, ruledOut, unknown := 0, 0, 0
 	kept := 0
 	for _, f := range findings {
@@ -55,8 +65,14 @@ func main() {
 		default:
 			ruledOut++
 		}
+		rungLine := ""
+		if analyzer != nil {
+			rung, why := analyzer.Analyze(f)
+			byRung[string(rung)]++
+			rungLine = "  [" + string(rung) + "] " + why
+		}
 		if *list {
-			fmt.Println("  " + f.Line())
+			fmt.Println("  " + f.Line() + rungLine)
 		}
 	}
 
@@ -68,7 +84,10 @@ func main() {
 	if len(byCWE) > 0 {
 		fmt.Printf("CWEs: %s\n", sortedCounts(byCWE))
 	}
-	fmt.Printf("\nruled-out (not reachable) are deprioritized; reachable + access-control findings go to the validator next.\n")
+	if analyzer != nil {
+		fmt.Printf("whitebox (%s source): %s\n", analyzer.Lang(), sortedCounts(byRung))
+	}
+	fmt.Printf("\nruled-out (not reachable / not present) are deprioritized; reachable + access-control findings go to the validator next.\n")
 }
 
 func sortedCounts(m map[string]int) string {
