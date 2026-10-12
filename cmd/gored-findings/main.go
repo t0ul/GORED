@@ -24,6 +24,7 @@ func main() {
 		app       = flag.String("app", "", "only findings whose asset app == this")
 		list      = flag.Bool("list", false, "print each finding line")
 		source    = flag.String("source", "", "path to the app's source tree; whitebox-analyses each finding to a rung (present/reachable/ruled-out)")
+		runtime   = flag.String("runtime", "", "path to a dir with a Dockerfile; discovers container misconfigs and validates runtime findings to rungs")
 		correlate = flag.Bool("correlate", false, "collapse findings that share a route/file/module into one ranked issue (dedup + triage)")
 	)
 	flag.Parse()
@@ -95,6 +96,33 @@ func main() {
 
 	if *correlate {
 		printCorrelated(keptFindings, analyzer)
+	}
+
+	if *runtime != "" {
+		printRuntime(*runtime, keptFindings)
+	}
+}
+
+// printRuntime reports the container runtime: the misconfigurations GORED discovers in
+// the Dockerfile (the discover lane) and, for any runtime finding a scanner reported, the
+// rung it reaches when validated against the file (confirmed vs ruled-out).
+func printRuntime(dir string, findings []gored.ScannerFinding) {
+	ra := gored.DetectRuntimeAnalyzer(dir)
+	if ra == nil {
+		fmt.Printf("\n==== runtime (%s) ====\nno runtime artifact found (no Dockerfile); skipping\n", dir)
+		return
+	}
+	fmt.Printf("\n==== runtime: %s container (%s) ====\n", ra.Runtime(), dir)
+	issues := ra.Issues()
+	fmt.Printf("discovered %d misconfiguration(s) in the Dockerfile:\n", len(issues))
+	for _, is := range issues {
+		fmt.Printf("  %s\n", is.LineStr())
+	}
+	// Validate any runtime-shaped scanner findings (e.g. trivy config) against the file.
+	for _, f := range findings {
+		if rung, why := ra.Analyze(f); rung != gored.RungUnknown {
+			fmt.Printf("  validate [%s] %s @ %s -> %s (%s)\n", f.Source, f.Title, f.Asset, rung, why)
+		}
 	}
 }
 
