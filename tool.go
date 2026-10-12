@@ -226,11 +226,35 @@ func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string
 	}
 	resp, err := t.Sessions.Client(asString(args["session"])).Do(req)
 	if err != nil {
-		return "", err
+		// A transport failure is retryable; label it so the agent backs off and
+		// retries rather than treating it as a verdict about the target.
+		return "", fmt.Errorf("transport error [retryable]: %w", err)
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	return fmt.Sprintf("HTTP %d\n%s%s", resp.StatusCode, headerLines(resp.Header), string(data)), nil
+	// Prefix the status with an error class + what to do next, so the agent branches
+	// on the class instead of guessing from a bare status (jp3g's retryable-flag idea).
+	return fmt.Sprintf("HTTP %d [%s]\n%s%s", resp.StatusCode, classifyStatus(resp.StatusCode), headerLines(resp.Header), string(data)), nil
+}
+
+// classifyStatus maps an HTTP status to an action class for the agent: whether the
+// response is data to act on, an auth problem to re-login for, a rate limit to back
+// off from, or a server error worth one retry.
+func classifyStatus(status int) string {
+	switch {
+	case status >= 200 && status < 300:
+		return "ok"
+	case status == 401 || status == 403:
+		return "auth: authenticate or try another identity, do not retry unchanged"
+	case status == 429:
+		return "rate-limited: back off before retrying"
+	case status >= 500:
+		return "server error: retry once, then treat as data"
+	case status >= 400:
+		return "client error: treat as data, fix the request"
+	default:
+		return "redirect"
+	}
 }
 
 // interestingHeaders are surfaced to the agent: they carry the session, redirects,
