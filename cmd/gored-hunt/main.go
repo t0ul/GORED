@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,10 @@ func main() {
 		low        = flag.String("low", "", "low-privilege identity creds email:password (JSON login)")
 		privHeader = flag.String("priv-header", "", "privileged identity as a static header 'Name: value' (instead of -priv)")
 		lowHeader  = flag.String("low-header", "", "low-privilege identity as a static header 'Name: value' (instead of -low)")
-		loginPath  = flag.String("login-path", "/api/auth/login", "JSON login endpoint for creds identities")
+		loginPath  = flag.String("login-path", "/api/auth/login", "login endpoint for creds identities")
+		loginType  = flag.String("login-type", "json", "login body encoding: json | form")
+		loginUser  = flag.String("login-user", "email", "login field name for the username/email")
+		loginPass  = flag.String("login-pass", "password", "login field name for the password")
 		start      = flag.String("start", "/", "discovery start path")
 		modelF     = flag.String("model", "qwen2.5-3b-instruct.gguf", "local verifier model GGUF")
 		modelDir   = flag.String("modeldir", defaultModelDir(), "GGUF directory")
@@ -58,8 +62,9 @@ func main() {
 	httpTool := gored.NewHTTPRequestTool(*url, egress, nil)
 	httpTool.AllowMethods = map[string]bool{"GET": true, "POST": true}
 
-	privID := mustIdentity(ctx, httpTool, "priv", *priv, *privHeader, *loginPath)
-	lowID := mustIdentity(ctx, httpTool, "low", *low, *lowHeader, *loginPath)
+	login := loginSpec{path: *loginPath, kind: *loginType, userField: *loginUser, passField: *loginPass}
+	privID := mustIdentity(ctx, httpTool, "priv", *priv, *privHeader, login)
+	lowID := mustIdentity(ctx, httpTool, "low", *low, *lowHeader, login)
 
 	audit, err := gledger.Open(*traceP, "gored")
 	must(err)
@@ -97,24 +102,39 @@ func main() {
 	printSummary(rep, *outP, *traceP)
 }
 
+// loginSpec says how a creds identity authenticates: the endpoint, the body encoding
+// (json or form), and the field names for the username/email and password. This is
+// what makes the tool generic across apps that don't use JSON email/password.
+type loginSpec struct {
+	path, kind, userField, passField string
+}
+
+// body renders the login request body and its content type for a user:pass pair.
+func (s loginSpec) body(user, pass string) (string, string) {
+	if s.kind == "form" {
+		return url.Values{s.userField: {user}, s.passField: {pass}}.Encode(), "application/x-www-form-urlencoded"
+	}
+	return fmt.Sprintf("{%q:%q,%q:%q}", s.userField, user, s.passField, pass), "application/json"
+}
+
 // mustIdentity builds an identity from either creds (and logs it in so its cookie
 // jar is live) or a static header. One of creds/header must be set.
-func mustIdentity(ctx context.Context, tool *gored.HTTPRequestTool, name, creds, header, loginPath string) gored.Identity {
+func mustIdentity(ctx context.Context, tool *gored.HTTPRequestTool, name, creds, header string, login loginSpec) gored.Identity {
 	switch {
 	case creds != "":
-		email, pass, ok := strings.Cut(creds, ":")
+		user, pass, ok := strings.Cut(creds, ":")
 		if !ok {
-			log.Fatalf("-%s must be email:password", name)
+			log.Fatalf("-%s must be user:password", name)
 		}
-		body := fmt.Sprintf(`{"email":%q,"password":%q}`, email, pass)
+		body, ct := login.body(user, pass)
 		out, err := tool.Call(ctx, map[string]any{
-			"method": "POST", "path": loginPath, "session": name,
-			"headers": map[string]any{"Content-Type": "application/json"}, "body": body,
+			"method": "POST", "path": login.path, "session": name,
+			"headers": map[string]any{"Content-Type": ct}, "body": body,
 		})
 		if err != nil || !strings.Contains(out, "HTTP 200") {
 			log.Fatalf("login %s failed: %v\n%s", name, err, out)
 		}
-		return gored.Identity{Name: name, Session: name, LoginPath: loginPath, LoginBody: body}
+		return gored.Identity{Name: name, Session: name, LoginPath: login.path, LoginBody: body, LoginContentType: ct}
 	case header != "":
 		k, v, ok := strings.Cut(header, ":")
 		if !ok {

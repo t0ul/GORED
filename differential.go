@@ -22,11 +22,12 @@ import (
 // as this identity without reusing the live cookie jar. A header-based identity
 // leaves them empty and carries Headers instead.
 type Identity struct {
-	Name      string
-	Session   string
-	Headers   map[string]string
-	LoginPath string
-	LoginBody string
+	Name             string
+	Session          string
+	Headers          map[string]string
+	LoginPath        string
+	LoginBody        string
+	LoginContentType string // e.g. application/json or application/x-www-form-urlencoded
 }
 
 // BACVerdict classifies a resource under differential testing.
