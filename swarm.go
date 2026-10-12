@@ -18,6 +18,10 @@ type Agent struct {
 	Skill  Skill
 	Tools  *Toolbox
 	Bounds Bounds
+	// Goal, if set, overrides the swarm objective's goal for this agent only, so the
+	// recon agent gets a recon brief and the exploit agent gets the attack brief
+	// without each other's framing leaking in. Empty uses the objective's goal.
+	Goal string
 }
 
 // Swarm runs several roles against one target over a shared blackboard. v1 is
@@ -37,6 +41,9 @@ type Swarm struct {
 	// SkillTemp labels the swarm's run (cold|warm, by the exploit agent's skill) so
 	// it groups on the leaderboard like a solo. Empty records "swarm".
 	SkillTemp string
+	// Detector is the canary oracle for a real external app, passed to each agent's
+	// Runner (see Runner.Detector). Nil for a target with a server-side oracle.
+	Detector func(toolResult string) (captured bool, via string)
 }
 
 // Run executes the roles in order, stopping as soon as the oracle reports the flag
@@ -71,10 +78,14 @@ func (s *Swarm) Run(ctx context.Context, obj Objective) (RunResult, error) {
 		r := &Runner{
 			Model: role.Model, Tools: role.Tools, Skill: role.Skill,
 			Target: s.Target, Board: s.Board, Audit: s.Audit,
-			Bounds: role.Bounds, CanaryURL: s.CanaryURL,
+			Bounds: role.Bounds, CanaryURL: s.CanaryURL, Detector: s.Detector,
 		}
-		s.emit(traceID, "swarm", "role_start", gledger.F{"role": role.Name, "skill": role.Skill.Name})
-		rr, err := r.Run(ctx, obj)
+		s.emit(traceID, "swarm", "role_start", gledger.F{"role": role.Name, "model": role.Model.Name(), "skill": role.Skill.Name})
+		roleObj := obj
+		if role.Goal != "" {
+			roleObj.Goal = role.Goal
+		}
+		rr, err := r.Run(ctx, roleObj)
 		if err != nil {
 			return res, fmt.Errorf("swarm role %q: %w", role.Name, err)
 		}

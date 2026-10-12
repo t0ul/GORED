@@ -160,11 +160,12 @@ func (t *HTTPRequestTool) clientFor(session string) *http.Client {
 	if c, ok := t.clients[session]; ok {
 		return c
 	}
+	// Every session gets its own jar, including the default (unnamed) one, so an
+	// agent that simply logs in stays logged in without having to manage a session
+	// name — statefulness by default. Named sessions still give isolated identities.
 	c := &http.Client{Timeout: t.timeout}
-	if session != "" {
-		jar, _ := cookiejar.New(nil)
-		c.Jar = jar
-	}
+	jar, _ := cookiejar.New(nil)
+	c.Jar = jar
 	t.clients[session] = c
 	return c
 }

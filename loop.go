@@ -138,6 +138,7 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 
 	msgs := []Message{{Role: RoleSystem, Content: r.systemPrompt(obj)}}
 
+	lastKey := "" // anti-repetition: break loops where the model repeats one call
 	for step := 1; step <= b.MaxSteps; step++ {
 		if time.Since(start) > b.Wall {
 			r.emit(traceID, "run", "budget_wall", gledger.F{"step": step})
@@ -156,13 +157,22 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 			res.Outcome = "error"
 			break
 		}
-		r.emit(traceID, "model", "model_call", gledger.F{"step": step, "reply": reply, "tokens_out": usage.CompletionTokens})
+		r.emit(traceID, "model", "model_call", gledger.F{"step": step, "model": r.Model.Name(), "reply": reply, "tokens_out": usage.CompletionTokens})
 
-		act, ok := parseAction(reply)
-		if !ok {
+		acts := parseActions(reply)
+		if len(acts) == 0 {
 			r.emit(traceID, "model", "parse_miss", gledger.F{"step": step})
 			r.Board.Add(FindObservation, "model produced no valid tool call", step)
 			continue
+		}
+		// A reply may carry a whole plan; take the first step that is not a verbatim
+		// repeat of the last executed one, so the agent progresses through its plan.
+		act := acts[0]
+		for _, a := range acts {
+			if actionKey(a) != lastKey {
+				act = a
+				break
+			}
 		}
 		if act.Done {
 			res.ModelClaim = act.Flag
@@ -180,6 +190,15 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 			r.emit(traceID, "tool", "unknown_tool", gledger.F{"step": step, "tool": act.Tool})
 			r.Board.Add(FindObservation, "no such tool: "+act.Tool, step)
 			continue
+		}
+		// Anti-repetition: a small model often repeats the exact same call. Refuse a
+		// verbatim repeat and nudge it onward instead of burning the budget.
+		if key := actionKey(act); key == lastKey {
+			r.emit(traceID, "tool", "repeat_skipped", gledger.F{"step": step, "tool": resolved})
+			r.Board.Add(FindObservation, "already did "+describeAction(act)+" — do NOT repeat it; try a different endpoint or next step", step)
+			continue
+		} else {
+			lastKey = key
 		}
 		r.emit(traceID, "tool", "tool_call", gledger.F{"step": step, "tool": resolved, "args": act.Args})
 		res.ToolCalls++
@@ -389,11 +408,7 @@ type action struct {
 	Flag string
 }
 
-func parseAction(reply string) (action, bool) {
-	raw, ok := extractJSON(reply)
-	if !ok {
-		return action{}, false
-	}
+func parseOne(raw string) (action, bool) {
 	var p struct {
 		Tool string         `json:"tool"`
 		Args map[string]any `json:"args"`
@@ -415,16 +430,35 @@ func parseAction(reply string) (action, bool) {
 	return action{Tool: p.Tool, Args: p.Args}, true
 }
 
-// extractJSON returns the first balanced {...} object in s.
-func extractJSON(s string) (string, bool) {
-	startIdx := strings.IndexByte(s, '{')
-	if startIdx < 0 {
-		return "", false
+// parseAction returns the first action in a reply (used by self-consistency).
+func parseAction(reply string) (action, bool) {
+	acts := parseActions(reply)
+	if len(acts) == 0 {
+		return action{}, false
 	}
-	depth := 0
-	inStr := false
-	esc := false
-	for i := startIdx; i < len(s); i++ {
+	return acts[0], true
+}
+
+// parseActions returns every action in a reply, in order. Small models often emit
+// a whole plan as several JSON objects in one turn; the loop picks the first that
+// is not a verbatim repeat, so a model that keeps re-leading with the same call
+// still makes progress through the rest of its plan.
+func parseActions(reply string) []action {
+	var acts []action
+	for _, raw := range extractAllJSON(reply) {
+		if a, ok := parseOne(raw); ok {
+			acts = append(acts, a)
+		}
+	}
+	return acts
+}
+
+// extractJSON returns the first balanced {...} object in s.
+// balancedEnd returns the index just past the '}' closing the object that starts
+// at s[start]=='{', or -1 if unbalanced.
+func balancedEnd(s string, start int) int {
+	depth, inStr, esc := 0, false, false
+	for i := start; i < len(s); i++ {
 		c := s[i]
 		switch {
 		case esc:
@@ -439,11 +473,42 @@ func extractJSON(s string) (string, bool) {
 		case c == '}':
 			depth--
 			if depth == 0 {
-				return s[startIdx : i+1], true
+				return i + 1
 			}
 		}
 	}
-	return "", false
+	return -1
+}
+
+func extractJSON(s string) (string, bool) {
+	i := strings.IndexByte(s, '{')
+	if i < 0 {
+		return "", false
+	}
+	e := balancedEnd(s, i)
+	if e < 0 {
+		return "", false
+	}
+	return s[i:e], true
+}
+
+// extractAllJSON returns every top-level {...} object in s, in order.
+func extractAllJSON(s string) []string {
+	var out []string
+	for i := 0; i < len(s); {
+		k := strings.IndexByte(s[i:], '{')
+		if k < 0 {
+			break
+		}
+		k += i
+		e := balancedEnd(s, k)
+		if e < 0 {
+			break
+		}
+		out = append(out, s[k:e])
+		i = e
+	}
+	return out
 }
 
 func firstLine(s string) string {
