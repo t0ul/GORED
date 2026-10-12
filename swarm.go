@@ -34,6 +34,9 @@ type Swarm struct {
 	// Name identifies the swarm as a contestant on the leaderboard, e.g.
 	// "swarm(recon=qwen0.5b,exploit=qwen3b)".
 	Name string
+	// SkillTemp labels the swarm's run (cold|warm, by the exploit agent's skill) so
+	// it groups on the leaderboard like a solo. Empty records "swarm".
+	SkillTemp string
 }
 
 // Run executes the roles in order, stopping as soon as the oracle reports the flag
@@ -49,8 +52,12 @@ func (s *Swarm) Run(ctx context.Context, obj Objective) (RunResult, error) {
 
 	var runID int64
 	if s.Store != nil {
+		temp := s.SkillTemp
+		if temp == "" {
+			temp = "swarm"
+		}
 		id, err := s.Store.StartRun(traceID, RunMeta{
-			SuiteVersion: "phase5", Model: s.Name, Skill: "recon+exploit", SkillTemp: "swarm",
+			SuiteVersion: "phase5", Model: s.Name, Skill: "recon+exploit", SkillTemp: temp,
 			Target: obj.Base, FlagID: obj.FlagID, Difficulty: s.difficultyOf(obj.FlagID),
 		})
 		if err != nil {
