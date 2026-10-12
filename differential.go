@@ -16,10 +16,17 @@ import (
 // login); Headers carries any static per-identity header (an X-Session or
 // Authorization token) an app uses instead of cookies. An anonymous identity has
 // neither a logged-in jar nor headers.
+//
+// LoginPath and LoginBody, when set, say how to authenticate this identity from
+// scratch (a POST login), so a hunt can tell the verifier how to reproduce a finding
+// as this identity without reusing the live cookie jar. A header-based identity
+// leaves them empty and carries Headers instead.
 type Identity struct {
-	Name    string
-	Session string
-	Headers map[string]string
+	Name      string
+	Session   string
+	Headers   map[string]string
+	LoginPath string
+	LoginBody string
 }
 
 // BACVerdict classifies a resource under differential testing.
