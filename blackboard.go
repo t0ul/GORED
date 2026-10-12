@@ -43,6 +43,10 @@ type Blackboard struct {
 	mu       sync.Mutex
 	findings []Finding
 	analyzer *goflage.Analyzer
+	// OnAdd, if set, is called for every finding appended. The Runner uses it to
+	// emit a trace event per finding, so the board is reconstructable from the
+	// (always-persisted) trace alone — every run, solo or swarm, stays replayable.
+	OnAdd func(Finding)
 }
 
 func NewBlackboard() *Blackboard {
@@ -64,6 +68,12 @@ func (b *Blackboard) Add(t FindingType, value string, step int, refs ...int) Fin
 		Scrubbed:   len(found) > 0,
 	}
 	b.findings = append(b.findings, f)
+	hook := b.OnAdd
+	if hook != nil {
+		// Call outside the lock would be ideal, but Add is not reentrant on the
+		// board; the hook only emits to the audit log, which has its own lock.
+		hook(f)
+	}
 	return f
 }
 

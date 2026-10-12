@@ -61,6 +61,23 @@ var ReconSkill = Skill{
 Call the discover tool to list real paths — start at "/", then call it again on any interesting path it returns (an API root, a scripts path) to go one level deeper. Do not guess paths; only use discover. The paths you surface are handed to the exploit agent via the shared board. A few discover calls, then finish.`,
 }
 
+// AuthReconSkill is recon that logs in first. A login page links almost nothing;
+// the real API surface only appears once authenticated. Given credentials in its
+// goal, the agent authenticates with http_request under a session name and then
+// crawls with discover under that same name, so the board carries the authenticated
+// routes (not just the login form) for the exploit agent. Target-agnostic: it names
+// no path — the goal supplies the credentials and login endpoint, discovery finds
+// the rest.
+var AuthReconSkill = Skill{
+	Name: "cold-recon-auth",
+	Temp: SkillCold,
+	Instruction: `You are the RECON agent of an authorized red team. Your only job is to map the app's surface; do NOT exploit anything.
+If your goal gives you credentials, authenticate FIRST so you can see the surface that only exists once logged in:
+1. http_request POST the login endpoint with the credentials, carrying a "session" name (e.g. "me"); keep that same session on every later call.
+2. discover with that same "session" at "/" and then again at any data page the login redirects to or that discover returns (a dashboard, an API root) to crawl the authenticated surface one level deeper.
+Use ONLY discover to enumerate paths — do not guess them. The paths you surface are handed to the exploit agent via the shared board. Log in once, a few discover calls, then finish.`,
+}
+
 // ExploitSkill is the exploit half: read the surface the recon agent left on the
 // board and attempt a weakness, one step at a time. Target-agnostic.
 var ExploitSkill = Skill{

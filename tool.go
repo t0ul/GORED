@@ -121,6 +121,39 @@ func (e *Egress) Authorities() []string {
 	return out
 }
 
+// Sessions is a registry of named cookie-jar HTTP clients shared across tools. Its
+// point is authenticated discovery: an identity established by a login through
+// http_request is carried into discover's crawl because both tools draw their
+// client from the same registry (see WebRecon). Each name gets its own jar — the
+// empty name included — so distinct identities ("attacker"/"victim") stay isolated.
+// A registry lives for one run and one agent, so trials never bleed cookies.
+type Sessions struct {
+	mu      sync.Mutex
+	clients map[string]*http.Client
+	timeout time.Duration
+}
+
+func NewSessions() *Sessions {
+	return &Sessions{clients: map[string]*http.Client{}, timeout: 8 * time.Second}
+}
+
+// Client returns the client for a session name, lazily giving each its own cookie
+// jar so logging in once keeps the agent logged in as that identity. Every name,
+// the empty default included, is stateful — statefulness by default — while named
+// sessions give isolated identities for differential tests.
+func (s *Sessions) Client(session string) *http.Client {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.clients[session]; ok {
+		return c
+	}
+	c := &http.Client{Timeout: s.timeout}
+	jar, _ := cookiejar.New(nil)
+	c.Jar = jar
+	s.clients[session] = c
+	return c
+}
+
 // HTTPRequestTool performs HTTP requests, but only through the Egress gate. The
 // agent may give a path (resolved against the target base URL) or an absolute URL;
 // either way the final host:port must be on the allowlist or the call is denied.
@@ -134,39 +167,18 @@ type HTTPRequestTool struct {
 	// are building: restrict it to read-only verbs so a stochastic agent cannot
 	// mutate or destroy real data. Nil means every method is allowed.
 	AllowMethods map[string]bool
-
-	mu      sync.Mutex
-	clients map[string]*http.Client // per-session cookie jars; "" = default jarless
-	timeout time.Duration
+	// Sessions holds the per-identity cookie jars. Share one registry with a
+	// DiscoverTool (WebRecon does this) so a login made here is reused by discovery.
+	Sessions *Sessions
 }
 
 func NewHTTPRequestTool(base string, e *Egress, onDeny func(string)) *HTTPRequestTool {
 	return &HTTPRequestTool{
-		Base:    strings.TrimRight(base, "/"),
-		Egress:  e,
-		OnDeny:  onDeny,
-		clients: map[string]*http.Client{},
-		timeout: 8 * time.Second,
+		Base:     strings.TrimRight(base, "/"),
+		Egress:   e,
+		OnDeny:   onDeny,
+		Sessions: NewSessions(),
 	}
-}
-
-// clientFor returns the HTTP client for a named session, lazily giving each
-// session its own cookie jar so the agent can authenticate and stay authenticated
-// as that identity. The empty session is jarless (stateless). Jars are per-tool,
-// which is per-run and per-agent, so trials stay independent.
-func (t *HTTPRequestTool) clientFor(session string) *http.Client {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if c, ok := t.clients[session]; ok {
-		return c
-	}
-	c := &http.Client{Timeout: t.timeout}
-	if session != "" {
-		jar, _ := cookiejar.New(nil)
-		c.Jar = jar
-	}
-	t.clients[session] = c
-	return c
 }
 
 func (*HTTPRequestTool) Name() string { return "http_request" }
@@ -212,7 +224,7 @@ func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string
 			req.Header.Set(k, asString(v))
 		}
 	}
-	resp, err := t.clientFor(asString(args["session"])).Do(req)
+	resp, err := t.Sessions.Client(asString(args["session"])).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -325,6 +337,50 @@ func trunc(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+// CurlFor renders an http_request tool call as a curl command, so a finding comes
+// with a human-runnable reproduction. It does NOT invent the session cookie (that
+// is held in the agent's jar, established by an earlier login request); a full
+// verification script re-runs that login first. Use it for the repro line in a
+// write-up; use a harness-emitted script for a fully self-contained re-run.
+func CurlFor(base string, args map[string]any) string {
+	method := strings.ToUpper(asString(args["method"]))
+	if method == "" {
+		method = "GET"
+	}
+	where := asString(args["url"])
+	if where == "" {
+		p := asString(args["path"])
+		if p != "" && !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		where = strings.TrimRight(base, "/") + p
+	}
+	var b strings.Builder
+	b.WriteString("curl -i")
+	if method != "GET" {
+		fmt.Fprintf(&b, " -X %s", method)
+	}
+	if hdrs, ok := args["headers"].(map[string]any); ok {
+		keys := make([]string, 0, len(hdrs))
+		for k := range hdrs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(&b, " -H %s", shellQuote(k+": "+asString(hdrs[k])))
+		}
+	}
+	if body := asString(args["body"]); body != "" {
+		fmt.Fprintf(&b, " --data %s", shellQuote(body))
+	}
+	fmt.Fprintf(&b, " %s", shellQuote(where))
+	return b.String()
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func asString(v any) string {
