@@ -127,7 +127,12 @@ type HTTPRequestTool struct {
 	Egress *Egress
 	// OnDeny is called with the denied URL so the loop can emit the beacon event.
 	OnDeny func(rawurl string)
-	client *http.Client
+	// AllowMethods, when non-nil, is the set of HTTP methods the agent may use
+	// (upper-case). It is the safety rail for pointing the agent at a real app you
+	// are building: restrict it to read-only verbs so a stochastic agent cannot
+	// mutate or destroy real data. Nil means every method is allowed.
+	AllowMethods map[string]bool
+	client       *http.Client
 }
 
 func NewHTTPRequestTool(base string, e *Egress, onDeny func(string)) *HTTPRequestTool {
@@ -148,6 +153,9 @@ func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string
 	method := strings.ToUpper(asString(args["method"]))
 	if method == "" {
 		method = http.MethodGet
+	}
+	if t.AllowMethods != nil && !t.AllowMethods[method] {
+		return fmt.Sprintf("refused: method %s not permitted by policy (read-only)", method), nil
 	}
 	raw := asString(args["url"])
 	if raw == "" {
