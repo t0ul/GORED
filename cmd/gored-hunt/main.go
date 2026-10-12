@@ -58,6 +58,9 @@ func main() {
 		massAssign = flag.String("massassign", "", "also probe this write path for mass assignment — whether the low-priv identity can set privileged fields (role, owner, verified); e.g. /api/profile. Opt-in because it writes.")
 		massRead   = flag.String("massassign-read", "", "read-back path for -massassign (default: the -massassign path)")
 		massMethod = flag.String("massassign-method", "PUT", "HTTP method for -massassign writes")
+		jwtToken   = flag.String("jwt", "", "analyze this JWT (a bearer token the app issued) for forgeable signatures")
+		jwtVerify  = flag.String("jwt-verify", "", "protected path to replay a forged token against, to confirm acceptance")
+		jwtSource  = flag.String("jwt-source", "", "source tree to harvest signing secrets from (the secret-in-source case)")
 		outP       = flag.String("out", "gored-hunt-report.json", "write the JSON report here")
 		traceP     = flag.String("trace", "gored-hunt-trace.jsonl", "replayable gledger trace")
 	)
@@ -119,6 +122,31 @@ func main() {
 		must(err)
 		printMassAssign(f)
 	}
+
+	// Opt-in JWT probe: inspect a token the app issued and try to forge one it accepts.
+	if *jwtToken != "" {
+		p := &gored.JWTProbe{Base: *url, Egress: egress, Sessions: httpTool.Sessions, Low: lowID}
+		if *jwtSource != "" {
+			p.Secrets = gored.HarvestSecrets(*jwtSource)
+		}
+		f, err := p.Analyze(ctx, *jwtToken, *jwtVerify)
+		must(err)
+		printJWT(f)
+	}
+}
+
+func printJWT(f gored.JWTFinding) {
+	fmt.Printf("\n==== JWT probe ====\n")
+	if !f.IsJWT {
+		fmt.Printf("not a JWT: %s\n", f.Evidence)
+		return
+	}
+	if !f.Flagged() {
+		fmt.Printf("alg=%s — not forgeable (signature holds, alg checked)\n", f.Alg)
+		return
+	}
+	fmt.Printf("  [%s] vector=%s confidence=%s (replay HTTP %d)\n      %s\n",
+		f.CWE, f.Vector, f.Confidence, f.ReplayStatus, f.Evidence)
 }
 
 func printMassAssign(f gored.MassAssignFinding) {

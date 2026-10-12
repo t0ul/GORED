@@ -18,7 +18,10 @@
 package demotarget
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,6 +47,12 @@ const (
 	// oracle: the same resource requested as alice vs admin reveals broken access
 	// control WITHOUT a planted flag — alice should not see admin's data.
 	adminToken = "admin-session"
+
+	// jwtDevSecret is the HS256 signing secret the VULNERABLE build uses. It is a weak
+	// secret committed to the source — exactly the mistake the JWT probe exploits: anyone
+	// with the repo can forge a token with role=admin. The hardened build replaces it with
+	// a strong per-process secret that is not in the source.
+	jwtDevSecret = "dev-signing-key-do-not-ship"
 )
 
 // ownerForSession maps a session header to the identity that holds it, or "" for an
@@ -87,8 +96,9 @@ type Server struct {
 	mu        sync.Mutex         // guards memos and profiles (written by the POST/PUT handlers)
 	memos     map[string]note    // the differential-oracle surface: owned records, no planted flag
 	profiles  map[string]profile // the mass-assignment surface: each identity's own account record
-	internalK string          // per-process secret header the fetch proxy injects
-	hardened  bool            // when true, the controls are wired and neither flag is reachable
+	internalK string             // per-process secret header the fetch proxy injects
+	jwtSecret string             // HS256 signing secret: weak/in-source (vuln) or strong/per-process (hardened)
+	hardened  bool               // when true, the controls are wired and neither flag is reachable
 }
 
 // Option configures a demo target.
@@ -134,6 +144,14 @@ func New(opts ...Option) (*Server, error) {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	// The JWT signing secret. The vulnerable build ships the weak secret that lives in
+	// the source; the hardened build mints a strong per-process secret not in the source,
+	// so a forged token cannot be signed.
+	if s.hardened {
+		s.jwtSecret = mint()
+	} else {
+		s.jwtSecret = jwtDevSecret
 	}
 	// Low-privilege notes the session legitimately owns.
 	s.notes["1"] = note{ID: "1", Owner: "alice", Title: "groceries", Body: "milk, eggs, bread"}
@@ -190,6 +208,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
 	s.mux.HandleFunc("GET /api/profile", s.handleGetProfile)
 	s.mux.HandleFunc("PUT /api/profile", s.handleUpdateProfile)
+	s.mux.HandleFunc("POST /api/token", s.handleIssueToken)
+	s.mux.HandleFunc("GET /api/whoami", s.handleWhoami)
 	s.mux.HandleFunc("GET /api/fetch", s.handleFetch)
 	s.mux.HandleFunc("GET /internal/flag", s.handleInternalFlag)
 	s.mux.HandleFunc("GET /oracle/status", s.handleOracleStatus)
@@ -213,6 +233,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
 </ul>
 <p>Memos: <a href="/api/memos">/api/memos</a> (all) and <a href="/api/memos/mine">/api/memos/mine</a> (yours).</p>
 <p>Your account: <a href="/api/profile">/api/profile</a> (GET to view, PUT to update your name and bio).</p>
+<p>API tokens: POST /api/token for a bearer JWT, then <a href="/api/whoami">/api/whoami</a> with it.</p>
 <p>Link preview tool: <a href="/api/fetch?url=">/api/fetch</a></p>
 <p>Oracle status: <a href="/oracle/status">/oracle/status</a></p>
 </body></html>`
@@ -378,6 +399,92 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	cur.Owner = owner // the owner is always the caller; this is a privilege bug, not an ownership swap
 	s.profiles[owner] = cur
 	writeJSON(w, http.StatusOK, cur)
+}
+
+// handleIssueToken issues the caller an HS256 JWT carrying their identity and role, the
+// way a login endpoint would. The role is the server-assigned one from the profile — the
+// token is only as trustworthy as the signature, which is the JWT probe's target.
+func (s *Server) handleIssueToken(w http.ResponseWriter, r *http.Request) {
+	owner := ownerForSession(r.Header.Get("X-Session"))
+	if owner == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid X-Session"})
+		return
+	}
+	s.mu.Lock()
+	role := s.profiles[owner].Role
+	s.mu.Unlock()
+	claims := map[string]any{"sub": owner, "role": role, "iat": time.Now().Unix()}
+	writeJSON(w, http.StatusOK, map[string]string{"token": signHS256(claims, s.jwtSecret)})
+}
+
+// handleWhoami is the protected endpoint a forged token is replayed against. It verifies
+// the Bearer JWT's signature with the server's secret and rejects anything but HS256 (so
+// alg:none is refused), then trusts the verified role. Both builds verify correctly; the
+// only difference is the secret — weak and in the source (vuln) vs strong and private
+// (hardened) — so the forgery lands only on the vulnerable build.
+func (s *Server) handleWhoami(w http.ResponseWriter, r *http.Request) {
+	tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	claims, ok := verifyHS256(tok, s.jwtSecret)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+		return
+	}
+	role, _ := claims["role"].(string)
+	out := map[string]any{"sub": claims["sub"], "role": role}
+	if role == "admin" {
+		out["admin_area"] = "welcome, administrator" // the escalated view a forged role unlocks
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// signHS256 and verifyHS256 are the app's own JWT implementation, independent of the
+// attacker's code: sign builds header.payload.signature; verify rejects a non-HS256 alg
+// (closing alg:none) and checks the HMAC in constant time (closing unsigned/wrong-secret
+// tokens). The app is secure here regardless of the attack code — only the secret varies.
+func signHS256(claims map[string]any, secret string) string {
+	enc := base64.RawURLEncoding.EncodeToString
+	h := enc([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	body, _ := json.Marshal(claims)
+	p := enc(body)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(h + "." + p))
+	return h + "." + p + "." + enc(mac.Sum(nil))
+}
+
+func verifyHS256(raw, secret string) (map[string]any, bool) {
+	parts := strings.Split(strings.TrimSpace(raw), ".")
+	if len(parts) != 3 {
+		return nil, false
+	}
+	dec := base64.RawURLEncoding.DecodeString
+	hdrRaw, err := dec(parts[0])
+	if err != nil {
+		return nil, false
+	}
+	var hdr struct {
+		Alg string `json:"alg"`
+	}
+	if json.Unmarshal(hdrRaw, &hdr) != nil || hdr.Alg != "HS256" {
+		return nil, false // reject alg:none and anything that is not HS256
+	}
+	sig, err := dec(parts[2])
+	if err != nil {
+		return nil, false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(parts[0] + "." + parts[1]))
+	if !hmac.Equal(sig, mac.Sum(nil)) {
+		return nil, false // the signature does not verify under the server's secret
+	}
+	payRaw, err := dec(parts[1])
+	if err != nil {
+		return nil, false
+	}
+	var claims map[string]any
+	if json.Unmarshal(payRaw, &claims) != nil {
+		return nil, false
+	}
+	return claims, true
 }
 
 // listMemos returns every memo, or only those the owner holds when scoped.
