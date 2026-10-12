@@ -19,12 +19,20 @@ import (
 // sent, the POST status, and whether it took. A planted canary turns a differential
 // guess into a certainty — reading the marker as a low-privilege identity is broken
 // access control with no false positive.
+//
+// ID is the created resource's identifier (parsed from the POST response, or the id
+// invented when planting into a templated endpoint). ItemPath is the concrete item
+// URL the marker should be readable at — the create collection plus the id, or the
+// templated path with the id filled in — so the id-swapping step (phase 7a) can
+// request it as the low-privilege identity and catch an object-level IDOR.
 type Canary struct {
 	Marker   string
 	Endpoint string
 	Body     string
 	Status   int
 	Planted  bool
+	ID       string
+	ItemPath string
 }
 
 // CanarySeeder plants a unique marker into each discovered resource-creating
@@ -62,18 +70,82 @@ func (s *CanarySeeder) Seed(ctx context.Context, endpoints []string) ([]Canary, 
 			if !strings.Contains(body, marker) {
 				body = injectMarker(body, marker)
 			}
-			status := s.post(ctx, ep, body)
+			status, respBody := s.post(ctx, ep, body)
 			c.Body, c.Status = body, status
 			if ok2xx(status) {
 				c.Planted = true
+				if id := extractID(respBody); id != "" {
+					c.ID, c.ItemPath = id, strings.TrimRight(ep, "/")+"/"+id
+				}
 				break
 			}
 		}
-		s.emit(traceID, "seed", "plant", gledger.F{"endpoint": ep, "status": c.Status, "planted": c.Planted})
+		s.emit(traceID, "seed", "plant", gledger.F{"endpoint": ep, "status": c.Status, "planted": c.Planted, "item": c.ItemPath})
 		out = append(out, c)
 	}
 	s.emit(traceID, "seed", "seed_end", gledger.F{"planted": countPlanted(out), "attempted": len(out)})
 	return out, nil
+}
+
+// SeedItems plants a canary into `{id}`-templated endpoints that create a resource at
+// a caller-chosen id (a nested create like POST /api/drafts/report/{id}). It invents
+// an id, posts the marker there as the privileged identity, and records that concrete
+// path as the ItemPath, so the id-swapping step can read it back as a low-privilege
+// identity. A refused POST is skipped. This reaches object-level IDOR that a plain
+// collection POST cannot.
+func (s *CanarySeeder) SeedItems(ctx context.Context, templates []string) ([]Canary, error) {
+	traceID := gledger.NewTraceID()
+	var out []Canary
+	for _, tpl := range templates {
+		if !strings.ContainsAny(tpl, "{}") || strings.HasPrefix(tpl, "/api/auth/") {
+			continue
+		}
+		id := "gored7a-" + newCanaryMarker()[13:25] // a distinctive, caller-chosen id
+		concrete := fillTemplate(tpl, id)
+		if concrete == "" {
+			continue
+		}
+		marker := newCanaryMarker()
+		body := minimalBody(s.get(ctx, concrete), marker)
+		if !strings.Contains(body, marker) {
+			body = injectMarker(body, marker)
+		}
+		status, _ := s.post(ctx, concrete, body)
+		c := Canary{Marker: marker, Endpoint: tpl, Body: body, Status: status, Planted: ok2xx(status), ID: id, ItemPath: concrete}
+		s.emit(traceID, "seed", "plant_item", gledger.F{"template": tpl, "item": concrete, "status": status, "planted": c.Planted})
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// fillTemplate replaces the single {...} segment of a path template with an id.
+func fillTemplate(tpl, id string) string {
+	i, j := strings.IndexByte(tpl, '{'), strings.IndexByte(tpl, '}')
+	if i < 0 || j < i {
+		return ""
+	}
+	return tpl[:i] + id + tpl[j+1:]
+}
+
+// extractID pulls a created resource's identifier from a create response body.
+func extractID(body string) string {
+	var m map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(body)), &m) != nil {
+		return ""
+	}
+	for _, k := range []string{"id", "ID", "report_id", "filename", "name", "uuid"} {
+		if v, ok := m[k]; ok {
+			switch t := v.(type) {
+			case string:
+				if t != "" {
+					return t
+				}
+			case float64:
+				return fmt.Sprintf("%v", t)
+			}
+		}
+	}
+	return ""
 }
 
 // PlantedMarkers returns the markers that actually took, for the test step to look
@@ -280,14 +352,14 @@ func (s *CanarySeeder) get(ctx context.Context, path string) string {
 	return string(b)
 }
 
-func (s *CanarySeeder) post(ctx context.Context, path, body string) int {
+func (s *CanarySeeder) post(ctx context.Context, path, body string) (int, string) {
 	raw := s.Base + path
 	if !s.Egress.Allowed(raw) {
-		return 0
+		return 0, ""
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, raw, strings.NewReader(body))
 	if err != nil {
-		return 0
+		return 0, ""
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range s.Priv.Headers {
@@ -295,11 +367,11 @@ func (s *CanarySeeder) post(ctx context.Context, path, body string) int {
 	}
 	resp, err := s.client().Do(req)
 	if err != nil {
-		return 0
+		return 0, ""
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
-	return resp.StatusCode
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+	return resp.StatusCode, string(b)
 }
 
 func (s *CanarySeeder) emit(traceID, span, event string, f gledger.F) {
