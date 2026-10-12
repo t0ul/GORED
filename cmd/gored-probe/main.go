@@ -70,8 +70,8 @@ func main() {
 
 	runner := &gored.Runner{
 		Model:     modelclient.New(h.ChatURL("attacker"), modelName(*modelF)),
-		Tools:     gored.NewToolbox(httpTool, gored.NewExecTool()),
-		Skill:     gored.ColdWebSkill,
+		Tools:     gored.NewToolbox(httpTool, gored.NewDiscoverTool(*url, egress), gored.NewExecTool()),
+		Skill:     gored.ReconSkill,
 		Target:    externalTarget{name: *url},
 		Board:     gored.NewBlackboard(),
 		Audit:     audit,

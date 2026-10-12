@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -132,21 +134,44 @@ type HTTPRequestTool struct {
 	// are building: restrict it to read-only verbs so a stochastic agent cannot
 	// mutate or destroy real data. Nil means every method is allowed.
 	AllowMethods map[string]bool
-	client       *http.Client
+
+	mu      sync.Mutex
+	clients map[string]*http.Client // per-session cookie jars; "" = default jarless
+	timeout time.Duration
 }
 
 func NewHTTPRequestTool(base string, e *Egress, onDeny func(string)) *HTTPRequestTool {
 	return &HTTPRequestTool{
-		Base:   strings.TrimRight(base, "/"),
-		Egress: e,
-		OnDeny: onDeny,
-		client: &http.Client{Timeout: 8 * time.Second},
+		Base:    strings.TrimRight(base, "/"),
+		Egress:  e,
+		OnDeny:  onDeny,
+		clients: map[string]*http.Client{},
+		timeout: 8 * time.Second,
 	}
+}
+
+// clientFor returns the HTTP client for a named session, lazily giving each
+// session its own cookie jar so the agent can authenticate and stay authenticated
+// as that identity. The empty session is jarless (stateless). Jars are per-tool,
+// which is per-run and per-agent, so trials stay independent.
+func (t *HTTPRequestTool) clientFor(session string) *http.Client {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if c, ok := t.clients[session]; ok {
+		return c
+	}
+	c := &http.Client{Timeout: t.timeout}
+	if session != "" {
+		jar, _ := cookiejar.New(nil)
+		c.Jar = jar
+	}
+	t.clients[session] = c
+	return c
 }
 
 func (*HTTPRequestTool) Name() string { return "http_request" }
 func (*HTTPRequestTool) Describe() string {
-	return `issue an HTTP request to the target. args: {"method":"GET|POST","path":"/...","headers":{...},"body":"..."}. Use "url" instead of "path" only for an absolute URL. Returns "HTTP <status>\n<body>".`
+	return `issue an HTTP request. args: {"method":"GET|POST","path":"/...","headers":{...},"body":"...","session":"name"}. "session" keeps cookies across calls under that name, so log in once and reuse it (use two names like "attacker" and "victim" to compare identities). Returns "HTTP <status>\n<key headers incl set-cookie/location>\n<body>".`
 }
 
 func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string, error) {
@@ -187,13 +212,33 @@ func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string
 			req.Header.Set(k, asString(v))
 		}
 	}
-	resp, err := t.client.Do(req)
+	resp, err := t.clientFor(asString(args["session"])).Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	return fmt.Sprintf("HTTP %d\n%s", resp.StatusCode, string(data)), nil
+	return fmt.Sprintf("HTTP %d\n%s%s", resp.StatusCode, headerLines(resp.Header), string(data)), nil
+}
+
+// interestingHeaders are surfaced to the agent: they carry the session, redirects,
+// content type, and auth challenges that drive access-control reasoning.
+var interestingHeaders = []string{"Set-Cookie", "Location", "Content-Type", "WWW-Authenticate", "Www-Authenticate"}
+
+func headerLines(h http.Header) string {
+	var sb strings.Builder
+	seen := map[string]bool{}
+	for _, name := range interestingHeaders {
+		key := strings.ToLower(name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		for _, v := range h.Values(name) {
+			fmt.Fprintf(&sb, "%s: %s\n", key, v)
+		}
+	}
+	return sb.String()
 }
 
 // ExecTool runs a short, allowlisted, non-network command in a bounded sandbox.

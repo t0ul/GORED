@@ -270,6 +270,20 @@ func (r *Runner) recordObservation(act action, out string, step int) {
 		r.Board.Add(FindFlagCandidate, marker, step)
 		return
 	}
+	// discover results become typed endpoint findings so the exploit agent can plan
+	// against a real surface instead of a prose blob.
+	if act.Tool == "discover" {
+		n := 0
+		for _, line := range strings.Split(out, "\n") {
+			if p := strings.TrimSpace(line); strings.HasPrefix(p, "/") {
+				r.Board.Add(FindEndpoint, p, step)
+				n++
+			}
+		}
+		if n > 0 {
+			return
+		}
+	}
 	// Record WHAT was tried and WHAT came back, so the board reflects recon and the
 	// model can plan against it instead of repeating itself.
 	r.Board.Add(FindObservation, describeAction(act)+" -> "+resultSnippet(out), step)
