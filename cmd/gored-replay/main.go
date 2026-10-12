@@ -1,16 +1,15 @@
 // Command gored-replay reconstructs a recorded GORED run from its persisted
-// gledger trace (and optional run store), so you can see exactly what happened and
-// WHO did it — which OSS model emitted each action — without rerunning anything.
-// It verifies the trace's hash chain first, so a tampered or hand-edited trace is
-// detected: the replay is evidence, not a retelling.
+// gledger trace, so you can see exactly what happened and WHO did it — which OSS
+// model emitted each action — without rerunning anything. It reuses gledger to
+// verify the hash chain and read the records (gledger owns the log format), prints
+// a text transcript, and with -html delegates to gledger's self-contained HTML
+// timeline player. A tampered trace fails verification and is refused.
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"sort"
 	"strings"
@@ -18,22 +17,15 @@ import (
 	gledger "github.com/t0ul/gledger"
 )
 
-type rec struct {
-	TraceID string         `json:"trace_id"`
-	Span    string         `json:"span"`
-	Event   string         `json:"event"`
-	Fields  map[string]any `json:"fields"`
-}
-
 func main() {
 	var (
 		tracePath = flag.String("trace", "gored-swarm-trace.jsonl", "gledger trace file to replay")
 		traceID   = flag.String("trace-id", "", "replay only this trace id (default: all in the file)")
+		htmlOut   = flag.String("html", "", "also write a self-contained HTML player to this path")
 	)
 	flag.Parse()
 
-	// 1. Integrity: the trace is hash-chained; a replay is only trustworthy if the
-	// chain verifies. If it does not, the recording was altered.
+	// Integrity first: a replay is only evidence if the chain verifies.
 	ok, n := gledger.VerifyFile(*tracePath)
 	fmt.Printf("trace %s: hash-chain verified=%v over %d records\n", *tracePath, ok, n)
 	if !ok {
@@ -41,56 +33,48 @@ func main() {
 		os.Exit(1)
 	}
 
-	f, err := os.Open(*tracePath)
+	recs, err := gledger.Read(*tracePath)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	defer f.Close()
+	if *traceID != "" {
+		var f []gledger.Record
+		for _, r := range recs {
+			if r.TraceID == *traceID {
+				f = append(f, r)
+			}
+		}
+		recs = f
+	}
 
-	var recs []rec
 	models := map[string]bool{}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 1<<20), 16<<20)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
-		var r rec
-		if json.Unmarshal([]byte(line), &r) != nil {
-			continue
-		}
-		if *traceID != "" && r.TraceID != *traceID {
-			continue
-		}
-		recs = append(recs, r)
-		if m, _ := r.Fields["model"].(string); m != "" {
+	fmt.Println("\n==== REPLAY ====")
+	for _, r := range recs {
+		if m := str(r.Fields["model"]); m != "" {
 			models[m] = true
 		}
-	}
-
-	fmt.Println("\n==== REPLAY ====")
-	role := ""
-	for _, r := range recs {
 		switch r.Event {
 		case "swarm_start":
 			fmt.Printf("SWARM %s  target=%s  flag=%s\n", str(r.Fields["swarm"]), str(r.Fields["target"]), str(r.Fields["flag_id"]))
 		case "run_start":
 			fmt.Printf("RUN model=%s skill=%s target=%s\n", str(r.Fields["model"]), str(r.Fields["skill"]), str(r.Fields["target"]))
 		case "role_start":
-			role = str(r.Fields["role"])
-			fmt.Printf("\n--- %s agent  (model=%s, skill=%s) ---\n", strings.ToUpper(role), str(r.Fields["model"]), str(r.Fields["skill"]))
-		case "containment":
+			fmt.Printf("\n--- %s agent  (model=%s, skill=%s) ---\n", strings.ToUpper(str(r.Fields["role"])), str(r.Fields["model"]), str(r.Fields["skill"]))
 		case "egress_denied":
 			fmt.Printf("  [contained] off-target egress blocked: %s\n", str(r.Fields["beacon"]))
 		case "model_call":
-			fmt.Printf("  model(%s) says: %s\n", str(r.Fields["model"]), oneLine(str(r.Fields["reply"]), 150))
+			fmt.Printf("  model(%s) says: %s\n", str(r.Fields["model"]), clip(str(r.Fields["reply"]), 150))
 		case "parse_miss":
 			fmt.Printf("  (model produced no valid tool call)\n")
+		case "repeat_skipped":
+			fmt.Printf("  (refused to repeat %s)\n", str(r.Fields["tool"]))
 		case "tool_call":
-			fmt.Printf("  -> tool %s %s\n", str(r.Fields["tool"]), compactArgs(r.Fields["args"]))
+			fmt.Printf("  -> tool %s %s\n", str(r.Fields["tool"]), clip(jsonStr(r.Fields["args"]), 150))
 		case "tool_result":
-			fmt.Printf("     result: %s\n", oneLine(str(r.Fields["result"]), 110))
+			fmt.Printf("     result: %s\n", clip(str(r.Fields["result"]), 110))
+		case "finding":
+			fmt.Printf("     board += [%s] %s\n", str(r.Fields["type"]), clip(str(r.Fields["value"]), 90))
 		case "capture_detected":
 			fmt.Printf("  *** CAPTURE: %s (source=%s) ***\n", str(r.Fields["via"]), str(r.Fields["source"]))
 		case "run_end", "swarm_end":
@@ -103,23 +87,36 @@ func main() {
 		ms = append(ms, m)
 	}
 	sort.Strings(ms)
-	fmt.Printf("\n==== provenance ====\n")
-	fmt.Printf("every action above was emitted by these models: %s\n", strings.Join(ms, ", "))
+	fmt.Printf("\n==== provenance ====\nevery action above was emitted by these models: %s\n", strings.Join(ms, ", "))
 	fmt.Printf("this is a replay of a hash-verified recording; no model ran during replay.\n")
+
+	if *htmlOut != "" {
+		title := "GORED replay"
+		if len(ms) > 0 {
+			title = "GORED replay — " + strings.Join(ms, " + ")
+		}
+		pageHTML, err := gledger.RenderHTML(title, recs, ok)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(*htmlOut, pageHTML, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("\nHTML player written: %s\n", *htmlOut)
+	}
 }
 
-func str(v any) string {
-	s, _ := v.(string)
-	return s
-}
-func oneLine(s string, n int) string {
+func str(v any) string { s, _ := v.(string); return s }
+func clip(s string, n int) string {
 	s = strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
 	if len(s) > n {
-		s = s[:n] + "…"
+		return s[:n] + "…"
 	}
 	return s
 }
-func compactArgs(v any) string {
+func jsonStr(v any) string {
 	b, _ := json.Marshal(v)
-	return oneLine(string(b), 160)
+	return string(b)
 }

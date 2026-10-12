@@ -114,6 +114,14 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 	start := time.Now()
 	res := RunResult{TraceID: traceID, Outcome: "failed"}
 
+	// Emit a trace event for every blackboard finding, so the board is replayable
+	// from the trace alone — for a solo run just as much as a swarm.
+	if r.Board != nil {
+		r.Board.OnAdd = func(f Finding) {
+			r.emit(traceID, "board", "finding", gledger.F{"id": f.ID, "type": string(f.Type), "value": f.Value, "step": f.SourceStep})
+		}
+	}
+
 	difficulty := r.difficultyOf(obj.FlagID)
 	r.emit(traceID, "run", "run_start", gledger.F{
 		"model": r.Model.Name(), "skill": r.Skill.Name, "skill_temp": string(r.Skill.Temp),
