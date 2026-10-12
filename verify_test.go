@@ -69,8 +69,27 @@ func TestRenderCurlShape(t *testing.T) {
 		{Method: "POST", Path: "/login", Body: "{}"},
 		{Method: "GET", Path: "/secret"},
 	}})
-	if !strings.Contains(s, "curl -s -c") || !strings.Contains(s, "/secret") || !strings.Contains(s, "grep -q 'GORED{'") {
+	if !strings.Contains(s, "curl -s -c") || !strings.Contains(s, "/secret") || !strings.Contains(s, "grep -qF 'GORED{z}'") {
 		t.Fatalf("curl render missing expected parts:\n%s", s)
+	}
+}
+
+// TestRenderUsesArbitraryMarker proves the emitted repro checks the actual marker,
+// not a hardcoded GORED prefix, so a canary-free differential finding (whose marker
+// is ordinary privileged data) reproduces too.
+func TestRenderUsesArbitraryMarker(t *testing.T) {
+	const marker = "acquisition-target-Umbrella-Corporation"
+	v := Verifier{Base: "http://127.0.0.1:1", Marker: marker}
+	plan := ReproPlan{Steps: []ReproStep{{Method: "GET", Path: "/api/memos"}}}
+	if c := v.renderCurl(plan); !strings.Contains(c, "grep -qF '"+marker+"'") {
+		t.Errorf("curl repro does not check the differential marker:\n%s", c)
+	}
+	g := v.renderGo(plan)
+	if !strings.Contains(g, `NEEDLE := "`+marker+`"`) {
+		t.Errorf("go repro does not embed the differential marker:\n%s", g)
+	}
+	if strings.Contains(g, `"GORED{"`) {
+		t.Errorf("go repro fell back to the GORED prefix despite a marker being set:\n%s", g)
 	}
 }
 

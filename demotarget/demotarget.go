@@ -37,7 +37,25 @@ const (
 	// another user's record anyway.
 	sessionToken = "alice-session"
 	adminNoteID  = "1000"
+
+	// adminToken is a second, privileged identity. It exists for the differential
+	// oracle: the same resource requested as alice vs admin reveals broken access
+	// control WITHOUT a planted flag — alice should not see admin's data.
+	adminToken = "admin-session"
 )
+
+// ownerForSession maps a session header to the identity that holds it, or "" for an
+// unknown/absent session.
+func ownerForSession(token string) string {
+	switch token {
+	case sessionToken:
+		return "alice"
+	case adminToken:
+		return "admin"
+	default:
+		return ""
+	}
+}
 
 // note is one record. Only the admin note carries a flag.
 type note struct {
@@ -53,8 +71,9 @@ type Server struct {
 	manifest  gored.Manifest
 	mux       *http.ServeMux
 	notes     map[string]note
-	internalK string // per-process secret header the fetch proxy injects
-	hardened  bool   // when true, the controls are wired and neither flag is reachable
+	memos     map[string]note // the differential-oracle surface: owned records, no planted flag
+	internalK string          // per-process secret header the fetch proxy injects
+	hardened  bool            // when true, the controls are wired and neither flag is reachable
 }
 
 // Option configures a demo target.
@@ -94,6 +113,7 @@ func New(opts ...Option) (*Server, error) {
 		oracle:    oracle,
 		manifest:  gored.Manifest{Name: "demotarget", Description: "Self-contained benign CTF target for GORED (IDOR + loopback SSRF).", Flags: demoFlags},
 		notes:     map[string]note{},
+		memos:     map[string]note{},
 		internalK: mint(),
 	}
 	for _, opt := range opts {
@@ -106,6 +126,12 @@ func New(opts ...Option) (*Server, error) {
 	// The admin note carries the planted flag.
 	flag, _ := s.oracle.Secret("idor-notes")
 	s.notes[adminNoteID] = note{ID: adminNoteID, Owner: "admin", Title: "admin-only", Body: "internal config flag: " + flag}
+
+	// Memos are the differential-oracle surface: owned records with NO planted flag.
+	// alice owns an ordinary memo; admin owns a confidential one whose distinctive
+	// contents are the datum a differential test watches for leaking to alice.
+	s.memos["a1"] = note{ID: "a1", Owner: "alice", Title: "lunch", Body: "alice reminder: order sandwiches"}
+	s.memos["x9"] = note{ID: "x9", Owner: "admin", Title: "deal", Body: "acquisition-target-Umbrella-Corporation, do not disclose"}
 
 	s.mux = http.NewServeMux()
 	s.routes()
@@ -137,6 +163,8 @@ func (s *Server) Status() []gored.FlagStatus { return s.oracle.Status() }
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /", s.handleIndex)
 	s.mux.HandleFunc("GET /api/notes/{id}", s.handleNote)
+	s.mux.HandleFunc("GET /api/memos", s.handleMemos)
+	s.mux.HandleFunc("GET /api/memos/mine", s.handleMyMemos)
 	s.mux.HandleFunc("GET /api/fetch", s.handleFetch)
 	s.mux.HandleFunc("GET /internal/flag", s.handleInternalFlag)
 	s.mux.HandleFunc("GET /oracle/status", s.handleOracleStatus)
@@ -158,6 +186,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
   <li><a href="/api/notes/2">note 2</a></li>
   <li><a href="/api/notes/3">note 3</a></li>
 </ul>
+<p>Memos: <a href="/api/memos">/api/memos</a> (all) and <a href="/api/memos/mine">/api/memos/mine</a> (yours).</p>
 <p>Link preview tool: <a href="/api/fetch?url=">/api/fetch</a></p>
 <p>Oracle status: <a href="/oracle/status">/oracle/status</a></p>
 </body></html>`
@@ -192,6 +221,45 @@ func (s *Server) handleNote(w http.ResponseWriter, r *http.Request) {
 		s.oracle.Disclosed("idor-notes", "idor:GET /api/notes/"+adminNoteID, "admin note served to session "+sessionToken)
 	}
 	writeJSON(w, http.StatusOK, n)
+}
+
+// handleMemos is the identity-based broken access control the differential oracle
+// finds: any valid session lists EVERY memo, so a low-privilege caller (alice) sees
+// the privileged caller's (admin's) confidential memo. No planted flag — the signal
+// is purely that alice's response discloses admin's data. The hardened build scopes
+// the list to the caller, closing it.
+func (s *Server) handleMemos(w http.ResponseWriter, r *http.Request) {
+	owner := ownerForSession(r.Header.Get("X-Session"))
+	if owner == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid X-Session"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.listMemos(owner, s.hardened))
+}
+
+// handleMyMemos is the correctly-scoped control: it always lists only the caller's
+// own memos, so alice and admin get disjoint data and a differential test does NOT
+// flag it. It bounds the oracle's false positives.
+func (s *Server) handleMyMemos(w http.ResponseWriter, r *http.Request) {
+	owner := ownerForSession(r.Header.Get("X-Session"))
+	if owner == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid X-Session"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.listMemos(owner, true))
+}
+
+// listMemos returns every memo, or only those the owner holds when scoped.
+func (s *Server) listMemos(owner string, scoped bool) []note {
+	out := []note{}
+	for _, id := range []string{"a1", "x9"} { // deterministic order
+		m := s.memos[id]
+		if scoped && m.Owner != owner {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 // handleFetch is the SSRF: a link-preview proxy that validates only that the host
