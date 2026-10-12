@@ -52,6 +52,7 @@ func main() {
 		modelPort  = flag.Int("model-port", 11630, "verifier model server port")
 		noVerify   = flag.Bool("no-verify", false, "skip the model; report flags UNVERIFIED")
 		seed       = flag.Bool("seed", false, "plant canaries as the privileged identity first (6c), so a disclosed marker is a certain finding")
+		seedURLs   = flag.String("seed-urls", "", "file of extra URLs/paths (one per line) from an external crawler (e.g. ZAP ajax spider) to merge into discovery")
 		outP       = flag.String("out", "gored-hunt-report.json", "write the JSON report here")
 		traceP     = flag.String("trace", "gored-hunt-trace.jsonl", "replayable gledger trace")
 	)
@@ -72,7 +73,7 @@ func main() {
 	h := &gored.Hunt{
 		Base: *url, Egress: egress, Sessions: httpTool.Sessions,
 		Priv: privID, Low: lowID, Anon: &gored.Identity{Name: "anon", Session: "anon"},
-		Audit: audit, Start: *start,
+		Audit: audit, Start: *start, SeedPaths: readSeedURLs(*seedURLs),
 	}
 
 	if !*noVerify {
@@ -184,6 +185,26 @@ func printSummary(rep gored.HuntReport, outP, traceP string) {
 	}
 	fmt.Printf("\nconfirmed=%d unconfirmed=%d unverified=%d\n", rep.Confirmed, rep.Unconfirmed, rep.Unverified)
 	fmt.Printf("report: %s\nreplayable trace: %s\n  replay: gored-replay -trace %s\n", outP, traceP, traceP)
+}
+
+// readSeedURLs loads a crawler's URL/path list (one per line, blanks and # comments
+// skipped). The Hunt reduces each to a same-origin path.
+func readSeedURLs(path string) []string {
+	if path == "" {
+		return nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		log.Fatalf("read -seed-urls %s: %v", path, err)
+	}
+	var out []string
+	for _, ln := range strings.Split(string(b), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln != "" && !strings.HasPrefix(ln, "#") {
+			out = append(out, ln)
+		}
+	}
+	return out
 }
 
 func hostPort(base string) string {
