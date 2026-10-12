@@ -67,14 +67,26 @@ type note struct {
 	Body  string `json:"body"`
 }
 
+// profile is a user's own account record. Role is a privileged attribute the server
+// assigns — a client must not be able to set it. PUT /api/profile is the mass-assignment
+// surface: the vulnerable build binds the whole request body onto the model (so a
+// client-set role is honored), the hardened build binds only a name/bio whitelist.
+type profile struct {
+	Owner string `json:"owner"`
+	Name  string `json:"name"`
+	Bio   string `json:"bio"`
+	Role  string `json:"role"`
+}
+
 // Server is the running demo target. It implements gored.Target.
 type Server struct {
 	oracle    *gored.Oracle
 	manifest  gored.Manifest
 	mux       *http.ServeMux
 	notes     map[string]note
-	mu        sync.Mutex      // guards memos (written by POST /api/memos)
-	memos     map[string]note // the differential-oracle surface: owned records, no planted flag
+	mu        sync.Mutex         // guards memos and profiles (written by the POST/PUT handlers)
+	memos     map[string]note    // the differential-oracle surface: owned records, no planted flag
+	profiles  map[string]profile // the mass-assignment surface: each identity's own account record
 	internalK string          // per-process secret header the fetch proxy injects
 	hardened  bool            // when true, the controls are wired and neither flag is reachable
 }
@@ -117,6 +129,7 @@ func New(opts ...Option) (*Server, error) {
 		manifest:  gored.Manifest{Name: "demotarget", Description: "Self-contained benign CTF target for GORED (IDOR + loopback SSRF).", Flags: demoFlags},
 		notes:     map[string]note{},
 		memos:     map[string]note{},
+		profiles:  map[string]profile{},
 		internalK: mint(),
 	}
 	for _, opt := range opts {
@@ -135,6 +148,11 @@ func New(opts ...Option) (*Server, error) {
 	// contents are the datum a differential test watches for leaking to alice.
 	s.memos["a1"] = note{ID: "a1", Owner: "alice", Title: "lunch", Body: "alice reminder: order sandwiches"}
 	s.memos["x9"] = note{ID: "x9", Owner: "admin", Title: "deal", Body: "acquisition-target-Umbrella-Corporation, do not disclose"}
+
+	// Account profiles for the mass-assignment surface. alice is an ordinary user; the
+	// server assigns the role, so alice must not be able to make herself an admin.
+	s.profiles["alice"] = profile{Owner: "alice", Name: "Alice", Bio: "just here for notes", Role: "user"}
+	s.profiles["admin"] = profile{Owner: "admin", Name: "Admin", Bio: "the boss", Role: "admin"}
 
 	s.mux = http.NewServeMux()
 	s.routes()
@@ -170,6 +188,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/memos/mine", s.handleMyMemos)
 	s.mux.HandleFunc("GET /api/memos/{id}", s.handleGetMemo)
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
+	s.mux.HandleFunc("GET /api/profile", s.handleGetProfile)
+	s.mux.HandleFunc("PUT /api/profile", s.handleUpdateProfile)
 	s.mux.HandleFunc("GET /api/fetch", s.handleFetch)
 	s.mux.HandleFunc("GET /internal/flag", s.handleInternalFlag)
 	s.mux.HandleFunc("GET /oracle/status", s.handleOracleStatus)
@@ -192,6 +212,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
   <li><a href="/api/notes/3">note 3</a></li>
 </ul>
 <p>Memos: <a href="/api/memos">/api/memos</a> (all) and <a href="/api/memos/mine">/api/memos/mine</a> (yours).</p>
+<p>Your account: <a href="/api/profile">/api/profile</a> (GET to view, PUT to update your name and bio).</p>
 <p>Link preview tool: <a href="/api/fetch?url=">/api/fetch</a></p>
 <p>Oracle status: <a href="/oracle/status">/oracle/status</a></p>
 </body></html>`
@@ -303,6 +324,60 @@ func (s *Server) handleCreateMemo(w http.ResponseWriter, r *http.Request) {
 	s.memos[id] = m
 	s.mu.Unlock()
 	writeJSON(w, http.StatusCreated, m)
+}
+
+// handleGetProfile returns the caller's own account record. It is correctly scoped to the
+// caller, so it is a clean read-back for the mass-assignment probe.
+func (s *Server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	owner := ownerForSession(r.Header.Get("X-Session"))
+	if owner == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid X-Session"})
+		return
+	}
+	s.mu.Lock()
+	p := s.profiles[owner]
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, p)
+}
+
+// handleUpdateProfile is the MASS-ASSIGNMENT surface (CWE-915). The caller may update
+// their own name and bio, but role is a privileged attribute the server assigns. The
+// vulnerable build binds the whole request body onto the stored model, so a client-set
+// "role" is honored and alice can make herself an admin. The hardened build binds only a
+// name/bio whitelist, ignoring any role in the body — the control the probe must respect.
+func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	owner := ownerForSession(r.Header.Get("X-Session"))
+	if owner == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or invalid X-Session"})
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur := s.profiles[owner]
+	if s.hardened {
+		// The control: accept only the fields a user is allowed to change.
+		var in struct {
+			Name string `json:"name"`
+			Bio  string `json:"bio"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+			return
+		}
+		cur.Name = in.Name
+		cur.Bio = in.Bio
+	} else {
+		// The bug: unmarshal the raw request straight onto the model, binding every
+		// field the client sent — including the privileged Role.
+		if err := json.Unmarshal(body, &cur); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+			return
+		}
+	}
+	cur.Owner = owner // the owner is always the caller; this is a privilege bug, not an ownership swap
+	s.profiles[owner] = cur
+	writeJSON(w, http.StatusOK, cur)
 }
 
 // listMemos returns every memo, or only those the owner holds when scoped.

@@ -55,6 +55,9 @@ func main() {
 		seed       = flag.Bool("seed", false, "plant canaries as the privileged identity first (6c), so a disclosed marker is a certain finding")
 		seedURLs   = flag.String("seed-urls", "", "file of extra URLs/paths (one per line) from an external crawler (e.g. ZAP ajax spider) to merge into discovery")
 		openapi    = flag.String("openapi", "", "OpenAPI/Swagger spec (file path or http URL) to merge its routes into discovery")
+		massAssign = flag.String("massassign", "", "also probe this write path for mass assignment — whether the low-priv identity can set privileged fields (role, owner, verified); e.g. /api/profile. Opt-in because it writes.")
+		massRead   = flag.String("massassign-read", "", "read-back path for -massassign (default: the -massassign path)")
+		massMethod = flag.String("massassign-method", "PUT", "HTTP method for -massassign writes")
 		outP       = flag.String("out", "gored-hunt-report.json", "write the JSON report here")
 		traceP     = flag.String("trace", "gored-hunt-trace.jsonl", "replayable gledger trace")
 	)
@@ -104,6 +107,28 @@ func main() {
 
 	must(writeReport(*outP, rep))
 	printSummary(rep, *outP, *traceP)
+
+	// Opt-in mass-assignment probe: as the low-priv identity, try to set privileged
+	// fields on a write endpoint and read them back. Separate from the read-only hunt
+	// because it writes; it uses the same identity, egress gate, and cookie jar.
+	if *massAssign != "" {
+		p := &gored.MassAssignProbe{
+			Base: *url, Egress: egress, Sessions: httpTool.Sessions, Low: lowID,
+		}
+		f, err := p.Probe(ctx, *massMethod, *massAssign, *massRead)
+		must(err)
+		printMassAssign(f)
+	}
+}
+
+func printMassAssign(f gored.MassAssignFinding) {
+	fmt.Printf("\n==== mass-assignment probe: %s %s ====\n", f.Method, f.WritePath)
+	if !f.Flagged() {
+		fmt.Printf("not flagged — the endpoint ignored the privileged fields tried\n")
+		return
+	}
+	fmt.Printf("  [%s] honored client-set %q (%v, was %v) — confidence=%s\n      %s\n",
+		f.CWE, f.Field, f.SentValue, f.WasValue, f.Confidence, f.Evidence)
 }
 
 // loginSpec says how a creds identity authenticates: the endpoint, the body encoding
