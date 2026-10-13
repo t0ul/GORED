@@ -59,3 +59,21 @@ func TestTableRendersAndOrders(t *testing.T) {
 		t.Errorf("table not sorted by capture rate:\n%s", out)
 	}
 }
+
+func TestSummarizeCarriesTempAndCapturedTrace(t *testing.T) {
+	results := []SweepResult{
+		{Contender: "A", Shape: ShapeSolo, Temp: SkillWarm, Trial: 1, Outcome: "failed", TraceID: "t-fail"},
+		{Contender: "A", Shape: ShapeSolo, Temp: SkillWarm, Trial: 2, Outcome: "captured", TraceID: "t-cap"},
+	}
+	sums := Summarize(results)
+	if len(sums) != 1 {
+		t.Fatalf("want 1 row, got %d", len(sums))
+	}
+	if sums[0].Temp != SkillWarm {
+		t.Errorf("temp not carried: %q", sums[0].Temp)
+	}
+	// A captured trial's trace is preferred for the replay link over an earlier failed one.
+	if sums[0].TraceID != "t-cap" {
+		t.Errorf("want captured trace t-cap, got %q", sums[0].TraceID)
+	}
+}

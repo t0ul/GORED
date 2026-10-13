@@ -38,7 +38,12 @@ type Runnable interface {
 type Contender struct {
 	Name  string
 	Shape Shape
+	Temp  SkillTemp // cold|warm scaffolding level this contender uses; "" if unset
 	Build func(rt RunTarget) (Runnable, []*ComputeAccount, error)
+	// TraceFilter, if set, is a function the sweep calls with each trial's RunResult so
+	// the caller can remember a trace id per contender (used to link a blackboard
+	// replay from the leaderboard). Optional.
+	TraceFilter func(res RunResult)
 }
 
 // SweepResult is one trial of one contender: its outcome, the compute it spent, and
@@ -46,7 +51,9 @@ type Contender struct {
 type SweepResult struct {
 	Contender   string           `json:"contender"`
 	Shape       Shape            `json:"shape"`
+	Temp        SkillTemp        `json:"temp,omitempty"`
 	Trial       int              `json:"trial"`
+	TraceID     string           `json:"trace_id,omitempty"`
 	Outcome     string           `json:"outcome"`
 	CapturedVia string           `json:"captured_via,omitempty"`
 	Steps       int              `json:"steps"`
@@ -106,8 +113,11 @@ func (s *Sweep) Run(ctx context.Context) ([]SweepResult, error) {
 				return out, fmt.Errorf("sweep %q trial %d: run: %w", c.Name, tr, rerr)
 			}
 
+			if c.TraceFilter != nil {
+				c.TraceFilter(res)
+			}
 			sr := SweepResult{
-				Contender: c.Name, Shape: c.Shape, Trial: tr,
+				Contender: c.Name, Shape: c.Shape, Temp: c.Temp, Trial: tr, TraceID: res.TraceID,
 				Outcome: res.Outcome, CapturedVia: res.CapturedVia,
 				Steps: res.Steps, ToolCalls: res.ToolCalls,
 				TokensIn: res.TokensIn, TokensOut: res.TokensOut,
@@ -139,21 +149,27 @@ func (s *Sweep) Run(ctx context.Context) ([]SweepResult, error) {
 // rate, mean compute, and (when scored) mean recall/precision. This is the
 // leaderboard row keyed by {shape, models, budget}.
 type ContenderSummary struct {
-	Contender    string  `json:"contender"`
-	Shape        Shape   `json:"shape"`
-	Trials       int     `json:"trials"`
-	Captured     int     `json:"captured"`
-	CaptureRate  float64 `json:"capture_rate"`
-	MeanToolCall float64 `json:"mean_tool_calls"`
-	MeanTokens   float64 `json:"mean_tokens"` // in+out
-	MeanWallMS   float64 `json:"mean_wall_ms"`
-	ParamsB      float64 `json:"params_b"` // footprint (constant across a contender's trials)
+	Contender    string    `json:"contender"`
+	Shape        Shape     `json:"shape"`
+	Temp         SkillTemp `json:"temp,omitempty"` // cold|warm scaffolding level
+	Trials       int       `json:"trials"`
+	Captured     int       `json:"captured"`
+	CaptureRate  float64   `json:"capture_rate"`
+	MeanToolCall float64   `json:"mean_tool_calls"`
+	MeanTokens   float64   `json:"mean_tokens"` // in+out
+	MeanWallMS   float64   `json:"mean_wall_ms"`
+	ParamsB      float64   `json:"params_b"` // footprint (constant across a contender's trials)
 	// CapturePerMTok is capture rate per million tokens spent — the iso-budget
 	// headline: which shape captures most for the compute it burns. Zero when no
 	// tokens were spent (e.g. a deterministic planner that never calls a model).
 	CapturePerMTok float64  `json:"capture_per_mtok"`
 	MeanRecall     *float64 `json:"mean_recall,omitempty"`
 	MeanPrecision  *float64 `json:"mean_precision,omitempty"`
+	// TraceID is a representative trial's trace (a captured one is preferred), so the
+	// leaderboard can offer a blackboard replay of that run. ReplayHref, when set by
+	// the renderer's caller, is the link the row points at.
+	TraceID    string `json:"trace_id,omitempty"`
+	ReplayHref string `json:"replay_href,omitempty"`
 }
 
 // Summarize rolls trial results into one row per contender, in input order of first
@@ -161,26 +177,35 @@ type ContenderSummary struct {
 // tested on hand-built results.
 func Summarize(results []SweepResult) []ContenderSummary {
 	type acc struct {
-		sum  ContenderSummary
-		tok  float64
-		tc   float64
-		wall float64
-		rec  float64
-		prec float64
-		rn   int // trials that carried a score
+		sum           ContenderSummary
+		tok           float64
+		tc            float64
+		wall          float64
+		rec           float64
+		prec          float64
+		rn            int // trials that carried a score
+		capturedTrace bool
 	}
 	accs := map[string]*acc{}
 	var order []string
 	for _, r := range results {
 		a, ok := accs[r.Contender]
 		if !ok {
-			a = &acc{sum: ContenderSummary{Contender: r.Contender, Shape: r.Shape}}
+			a = &acc{sum: ContenderSummary{Contender: r.Contender, Shape: r.Shape, Temp: r.Temp}}
 			accs[r.Contender] = a
 			order = append(order, r.Contender)
 		}
 		a.sum.Trials++
 		if r.Outcome == "captured" {
 			a.sum.Captured++
+		}
+		// Keep a representative trace for the replay link: prefer a captured trial's,
+		// otherwise the first seen, so every row can link to an actual run.
+		if r.TraceID != "" && (a.sum.TraceID == "" || (r.Outcome == "captured" && !a.capturedTrace)) {
+			a.sum.TraceID = r.TraceID
+			if r.Outcome == "captured" {
+				a.capturedTrace = true
+			}
 		}
 		a.tc += float64(r.ToolCalls)
 		a.tok += float64(r.TokensIn + r.TokensOut)
@@ -226,15 +251,19 @@ func Table(sums []ContenderSummary) string {
 		}
 		return rows[i].MeanTokens < rows[j].MeanTokens
 	})
-	out := fmt.Sprintf("%-28s %-10s %7s %8s %9s %9s %11s  %s\n",
-		"contender", "shape", "cap%", "tools", "tokens", "params_b", "cap/Mtok", "recall/prec")
+	out := fmt.Sprintf("%-28s %-10s %-5s %7s %8s %9s %9s %11s  %s\n",
+		"contender", "shape", "skill", "cap%", "tools", "tokens", "params_b", "cap/Mtok", "recall/prec")
 	for _, r := range rows {
 		rp := "-"
 		if r.MeanRecall != nil {
 			rp = fmt.Sprintf("%.2f/%.2f", *r.MeanRecall, *r.MeanPrecision)
 		}
-		out += fmt.Sprintf("%-28s %-10s %6.0f%% %8.1f %9.0f %9.1f %11.2f  %s\n",
-			trunc(r.Contender, 28), string(r.Shape), r.CaptureRate*100,
+		temp := string(r.Temp)
+		if temp == "" {
+			temp = "-"
+		}
+		out += fmt.Sprintf("%-28s %-10s %-5s %6.0f%% %8.1f %9.0f %9.1f %11.2f  %s\n",
+			trunc(r.Contender, 28), string(r.Shape), temp, r.CaptureRate*100,
 			r.MeanToolCall, r.MeanTokens, r.ParamsB, r.CapturePerMTok, rp)
 	}
 	return out
