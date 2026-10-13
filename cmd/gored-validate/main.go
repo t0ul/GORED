@@ -30,6 +30,8 @@ func main() {
 		source = flag.String("source", "", "app source tree; raises scanner issues onto the static rungs (code + Dockerfile)")
 		huntP  = flag.String("hunt", "", "a gored-hunt report JSON; its access-control findings become proofs")
 		jsonP  = flag.String("json", "", "also write the verdicts as JSON here (for the blackboard view)")
+		rulerP = flag.String("ruler", "", "score the verdicts against a ground-truth ruler JSON (recall/precision)")
+		minR   = flag.String("ruler-min", "reachable", "min rung that counts as 'flagged' when scoring (reported|present|reachable|triggerable|exploitable)")
 	)
 	flag.Parse()
 	if *dbPath == "" {
@@ -90,6 +92,26 @@ func main() {
 		}
 	}
 	fmt.Printf("\n%d confirmed-exploitable (with a repro) out of %d verdicts\n", exploitable, len(verdicts))
+
+	if *rulerP != "" {
+		ruler, err := gored.LoadRuler(*rulerP)
+		if err != nil {
+			log.Fatal(err)
+		}
+		s := ruler.Score(verdicts, gored.Ladder(*minR))
+		fmt.Printf("\n==== scored against %s (ruler: %s) ====\n", ruler.App, *rulerP)
+		fmt.Printf("recall: %.0f%% (%d/%d real bugs flagged)   precision: %.0f%% (%d false positive(s))\n",
+			100*s.Recall, s.TPFound, s.TPTotal, 100*s.Precision, s.FP)
+		if len(s.Confirmed) > 0 {
+			fmt.Printf("confirmed-exploitable: %s\n", strings.Join(s.Confirmed, ", "))
+		}
+		if len(s.Missed) > 0 {
+			fmt.Printf("missed: %s\n", strings.Join(s.Missed, ", "))
+		}
+		if len(s.FalsePositives) > 0 {
+			fmt.Printf("false positives: %s\n", strings.Join(s.FalsePositives, ", "))
+		}
+	}
 }
 
 // huntProofs loads a gored-hunt report and turns each access-control finding into a proof.
