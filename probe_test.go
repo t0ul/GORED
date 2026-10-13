@@ -6,15 +6,27 @@ import (
 )
 
 func TestParseProbe(t *testing.T) {
-	// Echoed probe -> injected + command output, status 200.
+	// A bare echoed string is reflection, NOT proven command output (can't tell from the
+	// bytes whether it executed or was reflected).
 	obs := ParseProbe("RCEPROBE\n", "RCEPROBE", "")
-	if !obs.Echoed || !obs.CmdOutput || obs.Status != 200 || obs.Errored {
+	if !obs.Echoed || obs.CmdOutput || obs.Status != 200 || obs.Errored {
 		t.Errorf("echoed probe misread: %+v", obs)
 	}
 	// id output -> command output even without a nonce.
 	obs = ParseProbe("uid=0(root) gid=0(root)", "", "")
 	if obs.Echoed || !obs.CmdOutput {
 		t.Errorf("id output misread: %+v", obs)
+	}
+	// A reflection decoy echoing the model's own `cat /etc/passwd` payload must NOT be
+	// read as command output — the regression that steered a model into the trap.
+	obs = ParseProbe("No results for: whoami; cat /etc/passwd", "whoami", "")
+	if obs.CmdOutput {
+		t.Errorf("reflected payload wrongly flagged as command output: %+v", obs)
+	}
+	// Real passwd output IS command output.
+	obs = ParseProbe("root:x:0:0:root:/root:/bin/sh\n", "", "")
+	if !obs.CmdOutput {
+		t.Errorf("passwd output not detected: %+v", obs)
 	}
 	// wget 400 error -> errored, status parsed from the text.
 	obs = ParseProbe("", "", "wget: server returned error: HTTP/1.1 400 Bad Request")
@@ -50,8 +62,13 @@ func TestReflectHintNeverLeaksLocation(t *testing.T) {
 }
 
 func TestReflectHintGuidesByState(t *testing.T) {
-	if !strings.Contains(ReflectHint(ProbeObservation{Echoed: true}, "cmd"), "executed") {
-		t.Error("echoed hint should say the param is executed")
+	// Command output -> says it executes.
+	if !strings.Contains(strings.ToLower(ReflectHint(ProbeObservation{CmdOutput: true}, "cmd")), "execut") {
+		t.Error("cmd-output hint should say the param executes")
+	}
+	// Echo without command output -> steers AWAY (reflection, not execution).
+	if !strings.Contains(strings.ToLower(ReflectHint(ProbeObservation{Echoed: true}, "q")), "reflection") {
+		t.Error("echo-only hint should call out reflection, not execution")
 	}
 	if !strings.Contains(strings.ToLower(ReflectHint(ProbeObservation{Status: 404, Errored: true}, "")), "different") {
 		t.Error("error hint should suggest a different endpoint/param")
