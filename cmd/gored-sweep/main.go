@@ -52,6 +52,7 @@ func main() {
 		flagID    = flag.String("flag", "idor-notes", "target flag id to capture")
 		skill     = flag.String("skill", "warm", "doer/solo skill for the IDOR lead: warm (spelled-out) or cold (discovery)")
 		maxSteps  = flag.Int("steps", 6, "max objective-loop steps per agent")
+		maxOut    = flag.Int("max-out", 256, "max completion tokens per model call (raise for reasoning models, e.g. 2048)")
 		renderF   = flag.String("render-from", "", "CSV of prior -json result files: merge their summaries into one leaderboard and exit (no models run)")
 		jsonOut   = flag.String("json", "", "write the full results as JSON to this path")
 		htmlOut   = flag.String("html", "", "write a self-contained HTML leaderboard to this path")
@@ -197,7 +198,7 @@ func main() {
 	if warm {
 		soloSkill = gored.WarmIDORSkill
 	}
-	bounds := gored.Bounds{MaxSteps: *maxSteps, Wall: 110 * time.Second}
+	bounds := gored.Bounds{MaxSteps: *maxSteps, Wall: 110 * time.Second, MaxOutTokens: *maxOut}
 	leads := staticLeads(*doers)
 	const canary = "http://169.254.169.254/latest/meta-data/"
 
