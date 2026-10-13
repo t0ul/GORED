@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,12 +134,57 @@ func main() {
 		"model": modelName(*modelF), "outcome": res.Outcome, "captured_via": res.CapturedVia,
 		"steps": res.Steps, "tool_calls": res.ToolCalls, "tokens_in": res.TokensIn, "tokens_out": res.TokensOut,
 	})
-	if res.Outcome == "captured" {
-		fmt.Printf("\nCAPTURED by the model: %s\n", res.CapturedVia)
-	} else {
+	if res.Outcome != "captured" {
 		fmt.Printf("\nnot captured (%s) — the model did not drive the exploit within bounds\n", res.Outcome)
+		fmt.Printf("trace: %s\n", *traceP)
+		return
+	}
+
+	// The model's capture becomes proofs for the Validator, so a swarm run lands the same
+	// exploitable verdict + host-compromise chain the scripted agent produces.
+	fmt.Printf("\nCAPTURED by the model: %s\n", res.CapturedVia)
+	req := captureURL(res.CaptureRequest, *base)
+	escapeConfirmed := strings.Contains(res.CapturedVia, "host")
+	proofs := gored.EscapeProofs("brig-target", endpointOf(req), req, req, "gored-brigswarm", escapeConfirmed)
+	verdicts := (&gored.Validator{}).Validate(nil, proofs)
+	fmt.Println("\n==== verdicts (from the model's capture) ====")
+	for _, v := range verdicts {
+		mark := ""
+		if v.Exploitable {
+			mark = " EXPLOITABLE"
+		}
+		fmt.Printf("[%s %s%s] %s:%s %v\n", v.Rung, v.Confidence, mark, v.App, v.Locus, v.CWEs)
+		if v.Repro != "" {
+			fmt.Printf("    repro: %s\n", v.Repro)
+		}
+		for _, c := range v.Chain {
+			fmt.Printf("    chain: %s\n", c)
+		}
 	}
 	fmt.Printf("trace: %s\n", *traceP)
+}
+
+// captureURL recovers the request that triggered capture from the tool args (a full url, or
+// a path joined to the base).
+func captureURL(args map[string]any, base string) string {
+	if u, _ := args["url"].(string); u != "" {
+		return u
+	}
+	if p, _ := args["path"].(string); p != "" {
+		if !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		return base + p
+	}
+	return base
+}
+
+// endpointOf returns the path portion of a url (the locus), without the query string.
+func endpointOf(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Path != "" {
+		return u.Path
+	}
+	return raw
 }
 
 // canaryDetector is the oracle: capture is a canary appearing in a real tool result (the
