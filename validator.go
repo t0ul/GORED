@@ -203,17 +203,25 @@ func (v *Validator) rateFinding(f ScannerFinding) Rung {
 // app-level issue plus a container that runs as root is a host-compromise path. It is
 // flagged on the exploitable verdict, never exploited — GORED does not run an escape.
 func chainHostCompromise(verdicts []Verdict) {
-	rootByApp := map[string]bool{}
+	rootFlagged, rootConfirmed := map[string]bool{}, map[string]bool{}
 	for _, vd := range verdicts {
 		if hasStr(vd.CWEs, "CWE-250") || (vd.Locus == "Dockerfile" && containsSub(vd.Evidence, "root")) {
-			rootByApp[vd.App] = true
+			rootFlagged[vd.App] = true
+			if vd.Exploitable { // the escape was actually executed (e.g. a host canary was read)
+				rootConfirmed[vd.App] = true
+			}
 		}
 	}
 	for i := range verdicts {
-		if verdicts[i].Exploitable && rootByApp[verdicts[i].App] {
-			verdicts[i].Chain = append(verdicts[i].Chain,
-				"exploitable app issue + container runs as root (CWE-250) = host-compromise path (chain, not exploited)")
+		// Tag the exploitable app issue, not the container verdict itself.
+		if !verdicts[i].Exploitable || !rootFlagged[verdicts[i].App] || hasStr(verdicts[i].CWEs, "CWE-250") {
+			continue
 		}
+		note := "exploitable app issue + container runs as root (CWE-250) = host-compromise path (flagged, not exploited)"
+		if rootConfirmed[verdicts[i].App] {
+			note = "exploitable app RCE + root container with host access = host-compromise CONFIRMED (escape executed to the VM host)"
+		}
+		verdicts[i].Chain = append(verdicts[i].Chain, note)
 	}
 }
 

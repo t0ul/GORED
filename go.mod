@@ -20,5 +20,10 @@ require (
 	github.com/t0ul/gledger v0.0.0-20261012043634-e291a2255ec6
 	github.com/t0ul/goflage v0.0.0-20261009135357-739ce25ed7e2
 	github.com/t0ul/goserve v0.0.0-20261011215800-ced3cd4c6cce
+	github.com/t0ul/gobrig v0.0.0
 	modernc.org/sqlite v1.60.1
 )
+
+// gobrig (the contained-detonation chamber) is a sibling fleet module; the brigagent cmd
+// imports its pure package (Client/DiscoverRCE/RCEFinding), never its cgo launcher.
+replace github.com/t0ul/gobrig => ../gobrig
