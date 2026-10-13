@@ -45,18 +45,45 @@ func main() {
 		plannerM  = flag.String("planner", "", "registry model name for the B planner (default: the one model)")
 		doerM     = flag.String("doer", "", "registry model name for doers (default: the one model)")
 		doer2M    = flag.String("doer2", "", "second doer model name for genuine parallelism (default: same as -doer)")
+		modelsF   = flag.String("models", "", "CSV of registry model names to sweep as a matrix: each fills every role across the chosen shapes (overrides -solo/-planner/-doer)")
 		doers     = flag.Int("doers", 2, "doer count for the B/E shapes")
 		shapesF   = flag.String("shapes", "A,B,E", "which shapes to run (A=solo, B=model-planner, E=static-planner)")
 		trials    = flag.Int("trials", 1, "trials per contender (fresh flag each)")
 		flagID    = flag.String("flag", "idor-notes", "target flag id to capture")
 		skill     = flag.String("skill", "warm", "doer/solo skill for the IDOR lead: warm (spelled-out) or cold (discovery)")
 		maxSteps  = flag.Int("steps", 6, "max objective-loop steps per agent")
+		renderF   = flag.String("render-from", "", "CSV of prior -json result files: merge their summaries into one leaderboard and exit (no models run)")
 		jsonOut   = flag.String("json", "", "write the full results as JSON to this path")
+		htmlOut   = flag.String("html", "", "write a self-contained HTML leaderboard to this path")
+		htmlTitle = flag.String("html-title", "GORED model × shape leaderboard", "title for the HTML leaderboard")
 		tracePath = flag.String("trace", "gored-sweep-trace.jsonl", "gledger audit trace path")
 		basePort  = flag.Int("base-port", 11600, "first local model serve port")
 	)
 	flag.Parse()
 	ctx := context.Background()
+
+	// Merge mode: combine prior per-model result files into one leaderboard without
+	// running anything, so a model-at-a-time sweep (to stay within memory) still
+	// produces a single ranked table.
+	if *renderF != "" {
+		var all []gored.ContenderSummary
+		for _, p := range splitRawCSV(*renderF) {
+			b, err := os.ReadFile(p)
+			must(err)
+			var doc struct {
+				Summary []gored.ContenderSummary `json:"summary"`
+			}
+			must(json.Unmarshal(b, &doc))
+			all = append(all, doc.Summary...)
+		}
+		fmt.Printf("\n==== merged leaderboard (%d contenders) ====\n%s", len(all), gored.Table(all))
+		if *htmlOut != "" {
+			meta := gored.LeaderboardMeta{Title: *htmlTitle, Target: "demotarget", Flag: *flagID, Trials: *trials, Note: "merged"}
+			must(os.WriteFile(*htmlOut, gored.RenderLeaderboardHTML(meta, all), 0o644))
+			fmt.Printf("leaderboard HTML: %s\n", *htmlOut)
+		}
+		return
+	}
 
 	reg := loadRegistry(*registryF, *modelF)
 
@@ -68,12 +95,25 @@ func main() {
 		}
 		return v
 	}
-	solo, planner, doer := roleName(*soloM), roleName(*plannerM), roleName(*doerM)
-	doer2 := doer
-	if *doer2M != "" {
-		doer2 = *doer2M
-	}
 	shapes := splitCSV(*shapesF)
+
+	// An assignment fills the four roles for one matrix cell. With -models, each named
+	// model fills every role (a model × shape matrix); otherwise the single -solo/
+	// -planner/-doer flags make one assignment.
+	type assign struct{ solo, planner, doer, doer2 string }
+	var assigns []assign
+	if matrix := splitRawCSV(*modelsF); len(matrix) > 0 {
+		for _, m := range matrix {
+			assigns = append(assigns, assign{m, m, m, m})
+		}
+	} else {
+		solo, planner, doer := roleName(*soloM), roleName(*plannerM), roleName(*doerM)
+		doer2 := doer
+		if *doer2M != "" {
+			doer2 = *doer2M
+		}
+		assigns = []assign{{solo, planner, doer, doer2}}
+	}
 
 	// Collect the distinct local models any chosen role needs, and boot them once.
 	need := map[string]bool{}
@@ -84,17 +124,19 @@ func main() {
 			need[name] = true
 		}
 	}
-	if has(shapes, "A") {
-		markLocal(solo)
-	}
-	if has(shapes, "B") {
-		markLocal(planner)
-		markLocal(doer)
-		markLocal(doer2)
-	}
-	if has(shapes, "E") {
-		markLocal(doer)
-		markLocal(doer2)
+	for _, a := range assigns {
+		if has(shapes, "A") {
+			markLocal(a.solo)
+		}
+		if has(shapes, "B") {
+			markLocal(a.planner)
+			markLocal(a.doer)
+			markLocal(a.doer2)
+		}
+		if has(shapes, "E") {
+			markLocal(a.doer)
+			markLocal(a.doer2)
+		}
 	}
 
 	urls := map[string]string{} // model name -> chat URL
@@ -160,54 +202,57 @@ func main() {
 	const canary = "http://169.254.169.254/latest/meta-data/"
 
 	var contenders []gored.Contender
-	if has(shapes, "A") {
-		contenders = append(contenders, gored.Contender{
-			Name: "solo(" + solo + ")", Shape: gored.ShapeSolo,
-			Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
-				cl, acct := clientFor(solo)
-				return &gored.Runner{
-					Model: cl, Tools: tools(rt.BaseURL), Skill: soloSkill, Target: rt.Target,
-					Board: gored.NewBlackboard(), Audit: audit, Bounds: bounds, CanaryURL: canary,
-				}, []*gored.ComputeAccount{acct}, nil
-			},
-		})
-	}
-	if has(shapes, "B") {
-		contenders = append(contenders, gored.Contender{
-			Name: "planner(" + planner + ")+" + itoa(*doers) + "doers", Shape: gored.ShapePlanner,
-			Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
-				pc, pAcct := clientFor(planner)
-				clients, accts := doerClients(*doers, doer, doer2, clientFor)
-				i := 0
-				return &gored.Squad{
-					Name: "B", Board: gored.NewBlackboard(), Audit: audit, Target: rt.Target, Workers: *doers,
-					CanaryURL: canary, Planner: gored.ModelPlanner{Model: pc, Max: *doers},
-					NewDoer: func(l gored.Lead) gored.Agent {
-						cl := clients[i%len(clients)]
-						i++
-						return gored.Agent{Name: "doer", Model: cl, Skill: doerSkill(l.Hint), Tools: tools(rt.BaseURL), Bounds: bounds}
-					},
-				}, append([]*gored.ComputeAccount{pAcct}, accts...), nil
-			},
-		})
-	}
-	if has(shapes, "E") {
-		contenders = append(contenders, gored.Contender{
-			Name: "static-planner+" + itoa(*doers) + "doers", Shape: gored.ShapeStatic,
-			Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
-				clients, accts := doerClients(*doers, doer, doer2, clientFor)
-				i := 0
-				return &gored.Squad{
-					Name: "E", Board: gored.NewBlackboard(), Audit: audit, Target: rt.Target, Workers: *doers,
-					CanaryURL: canary, Planner: gored.StaticPlanner{Label: "static", Leads: leads},
-					NewDoer: func(l gored.Lead) gored.Agent {
-						cl := clients[i%len(clients)]
-						i++
-						return gored.Agent{Name: "doer", Model: cl, Skill: doerSkill(l.Hint), Tools: tools(rt.BaseURL), Bounds: bounds}
-					},
-				}, accts, nil
-			},
-		})
+	for _, a := range assigns {
+		solo, planner, doer, doer2 := a.solo, a.planner, a.doer, a.doer2 // bind per cell for the closures
+		if has(shapes, "A") {
+			contenders = append(contenders, gored.Contender{
+				Name: "solo(" + solo + ")", Shape: gored.ShapeSolo,
+				Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
+					cl, acct := clientFor(solo)
+					return &gored.Runner{
+						Model: cl, Tools: tools(rt.BaseURL), Skill: soloSkill, Target: rt.Target,
+						Board: gored.NewBlackboard(), Audit: audit, Bounds: bounds, CanaryURL: canary,
+					}, []*gored.ComputeAccount{acct}, nil
+				},
+			})
+		}
+		if has(shapes, "B") {
+			contenders = append(contenders, gored.Contender{
+				Name: "planner(" + planner + ")+" + itoa(*doers) + "×" + doer, Shape: gored.ShapePlanner,
+				Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
+					pc, pAcct := clientFor(planner)
+					clients, accts := doerClients(*doers, doer, doer2, clientFor)
+					i := 0
+					return &gored.Squad{
+						Name: "B", Board: gored.NewBlackboard(), Audit: audit, Target: rt.Target, Workers: *doers,
+						CanaryURL: canary, Planner: gored.ModelPlanner{Model: pc, Max: *doers},
+						NewDoer: func(l gored.Lead) gored.Agent {
+							cl := clients[i%len(clients)]
+							i++
+							return gored.Agent{Name: "doer", Model: cl, Skill: doerSkill(l.Hint), Tools: tools(rt.BaseURL), Bounds: bounds}
+						},
+					}, append([]*gored.ComputeAccount{pAcct}, accts...), nil
+				},
+			})
+		}
+		if has(shapes, "E") {
+			contenders = append(contenders, gored.Contender{
+				Name: "static+" + itoa(*doers) + "×" + doer, Shape: gored.ShapeStatic,
+				Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
+					clients, accts := doerClients(*doers, doer, doer2, clientFor)
+					i := 0
+					return &gored.Squad{
+						Name: "E", Board: gored.NewBlackboard(), Audit: audit, Target: rt.Target, Workers: *doers,
+						CanaryURL: canary, Planner: gored.StaticPlanner{Label: "static", Leads: leads},
+						NewDoer: func(l gored.Lead) gored.Agent {
+							cl := clients[i%len(clients)]
+							i++
+							return gored.Agent{Name: "doer", Model: cl, Skill: doerSkill(l.Hint), Tools: tools(rt.BaseURL), Bounds: bounds}
+						},
+					}, accts, nil
+				},
+			})
+		}
 	}
 	if len(contenders) == 0 {
 		log.Fatalf("no shapes selected (-shapes=%q)", *shapesF)
@@ -234,6 +279,25 @@ func main() {
 		must(os.WriteFile(*jsonOut, b, 0o644))
 		fmt.Printf("results JSON: %s\n", *jsonOut)
 	}
+	if *htmlOut != "" {
+		meta := gored.LeaderboardMeta{
+			Title: *htmlTitle, Target: "demotarget", Flag: *flagID, Trials: *trials,
+			Note: "skill=" + *skill,
+		}
+		must(os.WriteFile(*htmlOut, gored.RenderLeaderboardHTML(meta, sums), 0o644))
+		fmt.Printf("leaderboard HTML: %s\n", *htmlOut)
+	}
+}
+
+// splitRawCSV splits a comma list without case-folding (model names are case-sensitive).
+func splitRawCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // freshDemoTarget builds a new demo-target server with an unforgeable flag per trial.
