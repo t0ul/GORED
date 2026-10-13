@@ -372,8 +372,8 @@ func describeAction(act action) string {
 func resultSnippet(out string) string {
 	out = strings.ReplaceAll(strings.ReplaceAll(out, "\n", " "), "\t", " ")
 	out = strings.Join(strings.Fields(out), " ")
-	if len(out) > 140 {
-		out = out[:140] + "…"
+	if len(out) > 600 {
+		out = out[:600] + "…"
 	}
 	return out
 }
