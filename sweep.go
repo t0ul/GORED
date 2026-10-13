@@ -170,6 +170,10 @@ type ContenderSummary struct {
 	// the renderer's caller, is the link the row points at.
 	TraceID    string `json:"trace_id,omitempty"`
 	ReplayHref string `json:"replay_href,omitempty"`
+	// MemPct is the model's contamination score for this target (0..1): how much it
+	// recalled the real target unprompted. nil when not probed. A high value means the
+	// discovery numbers may reflect memorization rather than reasoning.
+	MemPct *float64 `json:"mem_pct,omitempty"`
 }
 
 // Summarize rolls trial results into one row per contender, in input order of first
@@ -251,8 +255,8 @@ func Table(sums []ContenderSummary) string {
 		}
 		return rows[i].MeanTokens < rows[j].MeanTokens
 	})
-	out := fmt.Sprintf("%-28s %-10s %-5s %7s %8s %9s %9s %11s  %s\n",
-		"contender", "shape", "skill", "cap%", "tools", "tokens", "params_b", "cap/Mtok", "recall/prec")
+	out := fmt.Sprintf("%-28s %-10s %-5s %7s %8s %9s %5s %11s  %s\n",
+		"contender", "shape", "skill", "cap%", "tools", "tokens", "mem%", "cap/Mtok", "recall/prec")
 	for _, r := range rows {
 		rp := "-"
 		if r.MeanRecall != nil {
@@ -262,9 +266,13 @@ func Table(sums []ContenderSummary) string {
 		if temp == "" {
 			temp = "-"
 		}
-		out += fmt.Sprintf("%-28s %-10s %-5s %6.0f%% %8.1f %9.0f %9.1f %11.2f  %s\n",
+		mem := "-"
+		if r.MemPct != nil {
+			mem = fmt.Sprintf("%.0f%%", *r.MemPct*100)
+		}
+		out += fmt.Sprintf("%-28s %-10s %-5s %6.0f%% %8.1f %9.0f %5s %11.2f  %s\n",
 			trunc(r.Contender, 28), string(r.Shape), temp, r.CaptureRate*100,
-			r.MeanToolCall, r.MeanTokens, r.ParamsB, r.CapturePerMTok, rp)
+			r.MeanToolCall, r.MeanTokens, mem, r.CapturePerMTok, rp)
 	}
 	return out
 }

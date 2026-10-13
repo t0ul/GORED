@@ -73,6 +73,14 @@ func RenderLeaderboardHTML(meta LeaderboardMeta, sums []ContenderSummary) []byte
 		if r.Temp != "" {
 			temp = fmt.Sprintf(`<span class="chip t-%s">%s</span>`, string(r.Temp), html.EscapeString(string(r.Temp)))
 		}
+		mem := "—"
+		if r.MemPct != nil {
+			cls := "memclean"
+			if *r.MemPct >= 0.34 {
+				cls = "memdirty"
+			}
+			mem = fmt.Sprintf(`<span class="%s">%.0f%%</span>`, cls, *r.MemPct*100)
+		}
 		fmt.Fprintf(&tb, `<tr>
 <td class="rank">%d</td>
 <td class="name">%s</td>
@@ -82,6 +90,7 @@ func RenderLeaderboardHTML(meta LeaderboardMeta, sums []ContenderSummary) []byte
 <td class="num">%.1f</td>
 <td class="num">%s</td>
 <td class="num">%.1f</td>
+<td class="num">%s</td>
 <td class="num eff"><div class="bar alt"><span style="width:%.0f%%"></span></div>%s</td>
 <td class="num">%s</td>
 </tr>`,
@@ -93,6 +102,7 @@ func RenderLeaderboardHTML(meta LeaderboardMeta, sums []ContenderSummary) []byte
 			r.MeanToolCall,
 			commaInt(r.MeanTokens),
 			r.ParamsB,
+			mem,
 			eff*100, cpm,
 			scored,
 		)
@@ -159,10 +169,10 @@ const leaderboardTmpl = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>__TITLE__</title>
 <style>
-:root{--bg:#f6f7f9;--panel:#fff;--line:#e3e6ea;--fg:#1a1f24;--mut:#6b7482;--acc:#2f6feb;
+:root{--bg:#f6f7f9;--panel:#fff;--line:#e3e6ea;--fg:#1a1f24;--mut:#6b7482;--acc:#2f6feb;--crit:#b4232a;
 --a:#2f6feb;--b:#8957e5;--e:#1a7f5a;--bar:#dfe7f5;--barfill:#2f6feb;--alt:#e9f3ee;--altfill:#1a7f5a}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1117;--panel:#161b22;--line:#2a313a;--fg:#e6edf3;--mut:#8b949e;--acc:#58a6ff;--a:#58a6ff;--b:#bc8cff;--e:#3fb950;--bar:#1d2633;--barfill:#58a6ff;--alt:#17251d;--altfill:#3fb950;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#0d1117;--panel:#161b22;--line:#2a313a;--fg:#e6edf3;--mut:#8b949e;--acc:#58a6ff;--a:#58a6ff;--b:#bc8cff;--e:#3fb950;--bar:#1d2633;--barfill:#58a6ff;--alt:#17251d;--altfill:#3fb950;color-scheme:dark}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1117;--panel:#161b22;--line:#2a313a;--fg:#e6edf3;--mut:#8b949e;--acc:#58a6ff;--crit:#f85149;--a:#58a6ff;--b:#bc8cff;--e:#3fb950;--bar:#1d2633;--barfill:#58a6ff;--alt:#17251d;--altfill:#3fb950;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0d1117;--panel:#161b22;--line:#2a313a;--fg:#e6edf3;--mut:#8b949e;--acc:#58a6ff;--crit:#f85149;--a:#58a6ff;--b:#bc8cff;--e:#3fb950;--bar:#1d2633;--barfill:#58a6ff;--alt:#17251d;--altfill:#3fb950;color-scheme:dark}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 .wrap{max-width:1000px;margin:0 auto;padding-block:28px;padding-inline:16px}
@@ -184,6 +194,7 @@ td.num,th.num{text-align:right}
 a.play{color:inherit;text-decoration:none;font-weight:600}
 a.play:hover{text-decoration:underline}
 a.play .pl{color:var(--acc);font-weight:500;font-size:11px;white-space:nowrap;opacity:.85}
+.memclean{color:var(--e);font-weight:600}.memdirty{color:var(--crit);font-weight:700}
 .bar{display:block;height:6px;border-radius:4px;background:var(--bar);margin:0 0 3px;overflow:hidden}
 .bar span{display:block;height:100%;background:var(--barfill);border-radius:4px}
 .bar.alt{background:var(--alt)}.bar.alt span{background:var(--altfill)}
@@ -200,7 +211,7 @@ a.play .pl{color:var(--acc);font-weight:500;font-size:11px;white-space:nowrap;op
       <thead><tr>
         <th>#</th><th>contender</th><th>shape</th><th>skill</th>
         <th class="num">capture rate</th><th class="num">tools</th><th class="num">tokens</th>
-        <th class="num">params B</th><th class="num">cap / Mtok</th><th class="num">recall / prec</th>
+        <th class="num">params B</th><th class="num">mem</th><th class="num">cap / Mtok</th><th class="num">recall / prec</th>
       </tr></thead>
       <tbody>
 __ROWS__
@@ -214,6 +225,7 @@ __ROWS__
     <span class="chip b">B-planner</span> model planner + doers · <span class="chip e">E-static</span> deterministic planner + doers.
     <b>skill</b>: <span class="chip t-cold">cold</span> generic methodology (model reasons the specifics) ·
     <span class="chip t-warm">warm</span> spelled-out procedure. A contender name links to that run's blackboard replay when available.
+    <b>mem</b> = contamination: how much the model recalled the real target unprompted (a pre-flight probe). Green is clean; red (≥34%) means its discovery numbers may reflect memorization, not reasoning.
     <b>recall / prec</b> shown only when scored against a frozen ruler.
   </p>
 </div>
