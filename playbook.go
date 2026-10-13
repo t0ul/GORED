@@ -23,8 +23,8 @@ func WebInjectionPlaybook() []Phase {
 		},
 		{
 			Name: "probe",
-			Brief: "Find the endpoint that executes commands. If you have an injection-scanning tool (such as find_injection), call it first — it sweeps endpoints and parameters and confirms a command injection for you. " +
-				"Otherwise test parameters yourself: send a value that RUNS a command such as `id` and look for its OUTPUT (for example uid=0(root)); a reflected string echoed back unchanged is NOT execution. Keep going until you confirm real command output.",
+			Brief: "Find the endpoint that executes commands. Your FIRST action in this phase MUST be to call the find_injection tool — it sweeps endpoints and parameters and confirms a command injection for you. Do NOT probe endpoints by hand, and do NOT keep requesting pages you already saw, until find_injection has run. " +
+				"When it reports a confirmed endpoint and parameter, use http_request to run a command there (e.g. the parameter value `id`) and check the output. A string merely echoed back unchanged is NOT execution.",
 			Advance: func(b *Blackboard, last string) bool {
 				return ParseProbe(last, "", "").CmdOutput
 			},
