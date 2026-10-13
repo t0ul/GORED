@@ -114,6 +114,23 @@ type Runner struct {
 	// a privileged path, so its appearance in an unauthorized response is a genuine
 	// disclosure. Returns (true, via) when the canary is present.
 	Detector func(toolResult string) (captured bool, via string)
+	// Phases, when set, turn the flat loop into a staged one (recon -> probe ->
+	// exploit, etc.): each step uses the current phase's brief plus the board (the
+	// running log), and a deterministic milestone advances the phase. This gives the
+	// agent the pentest METHODOLOGY (the how-sequence) without the answer, so it stops
+	// wandering. Nil keeps the original flat loop. See Phase.
+	Phases []Phase
+}
+
+// Phase is one stage of a staged discovery loop. Brief is the methodology shown to the
+// model for this stage (the how, never the vulnerable location). Advance is a
+// deterministic milestone — it reads the board and the last tool result and reports
+// whether the agent has reached this stage's goal and should move on. Advance must never
+// depend on the model's self-report. A nil Advance is terminal (the oracle ends the run).
+type Phase struct {
+	Name    string
+	Brief   string
+	Advance func(board *Blackboard, lastResult string) bool
 }
 
 // Run executes the loop: a deterministic harness around the stochastic model. It
@@ -162,6 +179,7 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 	msgs := []Message{{Role: RoleSystem, Content: r.systemPrompt(obj)}}
 
 	lastKey := "" // anti-repetition: break loops where the model repeats one call
+	phaseIdx := 0 // staged loop: which Phase we are in (0 when there are no phases)
 	for step := 1; step <= b.MaxSteps; step++ {
 		if time.Since(start) > b.Wall {
 			r.emit(traceID, "run", "budget_wall", gledger.F{"step": step})
@@ -169,7 +187,14 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 		}
 		res.Steps = step
 
-		user := fmt.Sprintf("Blackboard:\n%s\n\nGoal: %s\nReply with ONE JSON object. To call a tool: {\"tool\":\"http_request\",\"args\":{...}} (tool must be one of: %s). When you have read the flag: {\"done\":true,\"flag\":\"GORED{...}\"}.", r.Board.Render(), obj.Goal, strings.Join(r.Tools.names(), ", "))
+		// The goal line is the plain objective, or the current phase's brief (staged):
+		// the agent gets the methodology for where it is, plus the board as its log.
+		goalLine := obj.Goal
+		if len(r.Phases) > 0 {
+			ph := r.Phases[phaseIdx]
+			goalLine = fmt.Sprintf("Phase %d/%d (%s): %s\nOverall objective: %s", phaseIdx+1, len(r.Phases), ph.Name, ph.Brief, obj.Goal)
+		}
+		user := fmt.Sprintf("Blackboard (what you have found so far):\n%s\n\n%s\nReply with ONE JSON object. To call a tool: {\"tool\":\"http_request\",\"args\":{...}} (tool must be one of: %s). When you have read the flag: {\"done\":true,\"flag\":\"GORED{...}\"}.", r.Board.Render(), goalLine, strings.Join(r.Tools.names(), ", "))
 		turn := append(msgs, Message{Role: RoleUser, Content: user})
 
 		reply, usage, err := r.Model.Chat(ctx, turn, ChatOpts{Temperature: 0.2, MaxTokens: b.MaxOutTokens})
@@ -246,6 +271,15 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 					r.emit(traceID, "verify", "repro", gledger.F{"curl": CurlFor(obj.Base, act.Args), "note": "the capturing request; its session is established by the login request earlier in this run"})
 					break
 				}
+			}
+		}
+
+		// Staged loop: advance the phase when this phase's deterministic milestone is
+		// met (read from the board + the last tool result, never the model's claim).
+		if n := len(r.Phases); n > 0 && phaseIdx < n-1 && r.Phases[phaseIdx].Advance != nil {
+			if r.Phases[phaseIdx].Advance(r.Board, out) {
+				r.emit(traceID, "phase", "phase_advance", gledger.F{"step": step, "from": r.Phases[phaseIdx].Name, "to": r.Phases[phaseIdx+1].Name})
+				phaseIdx++
 			}
 		}
 
