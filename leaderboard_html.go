@@ -63,10 +63,21 @@ func RenderLeaderboardHTML(meta LeaderboardMeta, sums []ContenderSummary) []byte
 		if maxCPM > 0 {
 			eff = r.CapturePerMTok / maxCPM
 		}
+		// Name, optionally a link to this run's blackboard replay.
+		name := html.EscapeString(r.Contender)
+		if r.ReplayHref != "" {
+			name = fmt.Sprintf(`<a class="play" href="%s" target="_blank" rel="noopener">%s <span class="pl">▸ replay</span></a>`,
+				html.EscapeString(r.ReplayHref), html.EscapeString(r.Contender))
+		}
+		temp := "—"
+		if r.Temp != "" {
+			temp = fmt.Sprintf(`<span class="chip t-%s">%s</span>`, string(r.Temp), html.EscapeString(string(r.Temp)))
+		}
 		fmt.Fprintf(&tb, `<tr>
 <td class="rank">%d</td>
 <td class="name">%s</td>
 <td><span class="chip %s">%s</span></td>
+<td>%s</td>
 <td class="num"><div class="bar"><span style="width:%.0f%%"></span></div><b>%.0f%%</b> <span class="mut">%d/%d</span></td>
 <td class="num">%.1f</td>
 <td class="num">%s</td>
@@ -75,8 +86,9 @@ func RenderLeaderboardHTML(meta LeaderboardMeta, sums []ContenderSummary) []byte
 <td class="num">%s</td>
 </tr>`,
 			i+1,
-			html.EscapeString(r.Contender),
+			name,
 			shapeClass(r.Shape), html.EscapeString(string(r.Shape)),
+			temp,
 			r.CaptureRate*100, r.CaptureRate*100, r.Captured, r.Trials,
 			r.MeanToolCall,
 			commaInt(r.MeanTokens),
@@ -168,6 +180,10 @@ td.num,th.num{text-align:right}
 .mut{color:var(--mut);font-weight:400;font-size:12px}
 .chip{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;color:#fff}
 .chip.a{background:var(--a)}.chip.b{background:var(--b)}.chip.e{background:var(--e)}
+.chip.t-warm{background:#c2410c}.chip.t-cold{background:#0e7490}
+a.play{color:inherit;text-decoration:none;font-weight:600}
+a.play:hover{text-decoration:underline}
+a.play .pl{color:var(--acc);font-weight:500;font-size:11px;white-space:nowrap;opacity:.85}
 .bar{display:block;height:6px;border-radius:4px;background:var(--bar);margin:0 0 3px;overflow:hidden}
 .bar span{display:block;height:100%;background:var(--barfill);border-radius:4px}
 .bar.alt{background:var(--alt)}.bar.alt span{background:var(--altfill)}
@@ -182,7 +198,7 @@ td.num,th.num{text-align:right}
   <div class="card scroll">
     <table>
       <thead><tr>
-        <th>#</th><th>contender</th><th>shape</th>
+        <th>#</th><th>contender</th><th>shape</th><th>skill</th>
         <th class="num">capture rate</th><th class="num">tools</th><th class="num">tokens</th>
         <th class="num">params B</th><th class="num">cap / Mtok</th><th class="num">recall / prec</th>
       </tr></thead>
@@ -196,6 +212,8 @@ __ROWS__
     <b>cap / Mtok</b> = capture rate per million tokens spent — the iso-budget headline (green bar, relative to the best cell).
     <b>tokens</b> = mean prompt+completion per trial. <b>shape</b>: <span class="chip a">A-solo</span> one model+tools ·
     <span class="chip b">B-planner</span> model planner + doers · <span class="chip e">E-static</span> deterministic planner + doers.
+    <b>skill</b>: <span class="chip t-cold">cold</span> generic methodology (model reasons the specifics) ·
+    <span class="chip t-warm">warm</span> spelled-out procedure. A contender name links to that run's blackboard replay when available.
     <b>recall / prec</b> shown only when scored against a frozen ruler.
   </p>
 </div>

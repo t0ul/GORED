@@ -51,6 +51,8 @@ func main() {
 		trials    = flag.Int("trials", 1, "trials per contender (fresh flag each)")
 		flagID    = flag.String("flag", "idor-notes", "target flag id to capture")
 		skill     = flag.String("skill", "warm", "doer/solo skill for the IDOR lead: warm (spelled-out) or cold (discovery)")
+		skillsF   = flag.String("skills", "", "CSV of skill temps to sweep as a dimension, e.g. warm,cold (overrides -skill; adds a column)")
+		replaysD  = flag.String("replays", "", "directory (next to -html) to write a blackboard replay per row and link it from the leaderboard")
 		maxSteps  = flag.Int("steps", 6, "max objective-loop steps per agent")
 		maxOut    = flag.Int("max-out", 256, "max completion tokens per model call (raise for reasoning models, e.g. 2048)")
 		renderF   = flag.String("render-from", "", "CSV of prior -json result files: merge their summaries into one leaderboard and exit (no models run)")
@@ -184,75 +186,101 @@ func main() {
 		ht.AllowMethods = map[string]bool{"GET": true, "HEAD": true}
 		return gored.NewToolbox(ht, gored.DiffTool{})
 	}
-	warm := strings.EqualFold(*skill, "warm")
-	doerSkill := func(hint string) gored.Skill {
-		if strings.Contains(hint, "idor") && warm {
-			return gored.WarmIDORSkill
-		}
-		if strings.Contains(hint, "idor") {
-			return gored.SoloColdSkill
-		}
-		return gored.SoloColdSkill
-	}
-	soloSkill := gored.SoloColdSkill
-	if warm {
-		soloSkill = gored.WarmIDORSkill
-	}
 	bounds := gored.Bounds{MaxSteps: *maxSteps, Wall: 110 * time.Second, MaxOutTokens: *maxOut}
 	leads := staticLeads(*doers)
 	const canary = "http://169.254.169.254/latest/meta-data/"
 
+	// Skill temperatures to sweep: -skills (a dimension, adds a column) overrides -skill.
+	temps := splitRawCSV(*skillsF)
+	if len(temps) == 0 {
+		temps = []string{*skill}
+	}
+	multiTemp := len(temps) > 1
+	// traceOf remembers each contender's representative trace id for the replay link.
+	traceOf := map[string]string{}
+
 	var contenders []gored.Contender
-	for _, a := range assigns {
-		solo, planner, doer, doer2 := a.solo, a.planner, a.doer, a.doer2 // bind per cell for the closures
-		if has(shapes, "A") {
-			contenders = append(contenders, gored.Contender{
-				Name: "solo(" + solo + ")", Shape: gored.ShapeSolo,
-				Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
-					cl, acct := clientFor(solo)
-					return &gored.Runner{
-						Model: cl, Tools: tools(rt.BaseURL), Skill: soloSkill, Target: rt.Target,
-						Board: gored.NewBlackboard(), Audit: audit, Bounds: bounds, CanaryURL: canary,
-					}, []*gored.ComputeAccount{acct}, nil
-				},
-			})
+	for _, temp := range temps {
+		warm := strings.EqualFold(temp, "warm")
+		st := gored.SkillCold
+		if warm {
+			st = gored.SkillWarm
 		}
-		if has(shapes, "B") {
-			contenders = append(contenders, gored.Contender{
-				Name: "planner(" + planner + ")+" + itoa(*doers) + "×" + doer, Shape: gored.ShapePlanner,
-				Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
-					pc, pAcct := clientFor(planner)
-					clients, accts := doerClients(*doers, doer, doer2, clientFor)
-					i := 0
-					return &gored.Squad{
-						Name: "B", Board: gored.NewBlackboard(), Audit: audit, Target: rt.Target, Workers: *doers,
-						CanaryURL: canary, Planner: gored.ModelPlanner{Model: pc, Max: *doers},
-						NewDoer: func(l gored.Lead) gored.Agent {
-							cl := clients[i%len(clients)]
-							i++
-							return gored.Agent{Name: "doer", Model: cl, Skill: doerSkill(l.Hint), Tools: tools(rt.BaseURL), Bounds: bounds}
-						},
-					}, append([]*gored.ComputeAccount{pAcct}, accts...), nil
-				},
-			})
+		doerSkill := func(hint string) gored.Skill {
+			if strings.Contains(hint, "idor") && warm {
+				return gored.WarmIDORSkill
+			}
+			return gored.SoloColdSkill
 		}
-		if has(shapes, "E") {
-			contenders = append(contenders, gored.Contender{
-				Name: "static+" + itoa(*doers) + "×" + doer, Shape: gored.ShapeStatic,
-				Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
-					clients, accts := doerClients(*doers, doer, doer2, clientFor)
-					i := 0
-					return &gored.Squad{
-						Name: "E", Board: gored.NewBlackboard(), Audit: audit, Target: rt.Target, Workers: *doers,
-						CanaryURL: canary, Planner: gored.StaticPlanner{Label: "static", Leads: leads},
-						NewDoer: func(l gored.Lead) gored.Agent {
-							cl := clients[i%len(clients)]
-							i++
-							return gored.Agent{Name: "doer", Model: cl, Skill: doerSkill(l.Hint), Tools: tools(rt.BaseURL), Bounds: bounds}
-						},
-					}, accts, nil
-				},
-			})
+		soloSkill := gored.SoloColdSkill
+		if warm {
+			soloSkill = gored.WarmIDORSkill
+		}
+		tag := ""
+		if multiTemp {
+			tag = " [" + temp + "]"
+		}
+		remember := func(name string) func(gored.RunResult) {
+			return func(res gored.RunResult) {
+				if res.TraceID != "" && (traceOf[name] == "" || res.Outcome == "captured") {
+					traceOf[name] = res.TraceID
+				}
+			}
+		}
+		for _, a := range assigns {
+			solo, planner, doer, doer2 := a.solo, a.planner, a.doer, a.doer2 // bind per cell for the closures
+			if has(shapes, "A") {
+				name := "solo(" + solo + ")" + tag
+				contenders = append(contenders, gored.Contender{
+					Name: name, Shape: gored.ShapeSolo, Temp: st, TraceFilter: remember(name),
+					Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
+						cl, acct := clientFor(solo)
+						return &gored.Runner{
+							Model: cl, Tools: tools(rt.BaseURL), Skill: soloSkill, Target: rt.Target,
+							Board: gored.NewBlackboard(), Audit: audit, Bounds: bounds, CanaryURL: canary,
+						}, []*gored.ComputeAccount{acct}, nil
+					},
+				})
+			}
+			if has(shapes, "B") {
+				name := "planner(" + planner + ")+" + itoa(*doers) + "×" + doer + tag
+				contenders = append(contenders, gored.Contender{
+					Name: name, Shape: gored.ShapePlanner, Temp: st, TraceFilter: remember(name),
+					Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
+						pc, pAcct := clientFor(planner)
+						clients, accts := doerClients(*doers, doer, doer2, clientFor)
+						i := 0
+						return &gored.Squad{
+							Name: "B", Board: gored.NewBlackboard(), Audit: audit, Target: rt.Target, Workers: *doers,
+							CanaryURL: canary, Planner: gored.ModelPlanner{Model: pc, Max: *doers},
+							NewDoer: func(l gored.Lead) gored.Agent {
+								cl := clients[i%len(clients)]
+								i++
+								return gored.Agent{Name: "doer", Model: cl, Skill: doerSkill(l.Hint), Tools: tools(rt.BaseURL), Bounds: bounds}
+							},
+						}, append([]*gored.ComputeAccount{pAcct}, accts...), nil
+					},
+				})
+			}
+			if has(shapes, "E") {
+				name := "static+" + itoa(*doers) + "×" + doer + tag
+				contenders = append(contenders, gored.Contender{
+					Name: name, Shape: gored.ShapeStatic, Temp: st, TraceFilter: remember(name),
+					Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
+						clients, accts := doerClients(*doers, doer, doer2, clientFor)
+						i := 0
+						return &gored.Squad{
+							Name: "E", Board: gored.NewBlackboard(), Audit: audit, Target: rt.Target, Workers: *doers,
+							CanaryURL: canary, Planner: gored.StaticPlanner{Label: "static", Leads: leads},
+							NewDoer: func(l gored.Lead) gored.Agent {
+								cl := clients[i%len(clients)]
+								i++
+								return gored.Agent{Name: "doer", Model: cl, Skill: doerSkill(l.Hint), Tools: tools(rt.BaseURL), Bounds: bounds}
+							},
+						}, accts, nil
+					},
+				})
+			}
 		}
 	}
 	if len(contenders) == 0 {
@@ -272,7 +300,14 @@ func main() {
 	must(err)
 
 	sums := gored.Summarize(results)
-	fmt.Printf("\n==== A/B/E sweep (demo target, flag=%s) ====\n%s", *flagID, gored.Table(sums))
+
+	// Blackboard replay per row: render each contender's representative run from the
+	// shared trace into -replays and link it from the leaderboard.
+	if *replaysD != "" {
+		writeReplays(*replaysD, *tracePath, traceOf, sums)
+	}
+
+	fmt.Printf("\n==== sweep (flag=%s) ====\n%s", *flagID, gored.Table(sums))
 	fmt.Printf("trace: %s\n", *tracePath)
 
 	if *jsonOut != "" {
@@ -281,12 +316,62 @@ func main() {
 		fmt.Printf("results JSON: %s\n", *jsonOut)
 	}
 	if *htmlOut != "" {
+		note := "skill=" + *skill
+		if *skillsF != "" {
+			note = "skills=" + *skillsF
+		}
 		meta := gored.LeaderboardMeta{
-			Title: *htmlTitle, Target: "demotarget", Flag: *flagID, Trials: *trials,
-			Note: "skill=" + *skill,
+			Title: *htmlTitle, Target: "demotarget", Flag: *flagID, Trials: *trials, Note: note,
 		}
 		must(os.WriteFile(*htmlOut, gored.RenderLeaderboardHTML(meta, sums), 0o644))
 		fmt.Printf("leaderboard HTML: %s\n", *htmlOut)
+	}
+}
+
+// writeReplays renders a blackboard replay HTML per contender from the shared trace
+// and sets each summary's ReplayHref to the written file (relative, so the leaderboard
+// and the replays can be published or served together). A trace that fails integrity
+// verification is skipped, never linked.
+func writeReplays(dir, tracePath string, traceOf map[string]string, sums []gored.ContenderSummary) {
+	if ok, _ := gledger.VerifyFile(tracePath); !ok {
+		log.Printf("replays: trace %s failed verification; skipping replay links", tracePath)
+		return
+	}
+	recs, err := gledger.Read(tracePath)
+	if err != nil {
+		log.Printf("replays: read trace: %v", err)
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("replays: mkdir: %v", err)
+		return
+	}
+	for i := range sums {
+		tid := traceOf[sums[i].Contender]
+		if tid == "" {
+			tid = sums[i].TraceID
+		}
+		if tid == "" {
+			continue
+		}
+		var f []gledger.Record
+		for _, r := range recs {
+			if r.TraceID == tid {
+				f = append(f, r)
+			}
+		}
+		if len(f) == 0 {
+			continue
+		}
+		page, err := gledger.RenderHTML("GORED replay — "+sums[i].Contender, f, true)
+		if err != nil {
+			continue
+		}
+		fname := "replay-" + tid + ".html"
+		if err := os.WriteFile(filepath.Join(dir, fname), page, 0o644); err != nil {
+			continue
+		}
+		sums[i].ReplayHref = fname
 	}
 }
 
