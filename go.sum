@@ -12,6 +12,16 @@ github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOF
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
+github.com/t0ul/ADD v0.0.0-20261011220314-cc0309da3b1a h1:rBjYTRgX8F8APOvzcT3vmJQod9RmOJIcMzKkGwR1Ugc=
+github.com/t0ul/ADD v0.0.0-20261011220314-cc0309da3b1a/go.mod h1:/WU4r5Fvo2oLbDrOcL6QDwoMF8hDIlfh9sUpPQVlKN4=
+github.com/t0ul/gledger v0.0.0-20261012043634-e291a2255ec6 h1:+SGMDtsZvIh9S661v808RrtSScOOj7yokvFOc+t7Idc=
+github.com/t0ul/gledger v0.0.0-20261012043634-e291a2255ec6/go.mod h1:sJVwsxiZ8uLZJ20MXPvFkca+YMTi51bA+RcYm990Kwk=
+github.com/t0ul/goflage v0.0.0-20261009135357-739ce25ed7e2 h1:ORr73LhChqhfDFVSs6/GvSzOiUMxl6DoTC0zAF3xS/U=
+github.com/t0ul/goflage v0.0.0-20261009135357-739ce25ed7e2/go.mod h1:6S5TySax15222GeYBqpRYDCMNzqFTehbrrjpAWJp9d4=
+github.com/t0ul/gorauder v0.0.0-20261011215148-7e0b43d5947e h1:QrfMaoUvBuq6io1wXoO/vO7KmFn+tJdmEIabOjIABB0=
+github.com/t0ul/gorauder v0.0.0-20261011215148-7e0b43d5947e/go.mod h1:Y5s4Z0hne7kv7DyUhfXUwvpuACmni0VT0C5P0d3YJXA=
+github.com/t0ul/goserve v0.0.0-20261011215800-ced3cd4c6cce h1:zOooFJaoahfhdDblEaA4DrJ3UL79+nzJ77rW+V0L424=
+github.com/t0ul/goserve v0.0.0-20261011215800-ced3cd4c6cce/go.mod h1:JCl8Q2JVo4EwW+mmR/gVqCB7rh5W31JyBWgiVIssN5M=
 golang.org/x/mod v0.41.0 h1:qJmnOUb4YB+FsEuM3HcWucdZASCPGhsX6uljO6pog0c=
 golang.org/x/mod v0.41.0/go.mod h1:Ek9pY8RKWXwsWvd3rQiHYtMqkjSUV+s1Rj7j4H5Ur6o=
 golang.org/x/sync v0.23.0 h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=
