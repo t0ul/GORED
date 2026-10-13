@@ -119,8 +119,11 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 	res := RunResult{TraceID: traceID, Outcome: "failed"}
 
 	// Emit a trace event for every blackboard finding, so the board is replayable
-	// from the trace alone — for a solo run just as much as a swarm.
-	if r.Board != nil {
+	// from the trace alone — for a solo run just as much as a swarm. Only install the
+	// hook when the caller has not already set one: a Squad shares one board across
+	// parallel doers and installs its own hook (under the squad trace) before launching
+	// them, so a doer must not clobber it — that assignment would also race the others.
+	if r.Board != nil && r.Board.OnAdd == nil {
 		r.Board.OnAdd = func(f Finding) {
 			r.emit(traceID, "board", "finding", gledger.F{"id": f.ID, "type": string(f.Type), "value": f.Value, "step": f.SourceStep})
 		}
