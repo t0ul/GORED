@@ -1,4 +1,4 @@
-package gored
+package ingest
 
 import (
 	"os"
@@ -102,7 +102,7 @@ func (g *goAnalyzer) Analyze(f ScannerFinding) (Rung, string) {
 		if !looksLikeModule(loc) {
 			return RungUnknown, "not a Go source artifact: " + loc
 		}
-		mod := modulePath(loc)
+		mod := ModulePath(loc)
 		if !strings.Contains(g.goMod, mod) {
 			return RungAbsent, "dependency not in go.mod: " + mod
 		}
@@ -122,9 +122,9 @@ func (g *goAnalyzer) byReachability(f ScannerFinding, present string) (Rung, str
 	}
 }
 
-// modulePath reduces a package path to its module-ish prefix for a go.mod lookup:
+// ModulePath reduces a package path to its module-ish prefix for a go.mod lookup:
 // the domain plus the first two path segments (github.com/org/repo, golang.org/x/net).
-func modulePath(pkg string) string {
+func ModulePath(pkg string) string {
 	parts := strings.Split(pkg, "/")
 	if len(parts) >= 3 {
 		return strings.Join(parts[:3], "/")

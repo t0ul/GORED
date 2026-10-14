@@ -1,4 +1,4 @@
-package gored
+package ingest
 
 import (
 	"encoding/json"
@@ -62,10 +62,10 @@ func PathsFromOpenAPI(data []byte) ([]APIPath, error) {
 	return out, nil
 }
 
-// mergeSpecPaths folds an API spec's routes into the hunt surface: collection paths
+// MergeSpecPaths folds an API spec's routes into the hunt surface: collection paths
 // join the testable resources, {param} paths join the item templates (for id-swap).
 // Returns the merged resources and templates. Both are filtered and deduped.
-func mergeSpecPaths(resources, templates []string, spec []APIPath) ([]string, []string) {
+func MergeSpecPaths(resources, templates []string, spec []APIPath) ([]string, []string) {
 	haveR := map[string]bool{}
 	for _, r := range resources {
 		haveR[r] = true

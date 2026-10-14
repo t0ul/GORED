@@ -38,6 +38,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
 	"github.com/t0ul/gobrig"
@@ -477,8 +478,8 @@ func main() {
 		must(os.WriteFile(*jsonOut, b, 0o644))
 	}
 	if *htmlOut != "" {
-		meta := gored.LeaderboardMeta{Title: "GORED reverse-shell foothold", Target: *base, Flag: "canary-over-c2", Trials: *trials, Note: "discover->select->execute; loopback listener; external beacon denied"}
-		must(os.WriteFile(*htmlOut, gored.RenderLeaderboardHTML(meta, sums), 0o644))
+		meta := report.LeaderboardMeta{Title: "GORED reverse-shell foothold", Target: *base, Flag: "canary-over-c2", Trials: *trials, Note: "discover->select->execute; loopback listener; external beacon denied"}
+		must(os.WriteFile(*htmlOut, report.RenderLeaderboardHTML(meta, sums), 0o644))
 		fmt.Printf("leaderboard HTML: %s\n", *htmlOut)
 	}
 }

@@ -77,19 +77,19 @@ func (r *Ruler) Score(verdicts []Verdict, minRung Ladder) Score {
 	if minRung == "" {
 		minRung = LadderReachable
 	}
-	threshold := ladderRank(minRung)
+	threshold := LadderRank(minRung)
 
 	// Highest rung the run reached per (app, normalized locus).
 	best := map[string]Ladder{}
 	for _, v := range verdicts {
 		k := v.App + "\x00" + normLocusKey(v.Locus)
-		if cur, ok := best[k]; !ok || ladderRank(v.Rung) > ladderRank(cur) {
+		if cur, ok := best[k]; !ok || LadderRank(v.Rung) > LadderRank(cur) {
 			best[k] = v.Rung
 		}
 	}
 	flagged := func(app, locus string) (Ladder, bool) {
 		rung, ok := best[app+"\x00"+normLocusKey(locus)]
-		if !ok || ladderRank(rung) < threshold {
+		if !ok || LadderRank(rung) < threshold {
 			return rung, false
 		}
 		return rung, true
@@ -116,7 +116,7 @@ func (r *Ruler) Score(verdicts []Verdict, minRung Ladder) Score {
 	}
 	// Precision: flags landing on a known-good / fp entry are false positives.
 	for k, rung := range best {
-		if ladderRank(rung) < threshold {
+		if LadderRank(rung) < threshold {
 			continue
 		}
 		if lbl, ok := labelByKey[k]; ok && lbl != LabelTruePositive {

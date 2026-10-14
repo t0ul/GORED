@@ -22,7 +22,7 @@ const (
 	LadderRuledOut    Ladder = "ruled-out"   // shown not to apply (not present, or not reachable)
 )
 
-func ladderRank(l Ladder) int {
+func LadderRank(l Ladder) int {
 	switch l {
 	case LadderExploitable:
 		return 5
@@ -40,7 +40,7 @@ func ladderRank(l Ladder) int {
 }
 
 func higherLadder(a, b Ladder) Ladder {
-	if ladderRank(a) >= ladderRank(b) {
+	if LadderRank(a) >= LadderRank(b) {
 		return a
 	}
 	return b
@@ -228,7 +228,7 @@ func chainHostCompromise(verdicts []Verdict) {
 // moreUrgent orders verdicts for triage: highest ladder, then confidence, then severity,
 // then a proven exploit, then app/locus for stability.
 func moreUrgent(a, b Verdict) bool {
-	if ra, rb := ladderRank(a.Rung), ladderRank(b.Rung); ra != rb {
+	if ra, rb := LadderRank(a.Rung), LadderRank(b.Rung); ra != rb {
 		return ra > rb
 	}
 	if ca, cb := confRank(a.Confidence), confRank(b.Confidence); ca != cb {

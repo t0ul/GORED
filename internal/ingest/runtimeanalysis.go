@@ -1,4 +1,4 @@
-package gored
+package ingest
 
 import (
 	"os"
@@ -94,7 +94,7 @@ func (d *dockerAnalyzer) Analyze(f ScannerFinding) (Rung, string) {
 // being Dockerfile-scoped at all: a dependency or image CVE whose description merely
 // mentions "root" is not a Dockerfile question and stays unknown here.
 func (d *dockerAnalyzer) classify(f ScannerFinding) string {
-	if !isDockerfileFinding(f) {
+	if !IsDockerfileFinding(f) {
 		return ""
 	}
 	text := strings.ToLower(f.Title + " " + f.Description)
@@ -122,10 +122,10 @@ func (d *dockerAnalyzer) classify(f ScannerFinding) string {
 	}
 }
 
-// isDockerfileFinding reports whether a finding is scoped to a Dockerfile/Containerfile —
+// IsDockerfileFinding reports whether a finding is scoped to a Dockerfile/Containerfile —
 // the only kind the Dockerfile analyzer can validate. Image/OS CVEs and dependency CVEs
 // are validated elsewhere, so they stay unknown here even if their text says "root".
-func isDockerfileFinding(f ScannerFinding) bool {
+func IsDockerfileFinding(f ScannerFinding) bool {
 	loc := strings.ToLower(f.Location + " " + f.Asset)
 	return strings.Contains(loc, "dockerfile") || strings.Contains(loc, "containerfile")
 }

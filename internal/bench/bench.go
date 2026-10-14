@@ -19,6 +19,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
 	goserve "github.com/t0ul/goserve"
@@ -227,8 +228,8 @@ func (s *Sweep) Run(ctx context.Context) ([]gored.SweepResult, error) {
 		}
 	}
 	if f.HTMLOut != "" {
-		meta := gored.LeaderboardMeta{Title: s.Title, Target: s.TargetName, Flag: s.Flag, Trials: f.Trials, Note: s.Note}
-		if werr := os.WriteFile(f.HTMLOut, gored.RenderLeaderboardHTML(meta, sums), 0o644); werr != nil {
+		meta := report.LeaderboardMeta{Title: s.Title, Target: s.TargetName, Flag: s.Flag, Trials: f.Trials, Note: s.Note}
+		if werr := os.WriteFile(f.HTMLOut, report.RenderLeaderboardHTML(meta, sums), 0o644); werr != nil {
 			return results, werr
 		}
 		fmt.Printf("leaderboard HTML: %s\n", f.HTMLOut)

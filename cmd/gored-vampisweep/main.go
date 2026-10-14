@@ -21,6 +21,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
 	"github.com/t0ul/gobrig"
@@ -485,8 +486,8 @@ func main() {
 		fmt.Printf("results JSON: %s\n", *jsonOut)
 	}
 	if *htmlOut != "" {
-		meta := gored.LeaderboardMeta{Title: *htmlTitle, Target: "VAmPI-in-Brig", Flag: flag, Trials: *trials, Note: "skills=" + *skillsF}
-		must(os.WriteFile(*htmlOut, gored.RenderLeaderboardHTML(meta, sums), 0o644))
+		meta := report.LeaderboardMeta{Title: *htmlTitle, Target: "VAmPI-in-Brig", Flag: flag, Trials: *trials, Note: "skills=" + *skillsF}
+		must(os.WriteFile(*htmlOut, report.RenderLeaderboardHTML(meta, sums), 0o644))
 		fmt.Printf("leaderboard HTML: %s\n", *htmlOut)
 	}
 }
