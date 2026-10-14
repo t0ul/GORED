@@ -66,6 +66,14 @@ type SweepResult struct {
 	Score       *Score           `json:"score,omitempty"`
 }
 
+// Scorer maps a trial's verdicts to a Score against the frozen ground truth. The sweep
+// depends on this interface, not on the concrete *Ruler, so the scoring implementation (the
+// evidence-ladder Ruler) can live in its own package without the sweep importing it — a
+// one-way dependency (the scorer's package imports the sweep's vocabulary, not the reverse).
+type Scorer interface {
+	Score(verdicts []Verdict, minRung Ladder) Score
+}
+
 // Sweep runs a set of contenders over a fresh target for a number of trials each,
 // so A/B/E are measured on identical, unforgeable flags. Capture is oracle- (or
 // detector-) authoritative inside each runnable; the sweep only records and scores.
@@ -79,7 +87,9 @@ type Sweep struct {
 	// Ruler and Verdicts are optional. When both are set, each trial's capture is
 	// mapped to verdicts (e.g. via EscapeProofs + Validator) and scored against the
 	// frozen ground truth, so the comparison is recall/precision, not just capture.
-	Ruler    *Ruler
+	// Ruler is a Scorer (the *Ruler satisfies it), so the sweep stays decoupled from the
+	// concrete scoring package.
+	Ruler    Scorer
 	Verdicts func(res RunResult, rt RunTarget) []Verdict
 	MinRung  Ladder // scoring threshold; empty => reachable
 	OnTrial  func(SweepResult)
