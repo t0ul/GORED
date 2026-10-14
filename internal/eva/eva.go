@@ -9,9 +9,11 @@ package eva
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -42,6 +44,7 @@ type run struct {
 	Elapsed  string
 	Sums     []core.ContenderSummary
 	Trace    string
+	Prompt   string // skill-instruction override for this run, empty = stage default
 
 	// Pending is the open checkpoint awaiting the pilot, nil when none. cp relays the
 	// pilot's decision back to the blocked Runner goroutine. Both are guarded by the
@@ -137,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.home)
 	mux.HandleFunc("POST /run", s.launch)
 	mux.HandleFunc("GET /run/{id}", s.runPage)
+	mux.HandleFunc("GET /run/{id}/events", s.events)
 	mux.HandleFunc("POST /run/{id}/decide", s.decide)
 	return mux
 }
@@ -150,15 +154,26 @@ func (s *Server) home(w http.ResponseWriter, _ *http.Request) {
 	busy := s.running
 	s.mu.Unlock()
 
-	// Stage cards from the library, so the cockpit always matches the real stages.
+	// Stage cards from the library, so the cockpit always matches the real stages. The
+	// instruction map pre-fills the editable prompt knob per stage.
 	type stageView struct{ Name, Goal string }
 	var sv []stageView
+	instr := map[string]string{}
 	for name, st := range appsweep.Stages() {
 		sv = append(sv, stageView{Name: name, Goal: st.Goal})
+		instr[name] = st.Skill.Instruction
 	}
 	sort.Slice(sv, func(i, j int) bool { return sv[i].Name < sv[j].Name })
+	ib, _ := json.Marshal(instr)
+	first := ""
+	if len(sv) > 0 {
+		first = instr[sv[0].Name]
+	}
 
-	render(w, homeTmpl, map[string]any{"Stages": sv, "Recent": recent, "Busy": busy})
+	render(w, homeTmpl, map[string]any{
+		"Stages": sv, "Recent": recent, "Busy": busy,
+		"StageInstr": template.JS(ib), "FirstInstr": first,
+	})
 }
 
 func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +210,12 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("ensure") == "" {
 		f.Ensure = false
 	}
+	// Prompt knob: a per-run skill-instruction override. Empty, or unchanged from the
+	// stage default, means use the stage's own instruction.
+	promptOverride := ""
+	if v := strings.TrimSpace(r.FormValue("skill")); v != "" && v != strings.TrimSpace(appsweep.Stages()[stage].Skill.Instruction) {
+		promptOverride = v
+	}
 
 	s.mu.Lock()
 	if s.running {
@@ -205,7 +226,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
 	f.Trace = filepath.Join(s.traces, "gored-eva-"+id+"-trace.jsonl")
 	rn := &run{ID: id, Stage: stage, Base: f.Base, Model: f.Model, Trials: f.Trials,
-		Autonomy: autonomy, Status: "running", Started: time.Now(), Trace: f.Trace}
+		Autonomy: autonomy, Status: "running", Started: time.Now(), Trace: f.Trace, Prompt: promptOverride}
 	s.runs[id] = rn
 	s.order = append([]string{id}, s.order...)
 	s.running = true
@@ -226,6 +247,9 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 		rn.cp = cp
 		s.mu.Unlock()
 		opts = append(opts, appsweep.WithCheckpoint(cp))
+	}
+	if rn.Prompt != "" {
+		opts = append(opts, appsweep.WithSkillInstruction(rn.Prompt))
 	}
 
 	results, err := appsweep.Run(context.Background(), f, stage, opts...)
@@ -291,6 +315,85 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/run/"+id, http.StatusSeeOther)
 }
 
+// events streams a run's trace as Server-Sent Events: it replays the trace file from the
+// start, then tails it, emitting a control frame on each status change and at the end. The
+// run page uses this instead of a full-page meta-refresh. Each outbound passes nothing new
+// to the model — it only mirrors the already-written trace, so it cannot affect a run.
+func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	rn := s.runs[r.PathValue("id")]
+	s.mu.Unlock()
+	if rn == nil {
+		http.NotFound(w, r)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	send := func(data string) {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	ctx := r.Context()
+	sent, lastStatus := 0, ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		lines, total := readTraceLines(rn.Trace)
+		for ; sent < total; sent++ {
+			send(lines[sent])
+		}
+		s.mu.Lock()
+		st := rn.Status
+		s.mu.Unlock()
+		if st != lastStatus {
+			lastStatus = st
+			send(fmt.Sprintf(`{"_eva":"status","status":%q}`, st))
+		}
+		if st == "done" || st == "error" || st == "aborted" {
+			lines, total = readTraceLines(rn.Trace)
+			for ; sent < total; sent++ {
+				send(lines[sent])
+			}
+			send(`{"_eva":"done"}`)
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+// readTraceLines returns the trace file's complete (newline-terminated) lines and their
+// count. A trailing partial line mid-write is excluded, so a reader never sees half a
+// record. A missing file yields none — the stream just waits for it to appear.
+func readTraceLines(path string) ([]string, int) {
+	b, err := os.ReadFile(path)
+	if err != nil || len(b) == 0 {
+		return nil, 0
+	}
+	nl := strings.LastIndexByte(string(b), '\n')
+	if nl < 0 {
+		return nil, 0
+	}
+	raw := strings.Split(string(b[:nl]), "\n")
+	out := raw[:0]
+	for _, ln := range raw {
+		if strings.TrimSpace(ln) != "" {
+			out = append(out, ln)
+		}
+	}
+	return out, len(out)
+}
+
 func render(w http.ResponseWriter, t *template.Template, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.Execute(w, data); err != nil {
@@ -341,6 +444,7 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + n
   <label>TARGET BASE URL <input name="base" value="http://127.0.0.1:8088"></label>
   <label>MODEL (GGUF) <input name="model" value="qwen2.5-3b-instruct.gguf"></label>
   <label>BRIG BRIDGE <input name="bridge" value="127.0.0.1:5050"></label>
+  <label>SYNC PROMPT · SKILL INSTRUCTION <textarea name="skill" id="skill" rows="4">{{.FirstInstr}}</textarea></label>
   <fieldset class="dial">
     <legend>AUTONOMY DIAL</legend>
     <label class="radio"><input type="radio" name="autonomy" value="piloted" checked> <b>PILOTED</b><span>pause at every gate — you pick the moves</span></label>
@@ -355,15 +459,23 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + n
 {{if .Recent}}<ul class="runs">{{range .Recent}}
   <li><a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span> <span class="badge {{.Status}}">{{.Status}}</span></li>
 {{end}}</ul>{{else}}<p class="muted">no sorties yet</p>{{end}}
+<script>
+(function(){
+  var INSTR = {{.StageInstr}};
+  var sel = document.querySelector('select[name=stage]');
+  var ta = document.getElementById('skill');
+  if (sel && ta) sel.addEventListener('change', function(){ if (INSTR[sel.value] !== undefined) ta.value = INSTR[sel.value]; });
+})();
+</script>
 ` + nervFoot))
 
 var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
-{{if eq .Status "running"}}<meta http-equiv="refresh" content="3">{{end}}
+{{if or (eq .Status "running") (eq .Status "waiting")}}<noscript><meta http-equiv="refresh" content="3"></noscript>{{end}}
 ` + nervHeadMini + `
 <p><a href="/">← cockpit</a></p>
 <h1 class="runhdr">{{.Stage}} <span class="badge {{.Status}}">{{.Status}}</span></h1>
-<p class="sub">vs {{.Base}} · model {{.Model}} · dial <b class="dim">{{.Autonomy}}</b> · {{.Trials}} trial(s){{if .Elapsed}} · {{.Elapsed}}{{end}}</p>
-{{if eq .Status "running"}}<p class="muted scan">⬡ booting the model and running the loop… this page refreshes itself.</p>{{end}}
+<p class="sub">vs {{.Base}} · model {{.Model}} · dial <b class="dim">{{.Autonomy}}</b> · {{.Trials}} trial(s){{if .Prompt}} · <span class="dim">custom prompt</span>{{end}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</p>
+{{if eq .Status "running"}}<p class="muted scan">⬡ booting the model and running the loop… live telemetry below.</p>{{end}}
 
 {{if .Pending}}
 <div class="card frame alert">
@@ -408,6 +520,28 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
   <table><thead><tr><th>contender</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
   {{range .Sums}}<tr><td>{{.Contender}}</td><td>{{pct .CaptureRate}}</td><td>{{.Captured}}/{{.Trials}}</td><td>{{printf "%.1f" .MeanToolCall}}</td><td>{{printf "%.0f" .MeanTokens}}</td></tr>{{end}}
   </tbody></table>
+{{end}}
+{{if or (eq .Status "running") (eq .Status "waiting")}}
+<div class="card frame"><div class="card-tag">LIVE TELEMETRY</div><div id="log" class="log"></div></div>
+<script>
+(function(){
+  var PAGE_STATUS = "{{.Status}}";
+  var log = document.getElementById('log');
+  function line(txt, cls){ var d=document.createElement('div'); d.className='logln '+(cls||''); d.textContent=txt; log.appendChild(d); log.scrollTop=log.scrollHeight; }
+  var es = new EventSource('/run/{{.ID}}/events');
+  es.onmessage = function(e){
+    var r; try{ r=JSON.parse(e.data); }catch(_){ return; }
+    if (r._eva === 'status'){ if (r.status !== PAGE_STATUS){ es.close(); location.reload(); } return; }
+    if (r._eva === 'done'){ es.close(); location.reload(); return; }
+    var span=r.span||'', ev=r.event||'', f=r.fields||{};
+    var detail = f.tool||f.via||f.phase||f.hint||f.value||f.result||f.error||f.reply||'';
+    if (typeof detail !== 'string') detail = JSON.stringify(detail);
+    if (detail.length > 140) detail = detail.slice(0,140)+'…';
+    var cls = ev.indexOf('capture')>=0 ? 'hit' : ((ev.indexOf('error')>=0||ev.indexOf('denied')>=0||ev.indexOf('breach')>=0) ? 'warn' : '');
+    line('[' + span + '] ' + ev + (detail ? '  ' + detail : ''), cls);
+  };
+})();
+</script>
 {{end}}
 <p class="muted">trace: {{.Trace}}</p>
 ` + nervFoot))
@@ -468,8 +602,9 @@ h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);paddin
 /* form */
 label{display:grid;gap:5px;font-size:11px;color:var(--mut);letter-spacing:1.5px;text-transform:uppercase}
 label.chk{grid-auto-flow:column;justify-content:start;align-items:center;gap:9px;text-transform:none;letter-spacing:.5px}
-input,select{background:#05060a;color:var(--fg);border:1px solid var(--line);border-radius:0;padding:9px 10px;font:inherit}
-input:focus,select:focus{outline:0;border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
+input,select,textarea{background:#05060a;color:var(--fg);border:1px solid var(--line);border-radius:0;padding:9px 10px;font:inherit;width:100%}
+textarea{resize:vertical;line-height:1.4}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
 button{background:var(--orange);color:#0a0a0a;border:0;border-radius:0;padding:11px 16px;font:inherit;font-weight:700;letter-spacing:2px;text-transform:uppercase;cursor:pointer}
 button:hover{background:var(--amber)}button:disabled{opacity:.45;cursor:not-allowed}
 button.danger{background:transparent;color:var(--red);border:1px solid var(--red)}
@@ -520,5 +655,11 @@ th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
 th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-transform:uppercase}
 .runhdr{font-size:22px;color:var(--fg)}
 .err{background:#1a0606;color:var(--red);padding:12px;border:1px solid var(--red);white-space:pre-wrap}
+/* live telemetry log */
+.log{max-height:360px;overflow:auto;font-size:12px;line-height:1.5;background:#05060a;border:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:2px}
+.logln{color:var(--mut);white-space:pre-wrap;word-break:break-word}
+.logln.hit{color:var(--orange);font-weight:700}
+.logln.warn{color:var(--amber)}
+.log:empty::before{content:"⬡ awaiting telemetry…";color:var(--mut)}
 </style>
 `

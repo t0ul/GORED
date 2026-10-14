@@ -162,7 +162,8 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 	difficulty := r.difficultyOf(obj.FlagID)
 	r.emit(traceID, "run", "run_start", gledger.F{
 		"model": r.Model.Name(), "skill": r.Skill.Name, "skill_temp": string(r.Skill.Temp),
-		"goal": obj.Goal, "flag_id": obj.FlagID, "target": obj.Base,
+		"skill_instruction": r.Skill.Instruction, // the prompt of record, so a run is reproducible from its trace
+		"goal":              obj.Goal, "flag_id": obj.FlagID, "target": obj.Base,
 	})
 
 	if r.Store != nil {

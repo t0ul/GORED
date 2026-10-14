@@ -69,7 +69,9 @@ func StageNames() string {
 type Option func(*options)
 
 type options struct {
-	checkpoint core.Checkpoint
+	checkpoint       core.Checkpoint
+	skillInstruction string
+	goal             string
 }
 
 // WithCheckpoint installs a human-in-the-loop checkpoint on the stage's Runner, so the
@@ -77,6 +79,17 @@ type options struct {
 // autonomous — byte-for-byte the headless/CI path.
 func WithCheckpoint(cp core.Checkpoint) Option {
 	return func(o *options) { o.checkpoint = cp }
+}
+
+// WithSkillInstruction overrides the stage's skill instruction for this run — the first
+// prompt knob of the control plane. Empty keeps the stage default.
+func WithSkillInstruction(s string) Option {
+	return func(o *options) { o.skillInstruction = s }
+}
+
+// WithGoal overrides the stage's objective line for this run. Empty keeps the stage default.
+func WithGoal(s string) Option {
+	return func(o *options) { o.goal = s }
 }
 
 // Run executes the named stage as a bench sweep against f.Base and returns the per-trial
@@ -89,6 +102,14 @@ func Run(ctx context.Context, f *bench.Flags, stageName string, opts ...Option) 
 	var o options
 	for _, fn := range opts {
 		fn(&o)
+	}
+	// Prompt knobs: override the stage's skill instruction / goal for this run. st is a
+	// local copy of the registry entry, so this never mutates the shared stage.
+	if o.skillInstruction != "" {
+		st.Skill.Instruction = o.skillInstruction
+	}
+	if o.goal != "" {
+		st.Goal = o.goal
 	}
 	bc := gobrig.Client{Bridge: f.Bridge}
 	sw := &bench.Sweep{
