@@ -1,4 +1,4 @@
-package main
+package appsweep
 
 import (
 	"context"
@@ -14,22 +14,22 @@ import (
 // fingerprints the surfaces, calls plan to route a vulnerability class + tool to each (XSS on
 // an html-page, never a json-api), then runs the routed tool. Capture is dalfox's VERIFIED
 // finding — reusing the canonical sentinel, parser and oracle.
-func planStage() stage {
-	return stage{
-		label:      "stack-aware-planner",
-		goal:       "Recon and fingerprint the surfaces, plan which vulnerability class fits each, then confirm a reflected XSS on the surface the plan routes to it.",
-		banner:     "vulnapp stack-aware planning -> XSS (dalfox)",
-		title:      "GORED vulnapp stack-aware planning",
-		targetName: "vulnapp-in-Brig",
-		flag:       "reflected-xss",
-		note:       "deterministic class routing + dalfox tool-confirmed oracle",
-		skill: core.Skill{
+func planStage() Stage {
+	return Stage{
+		Label:      "stack-aware-planner",
+		Goal:       "Recon and fingerprint the surfaces, plan which vulnerability class fits each, then confirm a reflected XSS on the surface the plan routes to it.",
+		Banner:     "vulnapp stack-aware planning -> XSS (dalfox)",
+		Title:      "GORED vulnapp stack-aware planning",
+		TargetName: "vulnapp-in-Brig",
+		Flag:       "reflected-xss",
+		Note:       "deterministic class routing + dalfox tool-confirmed oracle",
+		Skill: core.Skill{
 			Name: "stack-aware-planner", Temp: core.SkillCold,
-			Instruction: "You are an authorized red-team agent. You work in phases: recon the app, map its surfaces, call plan to decide which vulnerability class fits each surface, then run the tool the plan routes to that surface. Trust the plan: run the XSS scanner only where the plan routes reflected XSS, never on a JSON API.",
+			Instruction: "You are an authorized red-team agent. You work in Phases: recon the app, map its surfaces, call plan to decide which vulnerability class fits each surface, then run the tool the plan routes to that surface. Trust the plan: run the XSS scanner only where the plan routes reflected XSS, never on a JSON API.",
 		},
-		detect: tools.DalfoxDetector,
-		phases: planPlaybook,
-		buildTools: func(gate *tools.Gate, base string) *core.Toolbox {
+		Detect: tools.DalfoxDetector,
+		Phases: planPlaybook,
+		BuildTools: func(gate *tools.Gate, base string) *core.Toolbox {
 			return core.NewToolbox(
 				planHTTPTool{gate: gate, base: base},
 				planFingerprintTool{gate: gate, base: base},
