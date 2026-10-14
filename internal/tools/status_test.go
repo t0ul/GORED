@@ -1,4 +1,4 @@
-package gored
+package tools
 
 import (
 	"strings"

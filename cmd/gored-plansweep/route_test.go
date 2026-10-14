@@ -1,7 +1,11 @@
 package main
 
-import "strings"
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/t0ul/GORED/internal/tools"
+)
 
 // TestRouteClass pins the stack-aware routing: XSS belongs on a server-rendered HTML page,
 // NEVER on a JSON API; a SPA shell is DOM XSS (browser-only). Pure logic, no network.
@@ -36,8 +40,8 @@ func TestClassifySurfacePlan(t *testing.T) {
 		``:                                                                                                          "unknown",
 	}
 	for body, want := range cases {
-		if got, _ := classifySurface(body); got != want {
-			t.Errorf("classifySurface(%.24q) = %q, want %q", body, got, want)
+		if got, _ := tools.ClassifySurface(body); got != want {
+			t.Errorf("ClassifySurface(%.24q) = %q, want %q", body, got, want)
 		}
 	}
 }

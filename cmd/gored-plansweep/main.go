@@ -45,6 +45,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/tools"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
 	"github.com/t0ul/gobrig"
@@ -97,12 +98,12 @@ func (t fingerprintTool) Call(ctx context.Context, args map[string]any) (string,
 		return "", fmt.Errorf("fingerprint: %w", err)
 	}
 	body, _ := gobrig.HTTPGet(ctx, t.c, strings.ReplaceAll(u, " ", "%20"))
-	class, _ := classifySurface(body)
+	class, _ := tools.ClassifySurface(body)
 	tech := "none detected"
 	argv := []string{webanalyzeBin, "-host", u, "-apps", techDB, "-output", "json", "-silent", "-search=false"}
 	cl := gobrig.Client{Bridge: t.c.Bridge, HTTP: &http120}
 	if r, derr := cl.Detonate(ctx, gobrig.Detonation{Argv: argv, TraceID: "fingerprint"}); derr == nil {
-		if techs := parseWebanalyze(r.Output); len(techs) > 0 {
+		if techs := tools.ParseWebanalyze(r.Output); len(techs) > 0 {
 			tech = strings.Join(techs, "; ")
 		}
 	}
@@ -182,7 +183,7 @@ func (t planTool) Call(ctx context.Context, args map[string]any) (string, error)
 			continue
 		}
 		body, _ := gobrig.HTTPGet(ctx, t.c, strings.ReplaceAll(u, " ", "%20"))
-		class, _ := classifySurface(body)
+		class, _ := tools.ClassifySurface(body)
 		vulnClass, tool, note := routeClass(class)
 		lines = append(lines, fmt.Sprintf("  %s (%s) -> class: %s. tool: %s. (%s)", pathOf(u, t.base), class, vulnClass, tool, note))
 	}
@@ -235,7 +236,7 @@ func (t xssScanTool) Call(ctx context.Context, args map[string]any) (string, err
 	if err != nil {
 		return "", err
 	}
-	verified, reflectedOnly, status, finding := parseDalfox(r.Output)
+	verified, reflectedOnly, status, finding := tools.ParseDalfox(r.Output)
 	switch {
 	case verified:
 		return fmt.Sprintf("dalfox: VERIFIED XSS on %s (status=%s). %s %s", u, status, finding, confirmSentinel), nil
@@ -246,96 +247,8 @@ func (t xssScanTool) Call(ctx context.Context, args map[string]any) (string, err
 	}
 }
 
-// --- parsing + classification helpers (pure) ---
-
-func parseWebanalyze(out string) []string {
-	i := strings.IndexByte(out, '{')
-	if i < 0 {
-		return nil
-	}
-	var doc struct {
-		Matches []struct {
-			AppName string `json:"app_name"`
-			App     struct {
-				CatNames []string `json:"category_names"`
-			} `json:"app"`
-		} `json:"matches"`
-	}
-	if json.NewDecoder(strings.NewReader(out[i:])).Decode(&doc) != nil {
-		return nil
-	}
-	var techs []string
-	for _, m := range doc.Matches {
-		if m.AppName == "" {
-			continue
-		}
-		if c := nonEmpty(m.App.CatNames); len(c) > 0 {
-			techs = append(techs, fmt.Sprintf("%s (%s)", m.AppName, strings.Join(c, ", ")))
-		} else {
-			techs = append(techs, m.AppName)
-		}
-	}
-	return techs
-}
-
-func parseDalfox(out string) (verified, reflectedOnly bool, status, finding string) {
-	i := strings.IndexByte(out, '{')
-	if i < 0 {
-		return false, false, "no-json", ""
-	}
-	var doc struct {
-		Findings []struct {
-			Type     string `json:"type"`
-			Severity string `json:"severity"`
-			POC      string `json:"poc"`
-			Param    string `json:"param"`
-		} `json:"findings"`
-		Meta struct {
-			TargetSummary []struct {
-				Status string `json:"status"`
-			} `json:"target_summary"`
-		} `json:"meta"`
-	}
-	if json.NewDecoder(strings.NewReader(out[i:])).Decode(&doc) != nil {
-		return false, false, "parse-error", ""
-	}
-	status = "clean"
-	if len(doc.Meta.TargetSummary) > 0 {
-		status = doc.Meta.TargetSummary[0].Status
-	}
-	var firstReflected string
-	for _, f := range doc.Findings {
-		sev := strings.ToLower(strings.TrimSpace(f.Severity))
-		if strings.EqualFold(f.Type, "V") || sev == "critical" || sev == "high" || sev == "medium" {
-			return true, false, status, fmt.Sprintf("[%s severity=%s param=%s] %s", f.Type, f.Severity, f.Param, strings.TrimSpace(f.POC))
-		}
-		if firstReflected == "" {
-			firstReflected = f.Param
-		}
-	}
-	return false, firstReflected != "", status, firstReflected
-}
-
-// classifySurface infers a response's surface class from the body. Same heuristic as steps 1-2.
-func classifySurface(body string) (class, note string) {
-	b := strings.TrimSpace(body)
-	if b == "" {
-		return "unknown", "empty or unreadable response"
-	}
-	if strings.HasPrefix(b, "{") || strings.HasPrefix(b, "[") {
-		return "json-api", "a JSON API response"
-	}
-	lb := strings.ToLower(b)
-	if !strings.Contains(lb, "<!doctype html") && !strings.Contains(lb, "<html") {
-		return "non-html", "not an HTML page"
-	}
-	for _, m := range []string{"<app-root", "ng-app", "data-react", "data-beasties", `id="root"`, `id="app"`} {
-		if strings.Contains(lb, m) {
-			return "spa-shell", "a client-rendered single-page-app shell"
-		}
-	}
-	return "html-page", "a server-rendered HTML page"
-}
+// --- endpoint-mining helpers (pure); classifySurface/parseDalfox/parseWebanalyze now
+// live once in internal/tools ---
 
 var (
 	scriptSrcRe = regexp.MustCompile(`(?i)<script[^>]+src\s*=\s*["']?([^"'>\s]+)`)

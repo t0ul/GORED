@@ -43,6 +43,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/tools"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
 	"github.com/t0ul/gobrig"
@@ -169,7 +170,7 @@ func (t probeEndpointTool) Call(ctx context.Context, args map[string]any) (strin
 		return "", err
 	}
 	p := pathOf(u, t.base)
-	class := classifySurface(body)
+	class, _ := tools.ClassifySurface(body)
 	// A single-page app serves its catch-all shell (HTTP 200) for ANY unmatched route, so a
 	// bogus or hallucinated path returns the same shell as the index. A REAL endpoint the HTML
 	// never linked responds with something else: a JSON body, a distinct page, or an auth/error
@@ -281,7 +282,9 @@ func sameShell(body, index string) bool {
 	if b == idx {
 		return true
 	}
-	if classifySurface(b) == "spa-shell" && classifySurface(idx) == "spa-shell" {
+	cb, _ := tools.ClassifySurface(b)
+	ci, _ := tools.ClassifySurface(idx)
+	if cb == "spa-shell" && ci == "spa-shell" {
 		d := len(b) - len(idx)
 		if d < 0 {
 			d = -d
@@ -289,28 +292,6 @@ func sameShell(body, index string) bool {
 		return d < 64
 	}
 	return false
-}
-
-// classifySurface infers a response's surface class from the body (same heuristic as the
-// recon stage): json-api, spa-shell, html-page, non-html, or unknown.
-func classifySurface(body string) string {
-	b := strings.TrimSpace(body)
-	if b == "" {
-		return "unknown"
-	}
-	if strings.HasPrefix(b, "{") || strings.HasPrefix(b, "[") {
-		return "json-api"
-	}
-	lb := strings.ToLower(b)
-	if !strings.Contains(lb, "<!doctype html") && !strings.Contains(lb, "<html") {
-		return "non-html"
-	}
-	for _, m := range []string{"<app-root", "ng-app", "data-react", "data-beasties", `id="root"`, `id="app"`} {
-		if strings.Contains(lb, m) {
-			return "spa-shell"
-		}
-	}
-	return "html-page"
 }
 
 // linkedPaths extracts the paths an HTML page links via <a href>, the recon-by-link baseline.
