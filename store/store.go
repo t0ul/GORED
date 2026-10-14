@@ -49,6 +49,21 @@ CREATE TABLE IF NOT EXISTS redteam_findings (
   scrubbed    INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_findings_run ON redteam_findings(run_id);
+CREATE TABLE IF NOT EXISTS eva_runs (
+  id        TEXT PRIMARY KEY,
+  stage     TEXT,
+  base      TEXT,
+  model     TEXT,
+  trials    INTEGER,
+  autonomy  TEXT,
+  status    TEXT,
+  err       TEXT,
+  started   TEXT,
+  elapsed   TEXT,
+  trace     TEXT,
+  prompt    TEXT,
+  sums_json TEXT
+);
 `
 
 // Open opens (creating if needed) a run store at path.

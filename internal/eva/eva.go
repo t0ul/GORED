@@ -24,6 +24,8 @@ import (
 	"github.com/t0ul/GORED/internal/appsweep"
 	"github.com/t0ul/GORED/internal/bench"
 	"github.com/t0ul/GORED/internal/core"
+	"github.com/t0ul/GORED/store"
+	gledger "github.com/t0ul/gledger"
 )
 
 // assistBeat is how long the assisted dial waits at a checkpoint before proceeding on the
@@ -84,6 +86,7 @@ func (c *pilotCheckpoint) Decide(ctx context.Context, phase string, board *core.
 	c.run.Status = "waiting"
 	c.run.Pending = &pending{Phase: phase, Proposals: proposals, Board: board.Findings()}
 	c.srv.mu.Unlock()
+	c.srv.persist(c.run)
 
 	defer func() {
 		c.srv.mu.Lock()
@@ -92,6 +95,7 @@ func (c *pilotCheckpoint) Decide(ctx context.Context, phase string, board *core.
 			c.run.Status = "running"
 		}
 		c.srv.mu.Unlock()
+		c.srv.persist(c.run)
 	}()
 
 	if c.autonomy == "assisted" {
@@ -124,14 +128,63 @@ type Server struct {
 	runs    map[string]*run
 	order   []string // run ids, most recent first
 	running bool
-	traces  string // directory for per-run trace files
+	traces  string       // directory for per-run trace files
+	store   *store.Store // durable run registry; nil = memory-only
 }
 
-func NewServer(traceDir string) *Server {
+// NewServer builds the cockpit. A non-nil store makes the sortie log durable: existing runs
+// are loaded on boot and every transition is persisted. Runs that were mid-flight when the
+// process last died load as "aborted" (their decision channel is gone).
+func NewServer(traceDir string, st *store.Store) *Server {
 	if traceDir == "" {
 		traceDir = "."
 	}
-	return &Server{runs: map[string]*run{}, traces: traceDir}
+	s := &Server{runs: map[string]*run{}, traces: traceDir, store: st}
+	s.loadFromStore()
+	return s
+}
+
+// loadFromStore hydrates the in-memory registry from the durable store.
+func (s *Server) loadFromStore() {
+	if s.store == nil {
+		return
+	}
+	rows, err := s.store.ListEVARuns()
+	if err != nil {
+		return
+	}
+	for _, er := range rows {
+		rn := fromEVARun(er)
+		if rn.Status == "running" || rn.Status == "waiting" {
+			rn.Status = "aborted" // the process that owned this run is gone
+		}
+		s.runs[rn.ID] = rn
+		s.order = append(s.order, rn.ID)
+	}
+}
+
+// persist writes a snapshot of rn to the store (best-effort). Safe to call under s.mu.
+func (s *Server) persist(rn *run) {
+	if s.store == nil {
+		return
+	}
+	_ = s.store.SaveEVARun(toEVARun(rn))
+}
+
+func toEVARun(rn *run) store.EVARun {
+	return store.EVARun{
+		ID: rn.ID, Stage: rn.Stage, Base: rn.Base, Model: rn.Model, Trials: rn.Trials,
+		Autonomy: rn.Autonomy, Status: rn.Status, Err: rn.Err, Started: rn.Started,
+		Elapsed: rn.Elapsed, Trace: rn.Trace, Prompt: rn.Prompt, Sums: rn.Sums,
+	}
+}
+
+func fromEVARun(er store.EVARun) *run {
+	return &run{
+		ID: er.ID, Stage: er.Stage, Base: er.Base, Model: er.Model, Trials: er.Trials,
+		Autonomy: er.Autonomy, Status: er.Status, Err: er.Err, Started: er.Started,
+		Elapsed: er.Elapsed, Trace: er.Trace, Prompt: er.Prompt, Sums: er.Sums,
+	}
 }
 
 // Handler wires the routes (Go 1.22+ pattern mux).
@@ -142,6 +195,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /run/{id}", s.runPage)
 	mux.HandleFunc("GET /run/{id}/events", s.events)
 	mux.HandleFunc("POST /run/{id}/decide", s.decide)
+	mux.HandleFunc("GET /compare", s.compare)
 	return mux
 }
 
@@ -232,6 +286,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 	s.running = true
 	s.mu.Unlock()
 
+	s.persist(rn)
 	go s.execute(rn, f, stage)
 	http.Redirect(w, r, "/run/"+id, http.StatusSeeOther)
 }
@@ -255,7 +310,6 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 	results, err := appsweep.Run(context.Background(), f, stage, opts...)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	rn.Elapsed = time.Since(rn.Started).Round(time.Second).String()
 	rn.Pending = nil
 	switch {
@@ -270,6 +324,17 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 		}
 	}
 	s.running = false
+	s.mu.Unlock()
+	s.persist(rn)
+}
+
+// runView is the run plus render-time triage read from its trace (findings, repro). The
+// triage is derived from the trace, never recomputed, so it stays an honest account of what
+// the run actually did.
+type runView struct {
+	*run
+	Findings []core.Finding
+	Repro    string
 }
 
 func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +345,57 @@ func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	render(w, runTmpl, rn)
+	v := runView{run: rn}
+	if rn.Status == "done" || rn.Status == "aborted" || rn.Status == "error" {
+		v.Findings, v.Repro = traceTriage(rn.Trace)
+	}
+	render(w, runTmpl, v)
+}
+
+// compare renders two or more runs side by side (their summaries), for the A/B research.
+func (s *Server) compare(w http.ResponseWriter, r *http.Request) {
+	ids := r.URL.Query()["id"]
+	s.mu.Lock()
+	var rns []*run
+	for _, id := range ids {
+		if rn := s.runs[id]; rn != nil {
+			rns = append(rns, rn)
+		}
+	}
+	s.mu.Unlock()
+	render(w, compareTmpl, map[string]any{"Runs": rns})
+}
+
+// traceTriage reads a run's trace and returns its blackboard findings and the capture repro
+// command. It parses the already-written trace, so it reflects exactly what happened.
+func traceTriage(path string) ([]core.Finding, string) {
+	recs, err := gledger.Read(path)
+	if err != nil {
+		return nil, ""
+	}
+	var findings []core.Finding
+	var repro string
+	for _, rec := range recs {
+		switch {
+		case rec.Span == "board" && rec.Event == "finding":
+			f := core.Finding{}
+			if v, ok := rec.Fields["type"].(string); ok {
+				f.Type = core.FindingType(v)
+			}
+			if v, ok := rec.Fields["value"].(string); ok {
+				f.Value = v
+			}
+			if v, ok := rec.Fields["id"].(float64); ok {
+				f.ID = int(v)
+			}
+			findings = append(findings, f)
+		case rec.Span == "verify" && rec.Event == "repro":
+			if v, ok := rec.Fields["curl"].(string); ok && v != "" {
+				repro = v
+			}
+		}
+	}
+	return findings, repro
 }
 
 // decide relays the pilot's checkpoint decision to the blocked Runner goroutine.
@@ -456,9 +571,14 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + n
   <button {{if .Busy}}disabled{{end}}>{{if .Busy}}⬡ EVA IN FLIGHT…{{else}}⬡ LAUNCH{{end}}</button>
 </form>
 <h2>⬡ SORTIE LOG</h2>
-{{if .Recent}}<ul class="runs">{{range .Recent}}
-  <li><a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span> <span class="badge {{.Status}}">{{.Status}}</span></li>
-{{end}}</ul>{{else}}<p class="muted">no sorties yet</p>{{end}}
+{{if .Recent}}
+<form method="get" action="/compare">
+<ul class="runs">{{range .Recent}}
+  <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span> <span class="badge {{.Status}}">{{.Status}}</span></li>
+{{end}}</ul>
+<button class="ghost">⬡ COMPARE SELECTED</button>
+</form>
+{{else}}<p class="muted">no sorties yet</p>{{end}}
 <script>
 (function(){
   var INSTR = {{.StageInstr}};
@@ -521,6 +641,12 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
   {{range .Sums}}<tr><td>{{.Contender}}</td><td>{{pct .CaptureRate}}</td><td>{{.Captured}}/{{.Trials}}</td><td>{{printf "%.1f" .MeanToolCall}}</td><td>{{printf "%.0f" .MeanTokens}}</td></tr>{{end}}
   </tbody></table>
 {{end}}
+{{if .Repro}}<div class="card frame"><div class="card-tag">REPRO — THE CAPTURING REQUEST</div><pre class="repro">{{.Repro}}</pre></div>{{end}}
+{{if .Findings}}
+<details class="board" open><summary>FINDINGS ({{len .Findings}})</summary>
+  <ul>{{range .Findings}}<li><span class="ft">{{.Type}}</span> {{trunc .Value 200}}</li>{{end}}</ul>
+</details>
+{{end}}
 {{if or (eq .Status "running") (eq .Status "waiting")}}
 <div class="card frame"><div class="card-tag">LIVE TELEMETRY</div><div id="log" class="log"></div></div>
 <script>
@@ -544,6 +670,22 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
 </script>
 {{end}}
 <p class="muted">trace: {{.Trace}}</p>
+` + nervFoot))
+
+var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseCSS + nervHeadMini + `
+<p><a href="/">← cockpit</a></p>
+<h1 class="runhdr">COMPARE</h1>
+{{if .Runs}}
+<table><thead><tr><th>run</th><th>stage</th><th>model</th><th>dial</th><th>status</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
+{{range .Runs}}{{if .Sums}}{{$c := index .Sums 0}}<tr>
+  <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.Model}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+  <td>{{pct $c.CaptureRate}}</td><td>{{$c.Captured}}/{{$c.Trials}}</td><td>{{printf "%.1f" $c.MeanToolCall}}</td><td>{{printf "%.0f" $c.MeanTokens}}</td>
+</tr>{{else}}<tr>
+  <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.Model}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+  <td colspan="4" class="muted">no summary</td>
+</tr>{{end}}{{end}}
+</tbody></table>
+{{else}}<p class="muted">select two or more runs from the cockpit to compare.</p>{{end}}
 ` + nervFoot))
 
 // nervHead / nervHeadMini / nervFoot are the shared NERV chrome.
@@ -661,5 +803,9 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .logln.hit{color:var(--orange);font-weight:700}
 .logln.warn{color:var(--amber)}
 .log:empty::before{content:"⬡ awaiting telemetry…";color:var(--mut)}
+.repro{background:#05060a;border:1px solid var(--line);padding:10px;overflow:auto;color:var(--green);font-size:12px;white-space:pre-wrap;word-break:break-word}
+.ghost{background:transparent;color:var(--orange);border:1px solid var(--orange);margin-top:10px}
+.ghost:hover{background:var(--orange);color:#0a0a0a}
+.pick{width:auto;vertical-align:middle;accent-color:var(--orange)}
 </style>
 `
