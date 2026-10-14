@@ -120,6 +120,11 @@ type Runner struct {
 	// agent the pentest METHODOLOGY (the how-sequence) without the answer, so it stops
 	// wandering. Nil keeps the original flat loop. See Phase.
 	Phases []Phase
+	// Checkpoint, when set, is the human-in-the-loop seam consulted at each phase
+	// boundary before the loop spends tokens on the next phase (the autonomy dial in
+	// type form). Nil means fully autonomous — the loop never pauses, byte-for-byte the
+	// behaviour the CI/ADD gate depends on. See Checkpoint.
+	Checkpoint Checkpoint
 }
 
 // Phase is one stage of a staged discovery loop. Brief is the methodology shown to the
@@ -280,6 +285,16 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 			if r.Phases[phaseIdx].Advance(r.Board, out) {
 				r.emit(traceID, "phase", "phase_advance", gledger.F{"step": step, "from": r.Phases[phaseIdx].Name, "to": r.Phases[phaseIdx+1].Name})
 				phaseIdx++
+				// HITL checkpoint: consult the pilot before the next phase spends
+				// tokens. Only reached when a Checkpoint is installed, so the
+				// autonomous path (nil) is unchanged. An abort ends the run cleanly.
+				if r.Checkpoint != nil {
+					if !r.consultCheckpoint(ctx, traceID, r.Phases[phaseIdx].Name, msgs, &res) {
+						res.Outcome = "aborted"
+						r.emit(traceID, "checkpoint", "abort", gledger.F{"step": step, "phase": r.Phases[phaseIdx].Name})
+						break
+					}
+				}
 			}
 		}
 

@@ -64,12 +64,31 @@ func StageNames() string {
 	return strings.Join(ns, "|")
 }
 
+// Option configures a Run. The CLI passes none (fully autonomous); EVA passes
+// WithCheckpoint to pilot the run interactively.
+type Option func(*options)
+
+type options struct {
+	checkpoint core.Checkpoint
+}
+
+// WithCheckpoint installs a human-in-the-loop checkpoint on the stage's Runner, so the
+// run pauses at each phase boundary for the pilot. Omitting it leaves the Runner fully
+// autonomous — byte-for-byte the headless/CI path.
+func WithCheckpoint(cp core.Checkpoint) Option {
+	return func(o *options) { o.checkpoint = cp }
+}
+
 // Run executes the named stage as a bench sweep against f.Base and returns the per-trial
 // results. The CLI and the EVA cockpit both call this; it never calls os.Exit or parses flags.
-func Run(ctx context.Context, f *bench.Flags, stageName string) ([]core.SweepResult, error) {
+func Run(ctx context.Context, f *bench.Flags, stageName string, opts ...Option) ([]core.SweepResult, error) {
 	st, ok := Stages()[stageName]
 	if !ok {
 		return nil, fmt.Errorf("unknown stage %q; choose one of: %s", stageName, StageNames())
+	}
+	var o options
+	for _, fn := range opts {
+		fn(&o)
 	}
 	bc := gobrig.Client{Bridge: f.Bridge}
 	sw := &bench.Sweep{
@@ -100,6 +119,7 @@ func Run(ctx context.Context, f *bench.Flags, stageName string) ([]core.SweepRes
 				Model: cl, Tools: st.BuildTools(gate, f.Base), Skill: st.Skill, Target: rt.Target,
 				Board: core.NewUnscrubbedBlackboard(), Audit: audit, Bounds: f.Bounds(),
 				Detector: st.Detect, Phases: st.Phases(), CanaryURL: canaryBeacon,
+				Checkpoint: o.checkpoint,
 			}, nil
 		},
 	}
