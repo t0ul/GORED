@@ -1,7 +1,7 @@
 package report
 
 import (
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"fmt"
 	"html"
 	"sort"
@@ -54,7 +54,7 @@ func RemediationFor(cwe string) string {
 
 // severityOf returns the verdict's severity, deriving one from the rung, exploitability,
 // CWE, and chain when the verdict did not carry an explicit Severity.
-func severityOf(v gored.Verdict) string {
+func severityOf(v core.Verdict) string {
 	if v.Severity != "" {
 		return v.Severity
 	}
@@ -71,9 +71,9 @@ func severityOf(v gored.Verdict) string {
 		return "High"
 	}
 	switch v.Rung {
-	case gored.LadderTriggerable, gored.LadderReachable:
+	case core.LadderTriggerable, core.LadderReachable:
 		return "Medium"
-	case gored.LadderPresent, gored.LadderReported:
+	case core.LadderPresent, core.LadderReported:
 		return "Low"
 	default:
 		return "Info"
@@ -97,15 +97,15 @@ func severityRank(s string) int {
 
 // RenderReportHTML renders the verdicts as a self-contained, theme-aware, script-free
 // pentest report. Findings are ordered most-severe first.
-func RenderReportHTML(meta ReportMeta, verdicts []gored.Verdict) []byte {
-	rows := make([]gored.Verdict, len(verdicts))
+func RenderReportHTML(meta ReportMeta, verdicts []core.Verdict) []byte {
+	rows := make([]core.Verdict, len(verdicts))
 	copy(rows, verdicts)
 	sort.SliceStable(rows, func(i, j int) bool {
 		si, sj := severityRank(severityOf(rows[i])), severityRank(severityOf(rows[j]))
 		if si != sj {
 			return si > sj
 		}
-		return gored.LadderRank(rows[i].Rung) > gored.LadderRank(rows[j].Rung)
+		return core.LadderRank(rows[i].Rung) > core.LadderRank(rows[j].Rung)
 	})
 
 	counts := map[string]int{}

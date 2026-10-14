@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	_ "modernc.org/sqlite"
 )
 
-// Store is a SQLite-backed gored.RunStore.
+// Store is a SQLite-backed core.RunStore.
 type Store struct {
 	db *sql.DB
 }
@@ -67,7 +67,7 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 // StartRun inserts the run row and returns its id.
-func (s *Store) StartRun(traceID string, m gored.RunMeta) (int64, error) {
+func (s *Store) StartRun(traceID string, m core.RunMeta) (int64, error) {
 	res, err := s.db.Exec(
 		`INSERT INTO redteam_runs (ts, suite_version, model, model_params, skill, skill_temp, target, flag_id, difficulty, outcome, trace_id)
 		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
@@ -81,7 +81,7 @@ func (s *Store) StartRun(traceID string, m gored.RunMeta) (int64, error) {
 }
 
 // AddFinding persists one blackboard finding under a run.
-func (s *Store) AddFinding(runID int64, f gored.Finding) error {
+func (s *Store) AddFinding(runID int64, f core.Finding) error {
 	refs := make([]string, len(f.Refs))
 	for i, r := range f.Refs {
 		refs[i] = fmt.Sprintf("%d", r)
@@ -99,7 +99,7 @@ func (s *Store) AddFinding(runID int64, f gored.Finding) error {
 }
 
 // FinishRun writes the final aggregate.
-func (s *Store) FinishRun(runID int64, st gored.RunStats) error {
+func (s *Store) FinishRun(runID int64, st core.RunStats) error {
 	_, err := s.db.Exec(
 		`UPDATE redteam_runs SET outcome=?, tool_calls=?, wall_ms=?, tokens_in=?, tokens_out=?, notes=? WHERE id=?`,
 		st.Outcome, st.ToolCalls, st.WallMS, st.TokensIn, st.TokensOut, st.Notes, runID,

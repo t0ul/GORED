@@ -1,7 +1,7 @@
 package validate
 
 import (
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/internal/tools"
 	"context"
 	"encoding/json"
@@ -46,7 +46,7 @@ type VerifyResult struct {
 // actually appears. The model never sees the marker value (so it cannot fabricate
 // a pass), and confirmation rests on execution, not the model's word.
 type Verifier struct {
-	Model   gored.ModelClient
+	Model   core.ModelClient
 	Base    string
 	Marker  string // the system checks for this; NOT shown to the model
 	Facts   string // what the attack did, minus the marker value
@@ -66,10 +66,10 @@ func (v Verifier) Verify(ctx context.Context) (VerifyResult, error) {
 The steps run in order sharing ONE cookie session. As an UNPRIVILEGED user: first log in with the given credentials, then make the request that would disclose data you should not see. A secret marker is in that response if the app is vulnerable; you do not know its value. Output ONLY the JSON plan.`
 	for attempt := 1; attempt <= tries; attempt++ {
 		res.Attempts = attempt
-		reply, _, err := v.Model.Chat(ctx, []gored.Message{
-			{Role: gored.RoleSystem, Content: sys},
-			{Role: gored.RoleUser, Content: v.Facts + "\n\nReproduction plan (JSON only):"},
-		}, gored.ChatOpts{Temperature: 0.2, MaxTokens: 400})
+		reply, _, err := v.Model.Chat(ctx, []core.Message{
+			{Role: core.RoleSystem, Content: sys},
+			{Role: core.RoleUser, Content: v.Facts + "\n\nReproduction plan (JSON only):"},
+		}, core.ChatOpts{Temperature: 0.2, MaxTokens: 400})
 		if err != nil {
 			return res, err
 		}
@@ -256,7 +256,7 @@ func sortedStrKeys(m map[string]string) []string {
 }
 
 func parsePlan(reply string) (ReproPlan, bool) {
-	raw, ok := gored.ExtractJSON(reply)
+	raw, ok := core.ExtractJSON(reply)
 	if !ok {
 		return ReproPlan{}, false
 	}

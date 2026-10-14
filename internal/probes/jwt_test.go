@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	probes "github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 )
@@ -52,8 +52,8 @@ func aliceToken(t *testing.T, base string) string {
 func jwtProbe(t *testing.T, base string, secrets []string) *probes.JWTProbe {
 	t.Helper()
 	return &probes.JWTProbe{
-		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
-		Low:     gored.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Base: base, Egress: core.NewEgress(authority(t, base)), Sessions: core.NewSessions(),
+		Low:     core.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
 		Secrets: secrets,
 	}
 }
@@ -79,7 +79,7 @@ func TestJWTForgeWithSourceSecret(t *testing.T) {
 	if f.Vector != "secret-in-source" {
 		t.Errorf("want vector secret-in-source, got %q", f.Vector)
 	}
-	if f.Confidence != gored.ConfCertain {
+	if f.Confidence != core.ConfCertain {
 		t.Errorf("forged token accepted on replay, want certain, got %q (replay=%d)", f.Confidence, f.ReplayStatus)
 	}
 	if f.CWE != "CWE-347" {
@@ -136,7 +136,7 @@ func TestJWTAlgNoneAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Vector != "alg-none" || f.Confidence != gored.ConfCertain {
+	if f.Vector != "alg-none" || f.Confidence != core.ConfCertain {
 		t.Fatalf("want alg-none/certain, got vector=%q conf=%q (replay=%d)", f.Vector, f.Confidence, f.ReplayStatus)
 	}
 }

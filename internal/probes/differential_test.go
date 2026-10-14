@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	probes "github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 )
@@ -28,10 +28,10 @@ func TestDifferentialOracleFlagsBACNotScoped(t *testing.T) {
 	_, base := liveTarget(t)
 
 	oracle := &probes.DifferentialOracle{
-		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
-		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
-		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
-		Anon: &gored.Identity{Name: "anon"},
+		Base: base, Egress: core.NewEgress(authority(t, base)), Sessions: core.NewSessions(),
+		Priv: core.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
+		Low:  core.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Anon: &core.Identity{Name: "anon"},
 	}
 
 	findings, err := oracle.Sweep(context.Background(), [][2]string{
@@ -73,10 +73,10 @@ func TestDifferentialOracleHardenedClosesBAC(t *testing.T) {
 	base := serveTarget(t, s)
 
 	oracle := &probes.DifferentialOracle{
-		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
-		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
-		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
-		Anon: &gored.Identity{Name: "anon"},
+		Base: base, Egress: core.NewEgress(authority(t, base)), Sessions: core.NewSessions(),
+		Priv: core.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
+		Low:  core.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Anon: &core.Identity{Name: "anon"},
 	}
 	f, err := oracle.Probe(context.Background(), "GET", "/api/memos")
 	if err != nil {
@@ -127,10 +127,10 @@ func TestDifferentialConfidenceRanksChromeLow(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	oracle := &probes.DifferentialOracle{
-		Base: ts.URL, Egress: gored.NewEgress(authority(t, ts.URL)), Sessions: gored.NewSessions(),
-		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Id": "admin"}},
-		Low:  gored.Identity{Name: "user", Headers: map[string]string{"X-Id": "user"}},
-		Anon: &gored.Identity{Name: "anon"},
+		Base: ts.URL, Egress: core.NewEgress(authority(t, ts.URL)), Sessions: core.NewSessions(),
+		Priv: core.Identity{Name: "admin", Headers: map[string]string{"X-Id": "admin"}},
+		Low:  core.Identity{Name: "user", Headers: map[string]string{"X-Id": "user"}},
+		Anon: &core.Identity{Name: "anon"},
 	}
 	findings, err := oracle.Sweep(context.Background(), [][2]string{
 		{"GET", "/shell1"}, {"GET", "/shell2"}, {"GET", "/shell3"},
@@ -139,7 +139,7 @@ func TestDifferentialConfidenceRanksChromeLow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conf := map[string]gored.Confidence{}
+	conf := map[string]core.Confidence{}
 	for _, f := range findings {
 		if !f.Flagged() {
 			t.Errorf("%s not flagged (want BAC): %s", f.Path, f.Evidence)
@@ -147,14 +147,14 @@ func TestDifferentialConfidenceRanksChromeLow(t *testing.T) {
 		conf[f.Path] = f.Confidence
 	}
 	for _, shell := range []string{"/shell1", "/shell2", "/shell3"} {
-		if conf[shell] != gored.ConfLow {
+		if conf[shell] != core.ConfLow {
 			t.Errorf("%s: shared chrome should be low confidence, got %q", shell, conf[shell])
 		}
 	}
-	if conf["/records"] != gored.ConfHigh {
+	if conf["/records"] != core.ConfHigh {
 		t.Errorf("/records: JSON data should be high confidence, got %q", conf["/records"])
 	}
-	if conf["/report"] != gored.ConfMedium {
+	if conf["/report"] != core.ConfMedium {
 		t.Errorf("/report: HTML with unique content is ambiguous without a canary, want medium, got %q", conf["/report"])
 	}
 }
@@ -176,17 +176,17 @@ func TestDifferentialCanaryCertain(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	oracle := &probes.DifferentialOracle{
-		Base: ts.URL, Egress: gored.NewEgress(authority(t, ts.URL)), Sessions: gored.NewSessions(),
-		Priv:    gored.Identity{Name: "admin", Headers: map[string]string{"X-Id": "admin"}},
-		Low:     gored.Identity{Name: "user", Headers: map[string]string{"X-Id": "user"}},
-		Anon:    &gored.Identity{Name: "anon"},
+		Base: ts.URL, Egress: core.NewEgress(authority(t, ts.URL)), Sessions: core.NewSessions(),
+		Priv:    core.Identity{Name: "admin", Headers: map[string]string{"X-Id": "admin"}},
+		Low:     core.Identity{Name: "user", Headers: map[string]string{"X-Id": "user"}},
+		Anon:    &core.Identity{Name: "anon"},
 		Markers: []string{marker},
 	}
 	f, err := oracle.Probe(context.Background(), "GET", "/leak")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !f.Flagged() || f.Confidence != gored.ConfCertain {
+	if !f.Flagged() || f.Confidence != core.ConfCertain {
 		t.Fatalf("want BAC/certain, got %s/%s (%s)", f.Verdict, f.Confidence, f.Evidence)
 	}
 	if f.Marker != marker {

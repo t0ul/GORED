@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 )
 
 // Pure helpers shared by the map and plan stages (previously copy-pasted in gored-mapsweep and
@@ -115,7 +115,7 @@ func joinCap(xs []string, n int) string {
 // boardHas reports whether any finding on the board contains substr — so a phase advance
 // depends on durable board state, not just the last tool output (which the Runner's
 // repeat-skip can replace with a skip note).
-func boardHas(b *gored.Blackboard, substr string) bool {
+func boardHas(b *core.Blackboard, substr string) bool {
 	if b == nil {
 		return false
 	}

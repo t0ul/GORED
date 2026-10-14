@@ -5,24 +5,24 @@ import (
 	"strings"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	probes "github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 )
 
 func idorHunt(t *testing.T, base string) probes.HuntReport {
 	t.Helper()
-	sessions := gored.NewSessions()
-	eg := gored.NewEgress(authority(t, base))
-	priv := gored.Identity{Name: "admin", Session: "admin", Headers: map[string]string{"X-Session": "admin-session"}}
+	sessions := core.NewSessions()
+	eg := core.NewEgress(authority(t, base))
+	priv := core.Identity{Name: "admin", Session: "admin", Headers: map[string]string{"X-Session": "admin-session"}}
 	h := &probes.Hunt{
 		Base: base, Egress: eg, Sessions: sessions,
 		Priv: priv,
-		Low:  gored.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
-		Anon: &gored.Identity{Name: "anon", Session: "anon"},
+		Low:  core.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Anon: &core.Identity{Name: "anon", Session: "anon"},
 		// Seeder plants a memo as admin, then the id-swap reads /api/memos/{id} as
 		// alice. No model: the canary overlay confirms certainty without one.
-		Seeder: &gored.CanarySeeder{Base: base, Egress: eg, Sessions: sessions, Priv: priv},
+		Seeder: &core.CanarySeeder{Base: base, Egress: eg, Sessions: sessions, Priv: priv},
 	}
 	rep, err := h.Run(context.Background())
 	if err != nil {
@@ -48,7 +48,7 @@ func TestHuntObjectLevelIDOR(t *testing.T) {
 	if idor == nil {
 		t.Fatalf("expected a CWE-639 object-level IDOR on /api/memos/{id}; findings=%+v", rep.Findings)
 	}
-	if idor.Confidence != gored.ConfCertain {
+	if idor.Confidence != core.ConfCertain {
 		t.Errorf("object IDOR should be certain (canary disclosed), got %q", idor.Confidence)
 	}
 }

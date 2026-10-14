@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/store"
 )
 
@@ -16,18 +16,18 @@ func TestRunRoundTrip(t *testing.T) {
 	}
 	defer st.Close()
 
-	id, err := st.StartRun("trace-abc", gored.RunMeta{
+	id, err := st.StartRun("trace-abc", core.RunMeta{
 		SuiteVersion: "phase1", Model: "tinyllama", Skill: "cold-web-recon-exploit",
-		SkillTemp: "cold", Target: "http://127.0.0.1:1", FlagID: "idor-notes", Difficulty: gored.DiffEasy,
+		SkillTemp: "cold", Target: "http://127.0.0.1:1", FlagID: "idor-notes", Difficulty: core.DiffEasy,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := gored.Finding{Type: gored.FindEndpoint, Value: "/api/notes/{id}", SourceStep: 1, Refs: []int{}}
+	f := core.Finding{Type: core.FindEndpoint, Value: "/api/notes/{id}", SourceStep: 1, Refs: []int{}}
 	if err := st.AddFinding(id, f); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishRun(id, gored.RunStats{Outcome: "captured", ToolCalls: 3, WallMS: 1200, TokensIn: 500, TokensOut: 80, Notes: ""}); err != nil {
+	if err := st.FinishRun(id, core.RunStats{Outcome: "captured", ToolCalls: 3, WallMS: 1200, TokensIn: 500, TokensOut: 80, Notes: ""}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := st.GetRun(id)

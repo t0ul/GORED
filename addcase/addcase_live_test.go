@@ -19,26 +19,26 @@ import (
 	"time"
 
 	add "github.com/t0ul/ADD"
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/addcase"
 	"github.com/t0ul/GORED/demotarget"
 	"github.com/t0ul/GORED/modelclient"
 	goserve "github.com/t0ul/goserve"
 )
 
-func targetProvider(opts ...demotarget.Option) gored.TargetProvider {
-	return func() (gored.RunTarget, error) {
+func targetProvider(opts ...demotarget.Option) core.TargetProvider {
+	return func() (core.RunTarget, error) {
 		s, err := demotarget.New(opts...)
 		if err != nil {
-			return gored.RunTarget{}, err
+			return core.RunTarget{}, err
 		}
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			return gored.RunTarget{}, err
+			return core.RunTarget{}, err
 		}
 		srv := &http.Server{Handler: s.Handler()}
 		go func() { _ = srv.Serve(ln) }()
-		return gored.RunTarget{Target: s, BaseURL: "http://" + ln.Addr().String(), Close: func() { _ = srv.Close() }}, nil
+		return core.RunTarget{Target: s, BaseURL: "http://" + ln.Addr().String(), Close: func() { _ = srv.Close() }}, nil
 	}
 }
 
@@ -66,7 +66,7 @@ func TestAutonomousAdversary(t *testing.T) {
 		Risk:       "ASI05", // excessive agency / autonomous adversary
 		FlagID:     "idor-notes",
 		Model:      modelclient.New(h.ChatURL("attacker"), "qwen2.5-1.5b-instruct"),
-		Skill:      gored.WarmIDORSkill,
+		Skill:      core.WarmIDORSkill,
 		Bounds:     addcase.DefaultBounds(),
 		Trials:     3,
 		CanaryURL:  "http://169.254.169.254/latest/meta-data/",

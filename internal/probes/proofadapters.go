@@ -3,32 +3,32 @@ package probes
 import (
 	"fmt"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 )
 
 // Adapters: a probe's own finding -> a normalized core Proof. They live with the probes
-// (they read probe-specific finding fields) and produce the shared gored.Proof vocabulary,
+// (they read probe-specific finding fields) and produce the shared core.Proof vocabulary,
 // so the validate layer consumes Proofs without knowing any probe's finding shape.
 
 // ProofFromHunt normalizes a gored-hunt access-control finding. A confirmed finding (the
 // model-written repro reproduced the disclosure) is exploitable and carries that repro;
 // a certain-but-unconfirmed one is triggerable; a high one is reachable.
-func ProofFromHunt(f HuntFinding, app string) (gored.Proof, bool) {
+func ProofFromHunt(f HuntFinding, app string) (core.Proof, bool) {
 	if f.Verdict != VerdictBAC {
-		return gored.Proof{}, false
+		return core.Proof{}, false
 	}
-	locus, kind := gored.NormLocus(f.Path)
-	p := gored.Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
+	locus, kind := core.NormLocus(f.Path)
+	p := core.Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
 		Source: "gored-hunt", Evidence: f.Evidence}
 	switch {
 	case f.Confirmed:
-		p.Rung, p.Exploitable, p.Repro = gored.LadderExploitable, true, f.ReproGo
-	case f.Confidence == gored.ConfCertain:
-		p.Rung = gored.LadderTriggerable
-	case f.Confidence == gored.ConfHigh:
-		p.Rung = gored.LadderReachable
+		p.Rung, p.Exploitable, p.Repro = core.LadderExploitable, true, f.ReproGo
+	case f.Confidence == core.ConfCertain:
+		p.Rung = core.LadderTriggerable
+	case f.Confidence == core.ConfHigh:
+		p.Rung = core.LadderReachable
 	default:
-		p.Rung = gored.LadderReported
+		p.Rung = core.LadderReported
 	}
 	return p, true
 }
@@ -36,18 +36,18 @@ func ProofFromHunt(f HuntFinding, app string) (gored.Proof, bool) {
 // ProofFromMassAssign normalizes a mass-assignment finding. Certain means the probe wrote
 // a privileged field and read it back changed — an executed privilege escalation, so
 // exploitable; high (reflected only) is triggerable.
-func ProofFromMassAssign(f MassAssignFinding, app string) (gored.Proof, bool) {
+func ProofFromMassAssign(f MassAssignFinding, app string) (core.Proof, bool) {
 	if !f.Flagged() {
-		return gored.Proof{}, false
+		return core.Proof{}, false
 	}
-	locus, kind := gored.NormLocus(f.WritePath)
-	p := gored.Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
+	locus, kind := core.NormLocus(f.WritePath)
+	p := core.Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
 		Source: "gored-massassign", Evidence: f.Evidence}
-	if f.Confidence == gored.ConfCertain {
-		p.Rung, p.Exploitable = gored.LadderExploitable, true
+	if f.Confidence == core.ConfCertain {
+		p.Rung, p.Exploitable = core.LadderExploitable, true
 		p.Repro = fmt.Sprintf("%s %s with {\"%s\":%v} as the low-priv identity; read it back changed", f.Method, f.WritePath, f.Field, f.SentValue)
 	} else {
-		p.Rung = gored.LadderTriggerable
+		p.Rung = core.LadderTriggerable
 	}
 	return p, true
 }
@@ -55,18 +55,18 @@ func ProofFromMassAssign(f MassAssignFinding, app string) (gored.Proof, bool) {
 // ProofFromJWT normalizes a JWT finding. Certain means a forged token was accepted on
 // replay — an executed authentication bypass, so exploitable; high (forgeable, replay
 // not confirmed) is triggerable. locus is the protected path the token unlocks.
-func ProofFromJWT(f JWTFinding, app, locus string) (gored.Proof, bool) {
+func ProofFromJWT(f JWTFinding, app, locus string) (core.Proof, bool) {
 	if !f.Flagged() {
-		return gored.Proof{}, false
+		return core.Proof{}, false
 	}
-	l, kind := gored.NormLocus(locus)
-	p := gored.Proof{App: app, Locus: l, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
+	l, kind := core.NormLocus(locus)
+	p := core.Proof{App: app, Locus: l, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
 		Source: "gored-jwt", Evidence: f.Evidence}
-	if f.Confidence == gored.ConfCertain {
-		p.Rung, p.Exploitable = gored.LadderExploitable, true
+	if f.Confidence == core.ConfCertain {
+		p.Rung, p.Exploitable = core.LadderExploitable, true
 		p.Repro = fmt.Sprintf("forge a %s token (vector %s) and replay it on %s", f.Alg, f.Vector, locus)
 	} else {
-		p.Rung = gored.LadderTriggerable
+		p.Rung = core.LadderTriggerable
 	}
 	return p, true
 }

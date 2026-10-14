@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
@@ -32,10 +32,10 @@ import (
 // recon and try things, and read the blackboard it builds.
 type externalTarget struct{ name string }
 
-func (e externalTarget) Manifest() gored.Manifest {
-	return gored.Manifest{Name: e.name}
+func (e externalTarget) Manifest() core.Manifest {
+	return core.Manifest{Name: e.name}
 }
-func (e externalTarget) Status() []gored.FlagStatus { return nil }
+func (e externalTarget) Status() []core.FlagStatus { return nil }
 
 func main() {
 	var (
@@ -62,27 +62,27 @@ func main() {
 	must(err)
 	defer h.Close()
 
-	egress := gored.NewEgress(hostPort(*url))
-	httpTool := gored.NewHTTPRequestTool(*url, egress, nil)
+	egress := core.NewEgress(hostPort(*url))
+	httpTool := core.NewHTTPRequestTool(*url, egress, nil)
 	httpTool.AllowMethods = methodSet(*methods)
 
 	audit, err := gledger.Open(*traceP, "gored")
 	must(err)
 
-	runner := &gored.Runner{
+	runner := &core.Runner{
 		Model:     modelclient.New(h.ChatURL("attacker"), modelName(*modelF)),
-		Tools:     gored.NewToolbox(httpTool, probes.NewDiscoverTool(*url, egress), gored.NewExecTool()),
-		Skill:     gored.ReconSkill,
+		Tools:     core.NewToolbox(httpTool, probes.NewDiscoverTool(*url, egress), core.NewExecTool()),
+		Skill:     core.ReconSkill,
 		Target:    externalTarget{name: *url},
-		Board:     gored.NewBlackboard(),
+		Board:     core.NewBlackboard(),
 		Audit:     audit,
-		Bounds:    gored.Bounds{MaxSteps: *steps, Wall: 180 * time.Second},
+		Bounds:    core.Bounds{MaxSteps: *steps, Wall: 180 * time.Second},
 		CanaryURL: "http://169.254.169.254/latest/meta-data/",
 	}
 	log.Printf("probing %s with %s (methods=%s, cold skill), watching the blackboard fill",
 		*url, modelName(*modelF), *methods)
 
-	res, err := runner.Run(ctx, gored.Objective{Goal: *goal, FlagID: "n/a", Base: *url})
+	res, err := runner.Run(ctx, core.Objective{Goal: *goal, FlagID: "n/a", Base: *url})
 	must(err)
 
 	fmt.Println("\n==== blackboard (what the agent posted) ====")

@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/modelclient"
 	goserve "github.com/t0ul/goserve"
@@ -34,7 +34,7 @@ func main() {
 	ctx := context.Background()
 
 	// 1. Enumerate the real surface (deterministic, read-only).
-	egress := gored.NewEgress(hostPort(*url))
+	egress := core.NewEgress(hostPort(*url))
 	disc := probes.NewDiscoverTool(*url, egress)
 	out, err := disc.Call(ctx, map[string]any{"path": "/"})
 	must(err)
@@ -66,10 +66,10 @@ func main() {
 - <method path> — <weakness to test> — plant a canary by: <how to create a privileged record to test it>
 Only list real candidates from the provided endpoints. Be concise. No preamble.`
 	user := "Endpoints:\n" + strings.Join(paths, "\n") + "\n\nTest plan:"
-	plan, _, err := model.Chat(ctx, []gored.Message{
-		{Role: gored.RoleSystem, Content: sys},
-		{Role: gored.RoleUser, Content: user},
-	}, gored.ChatOpts{Temperature: 0.2, MaxTokens: 400})
+	plan, _, err := model.Chat(ctx, []core.Message{
+		{Role: core.RoleSystem, Content: sys},
+		{Role: core.RoleUser, Content: user},
+	}, core.ChatOpts{Temperature: 0.2, MaxTokens: 400})
 	must(err)
 
 	fmt.Printf("==== test plan (by %s, local) ====\n%s\n", model.Name(), strings.TrimSpace(plan))

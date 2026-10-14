@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/modelclient"
 )
 
@@ -21,17 +21,17 @@ func TestAccountingOverRealServer(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	spec := gored.ModelSpec{Name: "kimi", Endpoint: ts.URL, Model: "moonshot-v1", ParamsB: 16}
+	spec := core.ModelSpec{Name: "kimi", Endpoint: ts.URL, Model: "moonshot-v1", ParamsB: 16}
 	client := modelclient.FromSpec(spec)
 	if client.Name() != "moonshot-v1" {
 		t.Fatalf("FromSpec should use the model id, got %q", client.Name())
 	}
 
-	acct := gored.NewComputeAccount(spec)
-	ac := gored.NewAccountingClient(client, acct)
+	acct := core.NewComputeAccount(spec)
+	ac := core.NewAccountingClient(client, acct)
 
 	for i := 0; i < 2; i++ {
-		reply, usage, err := ac.Chat(context.Background(), []gored.Message{{Role: gored.RoleUser, Content: "hi"}}, gored.ChatOpts{})
+		reply, usage, err := ac.Chat(context.Background(), []core.Message{{Role: core.RoleUser, Content: "hi"}}, core.ChatOpts{})
 		if err != nil {
 			t.Fatal(err)
 		}

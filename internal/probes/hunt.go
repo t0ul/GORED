@@ -1,7 +1,7 @@
 package probes
 
 import (
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	validate "github.com/t0ul/GORED/internal/validate"
 	"github.com/t0ul/GORED/internal/ingest"
 	"context"
@@ -19,7 +19,7 @@ type HuntFinding struct {
 	Path             string
 	CWE              string // "CWE-862" for broken access control / missing authorization
 	Verdict          BACVerdict
-	Confidence       gored.Confidence // certain (canary) | high | medium | low (false-positive likelihood)
+	Confidence       core.Confidence // certain (canary) | high | medium | low (false-positive likelihood)
 	ConfidenceReason string
 	Verified         bool   // a verifier ran for this finding
 	Confirmed        bool   // the model-written repro reproduced the disclosure
@@ -49,15 +49,15 @@ type HuntReport struct {
 // login path — so the same hunt runs against any local app.
 type Hunt struct {
 	Base     string
-	Egress   *gored.Egress
-	Sessions *gored.Sessions
-	Priv     gored.Identity
-	Low      gored.Identity
-	Anon     *gored.Identity
-	Model    gored.ModelClient       // optional; nil leaves findings UNVERIFIED
+	Egress   *core.Egress
+	Sessions *core.Sessions
+	Priv     core.Identity
+	Low      core.Identity
+	Anon     *core.Identity
+	Model    core.ModelClient       // optional; nil leaves findings UNVERIFIED
 	Audit    *gledger.AuditLog // optional replayable trace
 	Start    string            // discovery start path (default "/")
-	Seeder   *gored.CanarySeeder     // optional (6c); when set, plants canaries first so a disclosed marker is a certain finding
+	Seeder   *core.CanarySeeder     // optional (6c); when set, plants canaries first so a disclosed marker is a certain finding
 	// SeedPaths are extra same-origin paths/URLs to test, from an external crawler
 	// (an OWASP ZAP ajax-spider run, a sitemap, a browser). Static discovery misses
 	// routes a SPA builds in JS at runtime; feeding a real crawler's URLs here closes
@@ -66,7 +66,7 @@ type Hunt struct {
 	// SpecPaths are routes from an API spec (OpenAPI/Swagger). For an API-first app the
 	// spec is a more complete surface than crawling — collections join the resources,
 	// {id} paths join the templates the id-swap step tests.
-	SpecPaths []gored.APIPath
+	SpecPaths []core.APIPath
 }
 
 // Run discovers the surface, flags broken access control differentially, and

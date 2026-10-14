@@ -1,7 +1,7 @@
 package report
 
 import (
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"fmt"
 	"html"
 	"sort"
@@ -25,8 +25,8 @@ type LeaderboardMeta struct {
 // column. It is pure (no I/O) and embeds no scripts, so it is safe to open or publish
 // anywhere. The headline it is built to answer: which local setup captures most per
 // unit compute.
-func RenderLeaderboardHTML(meta LeaderboardMeta, sums []gored.ContenderSummary) []byte {
-	rows := make([]gored.ContenderSummary, len(sums))
+func RenderLeaderboardHTML(meta LeaderboardMeta, sums []core.ContenderSummary) []byte {
+	rows := make([]core.ContenderSummary, len(sums))
 	copy(rows, sums)
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].CaptureRate != rows[j].CaptureRate {
@@ -130,13 +130,13 @@ func RenderLeaderboardHTML(meta LeaderboardMeta, sums []gored.ContenderSummary) 
 	return []byte(page)
 }
 
-func shapeClass(s gored.Shape) string {
+func shapeClass(s core.Shape) string {
 	switch s {
-	case gored.ShapeSolo:
+	case core.ShapeSolo:
 		return "a"
-	case gored.ShapePlanner:
+	case core.ShapePlanner:
 		return "b"
-	case gored.ShapeStatic:
+	case core.ShapeStatic:
 		return "e"
 	}
 	return ""

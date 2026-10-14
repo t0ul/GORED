@@ -1,7 +1,7 @@
 package report
 
 import (
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"strings"
 	"testing"
 )
@@ -21,16 +21,16 @@ func TestRemediationFor(t *testing.T) {
 
 func TestSeverityDerivation(t *testing.T) {
 	cases := []struct {
-		v    gored.Verdict
+		v    core.Verdict
 		want string
 	}{
-		{gored.Verdict{Exploitable: true, CWEs: []string{"CWE-78"}}, "Critical"},
-		{gored.Verdict{Exploitable: true, CWEs: []string{"CWE-862"}}, "High"},
-		{gored.Verdict{Exploitable: true, Chain: []string{"x"}}, "Critical"},
-		{gored.Verdict{Rung: gored.LadderReachable}, "Medium"},
-		{gored.Verdict{Rung: gored.LadderPresent}, "Low"},
-		{gored.Verdict{Rung: "ruled-out"}, "Info"},
-		{gored.Verdict{Severity: "High"}, "High"}, // explicit wins
+		{core.Verdict{Exploitable: true, CWEs: []string{"CWE-78"}}, "Critical"},
+		{core.Verdict{Exploitable: true, CWEs: []string{"CWE-862"}}, "High"},
+		{core.Verdict{Exploitable: true, Chain: []string{"x"}}, "Critical"},
+		{core.Verdict{Rung: core.LadderReachable}, "Medium"},
+		{core.Verdict{Rung: core.LadderPresent}, "Low"},
+		{core.Verdict{Rung: "ruled-out"}, "Info"},
+		{core.Verdict{Severity: "High"}, "High"}, // explicit wins
 	}
 	for _, c := range cases {
 		if got := severityOf(c.v); got != c.want {
@@ -40,9 +40,9 @@ func TestSeverityDerivation(t *testing.T) {
 }
 
 func TestRenderReportHTML(t *testing.T) {
-	verdicts := []gored.Verdict{
-		{App: "rr", Locus: "/api/reports/{id}", Rung: gored.LadderReachable, Confidence: "high", CWEs: []string{"CWE-862"}, Sources: []string{"gored-hunt"}},
-		{App: "brig-target", Locus: "/exec", Rung: gored.LadderExploitable, Confidence: "certain", Exploitable: true,
+	verdicts := []core.Verdict{
+		{App: "rr", Locus: "/api/reports/{id}", Rung: core.LadderReachable, Confidence: "high", CWEs: []string{"CWE-862"}, Sources: []string{"gored-hunt"}},
+		{App: "brig-target", Locus: "/exec", Rung: core.LadderExploitable, Confidence: "certain", Exploitable: true,
 			Repro: "http://127.0.0.1:8088/exec?cmd=id", CWEs: []string{"CWE-78"}, Sources: []string{"gored-brigsweep"},
 			Chain: []string{"app RCE + root container = host compromise"}},
 	}

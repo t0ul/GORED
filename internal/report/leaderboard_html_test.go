@@ -1,7 +1,7 @@
 package report
 
 import (
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"strings"
 	"testing"
 )
@@ -9,10 +9,10 @@ import (
 func TestRenderLeaderboardHTML(t *testing.T) {
 	rec := 0.5
 	prec := 1.0
-	sums := []gored.ContenderSummary{
-		{Contender: "solo(qwen3b)", Shape: gored.ShapeSolo, Temp: gored.SkillWarm, Trials: 2, Captured: 2, CaptureRate: 1.0, MeanToolCall: 2, MeanTokens: 1000, ParamsB: 3, CapturePerMTok: 1000, MeanRecall: &rec, MeanPrecision: &prec, ReplayHref: "replay-abc.html"},
-		{Contender: "static+2doers", Shape: gored.ShapeStatic, Temp: gored.SkillCold, Trials: 2, Captured: 1, CaptureRate: 0.5, MeanToolCall: 3, MeanTokens: 2000, ParamsB: 6, CapturePerMTok: 250},
-		{Contender: "planner(qwen1.5b)+2doers", Shape: gored.ShapePlanner, Temp: gored.SkillCold, Trials: 2, Captured: 0, CaptureRate: 0.0, MeanToolCall: 6, MeanTokens: 4000, ParamsB: 4.5},
+	sums := []core.ContenderSummary{
+		{Contender: "solo(qwen3b)", Shape: core.ShapeSolo, Temp: core.SkillWarm, Trials: 2, Captured: 2, CaptureRate: 1.0, MeanToolCall: 2, MeanTokens: 1000, ParamsB: 3, CapturePerMTok: 1000, MeanRecall: &rec, MeanPrecision: &prec, ReplayHref: "replay-abc.html"},
+		{Contender: "static+2doers", Shape: core.ShapeStatic, Temp: core.SkillCold, Trials: 2, Captured: 1, CaptureRate: 0.5, MeanToolCall: 3, MeanTokens: 2000, ParamsB: 6, CapturePerMTok: 250},
+		{Contender: "planner(qwen1.5b)+2doers", Shape: core.ShapePlanner, Temp: core.SkillCold, Trials: 2, Captured: 0, CaptureRate: 0.0, MeanToolCall: 6, MeanTokens: 4000, ParamsB: 4.5},
 	}
 	html := string(RenderLeaderboardHTML(LeaderboardMeta{Title: "test board", Target: "demo", Trials: 2}, sums))
 
