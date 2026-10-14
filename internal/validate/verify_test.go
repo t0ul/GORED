@@ -1,4 +1,4 @@
-package gored
+package validate
 
 import (
 	"context"

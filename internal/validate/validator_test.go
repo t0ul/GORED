@@ -1,9 +1,10 @@
-package gored_test
+package validate_test
 
 import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 )
 
 func findVerdict(vs []gored.Verdict, app, locus string) *gored.Verdict {
@@ -36,7 +37,7 @@ func TestValidatorFusionAndChain(t *testing.T) {
 		{App: "demo", Locus: "Dockerfile", Kind: "container", CWE: "CWE-250", Rung: gored.LadderPresent, Confidence: gored.ConfHigh, Source: "gored-runtime", Evidence: "runs as root"},
 	}
 
-	vs := (&gored.Validator{}).Validate(scanners, proofs)
+	vs := (&validate.Validator{}).Validate(scanners, proofs)
 
 	prof := findVerdict(vs, "demo", "/api/profile")
 	if prof == nil || !prof.Exploitable || prof.Rung != gored.LadderExploitable {

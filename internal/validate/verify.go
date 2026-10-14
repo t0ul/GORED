@@ -1,6 +1,8 @@
-package gored
+package validate
 
 import (
+	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/tools"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -44,7 +46,7 @@ type VerifyResult struct {
 // actually appears. The model never sees the marker value (so it cannot fabricate
 // a pass), and confirmation rests on execution, not the model's word.
 type Verifier struct {
-	Model   ModelClient
+	Model   gored.ModelClient
 	Base    string
 	Marker  string // the system checks for this; NOT shown to the model
 	Facts   string // what the attack did, minus the marker value
@@ -64,10 +66,10 @@ func (v Verifier) Verify(ctx context.Context) (VerifyResult, error) {
 The steps run in order sharing ONE cookie session. As an UNPRIVILEGED user: first log in with the given credentials, then make the request that would disclose data you should not see. A secret marker is in that response if the app is vulnerable; you do not know its value. Output ONLY the JSON plan.`
 	for attempt := 1; attempt <= tries; attempt++ {
 		res.Attempts = attempt
-		reply, _, err := v.Model.Chat(ctx, []Message{
-			{Role: RoleSystem, Content: sys},
-			{Role: RoleUser, Content: v.Facts + "\n\nReproduction plan (JSON only):"},
-		}, ChatOpts{Temperature: 0.2, MaxTokens: 400})
+		reply, _, err := v.Model.Chat(ctx, []gored.Message{
+			{Role: gored.RoleSystem, Content: sys},
+			{Role: gored.RoleUser, Content: v.Facts + "\n\nReproduction plan (JSON only):"},
+		}, gored.ChatOpts{Temperature: 0.2, MaxTokens: 400})
 		if err != nil {
 			return res, err
 		}
@@ -145,15 +147,15 @@ func (v Verifier) renderCurl(plan ReproPlan) string {
 		}
 		keys := sortedStrKeys(s.Headers)
 		for _, k := range keys {
-			line.WriteString(" -H " + shellQuote(k+": "+s.Headers[k]))
+			line.WriteString(" -H " + tools.ShellQuote(k+": "+s.Headers[k]))
 		}
 		if s.Body != "" {
-			line.WriteString(" --data " + shellQuote(s.Body))
+			line.WriteString(" --data " + tools.ShellQuote(s.Body))
 		}
 		// Double-quote the URL so $B expands at run time.
 		line.WriteString(` "$B` + path + `"`)
 		if i == len(plan.Steps)-1 {
-			line.WriteString(" | grep -qF " + shellQuote(v.needle()) + " && echo 'CONFIRMED: marker disclosed' || echo 'not reproduced'")
+			line.WriteString(" | grep -qF " + tools.ShellQuote(v.needle()) + " && echo 'CONFIRMED: marker disclosed' || echo 'not reproduced'")
 		} else {
 			line.WriteString(" >/dev/null")
 		}
@@ -254,7 +256,7 @@ func sortedStrKeys(m map[string]string) []string {
 }
 
 func parsePlan(reply string) (ReproPlan, bool) {
-	raw, ok := extractJSON(reply)
+	raw, ok := gored.ExtractJSON(reply)
 	if !ok {
 		return ReproPlan{}, false
 	}

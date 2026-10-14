@@ -230,7 +230,7 @@ func (s *CanarySeeder) draftWithModel(ctx context.Context, endpoint, sample, mar
 	if err != nil {
 		return "", false
 	}
-	raw, ok := extractJSON(reply)
+	raw, ok := ExtractJSON(reply)
 	if !ok || strings.TrimSpace(raw) == "{}" || !json.Valid([]byte(raw)) {
 		return "", false
 	}

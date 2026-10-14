@@ -1,9 +1,10 @@
-package gored_test
+package validate_test
 
 import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 )
 
 // TestCorrelate mirrors the real shape of the RiskRancher lab findings and checks that
@@ -36,9 +37,9 @@ func TestCorrelate(t *testing.T) {
 		{Source: "Trivy", App: "krabber", Location: "golang.org/x/crypto", Severity: "UNKNOWN", Title: "GO-2026-5932"},
 	}
 
-	issues := gored.Correlate(findings)
+	issues := validate.Correlate(findings)
 
-	byKey := map[string]gored.CorrelatedIssue{}
+	byKey := map[string]validate.CorrelatedIssue{}
 	for _, c := range issues {
 		byKey[c.App+":"+c.Locus] = c
 	}
@@ -116,7 +117,7 @@ func TestLocusClassification(t *testing.T) {
 		{"src/app.ts", "a:src/app.ts", "file"},
 	}
 	for _, c := range cases {
-		issues := gored.Correlate([]gored.ScannerFinding{{App: "a", Location: c.loc, Severity: "Low"}})
+		issues := validate.Correlate([]gored.ScannerFinding{{App: "a", Location: c.loc, Severity: "Low"}})
 		got := issues[0].App + ":" + issues[0].Locus
 		if got != c.want || issues[0].Kind != c.kind {
 			t.Errorf("loc %q: want %q/%s, got %q/%s", c.loc, c.want, c.kind, got, issues[0].Kind)

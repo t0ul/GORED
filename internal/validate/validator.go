@@ -1,105 +1,49 @@
-package gored
+package validate
 
 import (
+	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/ingest"
 	"fmt"
 	"sort"
 	"strings"
 )
 
-// Ladder is the unified evidence ladder GORED reports a finding on. It runs from a bare
+// gored.Ladder is the unified evidence ladder GORED reports a finding on. It runs from a bare
 // scanner claim up to a proven exploit, with ruled-out as the side exit for a finding
 // shown not to apply. The whole tool exists to move findings up this ladder honestly and
 // claim only the rung it proved: the top rung, exploitable, is reserved for a finding an
 // executed repro actually reproduced — the thing scanners cannot do.
-type Ladder string
+// gored.Ladder, gored.LadderRank, gored.Proof and gored.Verdict are core evidence vocabulary (see evidence.go).
 
-const (
-	LadderReported    Ladder = "reported"    // a scanner claimed it; nothing independently proven
-	LadderPresent     Ladder = "present"     // the vulnerable code/config is in the app
-	LadderReachable   Ladder = "reachable"   // it is on a path from an entry point
-	LadderTriggerable Ladder = "triggerable" // GORED reached it live but did not confirm the impact
-	LadderExploitable Ladder = "exploitable" // an executed repro reproduced the security impact
-	LadderRuledOut    Ladder = "ruled-out"   // shown not to apply (not present, or not reachable)
-)
-
-func LadderRank(l Ladder) int {
-	switch l {
-	case LadderExploitable:
-		return 5
-	case LadderTriggerable:
-		return 4
-	case LadderReachable:
-		return 3
-	case LadderPresent:
-		return 2
-	case LadderReported:
-		return 1
-	default: // ruled-out
-		return 0
-	}
-}
-
-func higherLadder(a, b Ladder) Ladder {
-	if LadderRank(a) >= LadderRank(b) {
+func higherLadder(a, b gored.Ladder) gored.Ladder {
+	if gored.LadderRank(a) >= gored.LadderRank(b) {
 		return a
 	}
 	return b
 }
 
-// Proof is a normalized GORED discovery/verification result: a finding GORED produced
-// itself (an access-control hunt, a mass-assignment or JWT probe, a container analysis),
-// carrying how far up the ladder it proved the issue and the repro when it proved an
-// exploit. Proofs are the evidence the validator fuses onto the scanner aggregate.
-type Proof struct {
-	App, Locus, Kind string
-	CWE              string
-	Rung             Ladder
-	Confidence       Confidence
-	Exploitable      bool
-	Repro            string
-	Evidence         string
-	Source           string // gored-hunt | gored-massassign | gored-jwt | gored-runtime
-}
-
-// Verdict is the finding graph's conclusion about one issue: the highest rung proven
-// across every source, whether an executed repro exists, the evidence ladder that got it
-// there, and any multi-issue chain it participates in. It is the triage unit a person
-// acts on — one ranked row, carrying its proof.
-type Verdict struct {
-	App, Locus, Kind string
-	Rung             Ladder
-	Confidence       Confidence
-	Exploitable      bool
-	Repro            string
-	Severity         string
-	CWEs             []string
-	Sources          []string
-	Evidence         []string // what proved each step, most recent last
-	Chain            []string // multi-issue chain notes (e.g. app exploit + root container)
-}
-
 // Validator turns the finding graph into ranked verdicts. It is the capstone: it reads
 // the scanner aggregate (correlated and whitebox-rated), fuses GORED's own proofs onto
 // the matching issues, forms the honest cross-issue chains, and ranks everything so the
-// confirmed-exploitable findings with repros sit at the top. An optional SourceAnalyzer
+// confirmed-exploitable findings with repros sit at the top. An optional gored.SourceAnalyzer
 // raises scanner issues onto the static rungs; without it they rest on reachability.
 type Validator struct {
-	Analyzer SourceAnalyzer  // language lane: raises a code/dependency finding onto the static rungs
-	Runtime  RuntimeAnalyzer // runtime lane: raises a Dockerfile/container finding onto the rungs
+	Analyzer gored.SourceAnalyzer  // language lane: raises a code/dependency finding onto the static rungs
+	Runtime  gored.RuntimeAnalyzer // runtime lane: raises a Dockerfile/container finding onto the rungs
 }
 
 // Validate fuses scanner findings and GORED proofs into one ranked list of verdicts.
-func (v *Validator) Validate(scanners []ScannerFinding, proofs []Proof) []Verdict {
-	byKey := map[string]*Verdict{}
+func (v *Validator) Validate(scanners []gored.ScannerFinding, proofs []gored.Proof) []gored.Verdict {
+	byKey := map[string]*gored.Verdict{}
 	var order []string
 	key := func(app, locus string) string { return app + "\x00" + locus }
 
 	// Scanner issues first: each correlated issue becomes a verdict at its static rung.
 	for _, is := range Correlate(scanners) {
 		k := key(is.App, is.Locus)
-		vd := &Verdict{
+		vd := &gored.Verdict{
 			App: is.App, Locus: is.Locus, Kind: is.Kind,
-			Rung: v.issueLadder(is), Confidence: ConfLow, Severity: is.Severity,
+			Rung: v.issueLadder(is), Confidence: gored.ConfLow, Severity: is.Severity,
 			CWEs: append([]string{}, is.CWEs...), Sources: append([]string{}, is.Sources...),
 		}
 		vd.Evidence = append(vd.Evidence, fmt.Sprintf("scanners (%s) reported it; static rung %s",
@@ -113,7 +57,7 @@ func (v *Validator) Validate(scanners []ScannerFinding, proofs []Proof) []Verdic
 		k := key(p.App, p.Locus)
 		vd := byKey[k]
 		if vd == nil {
-			vd = &Verdict{App: p.App, Locus: p.Locus, Kind: p.Kind, Rung: LadderReported}
+			vd = &gored.Verdict{App: p.App, Locus: p.Locus, Kind: p.Kind, Rung: gored.LadderReported}
 			byKey[k] = vd
 			order = append(order, k)
 			vd.Evidence = append(vd.Evidence, "not reported by any scanner — discovered by GORED")
@@ -133,7 +77,7 @@ func (v *Validator) Validate(scanners []ScannerFinding, proofs []Proof) []Verdic
 		vd.Evidence = append(vd.Evidence, fmt.Sprintf("%s proved %s (%s): %s", p.Source, p.Rung, p.Confidence, p.Evidence))
 	}
 
-	verdicts := make([]Verdict, 0, len(order))
+	verdicts := make([]gored.Verdict, 0, len(order))
 	for _, k := range order {
 		verdicts = append(verdicts, *byKey[k])
 	}
@@ -148,61 +92,61 @@ func (v *Validator) Validate(scanners []ScannerFinding, proofs []Proof) []Verdic
 // bare presence, so a dependency one scanner flagged present and another ruled not
 // reachable is ruled out, not present. It never claims past present for a scanner issue —
 // reaching live or exploiting is a proof's job, not a scanner's.
-func (v *Validator) issueLadder(is CorrelatedIssue) Ladder {
+func (v *Validator) issueLadder(is CorrelatedIssue) gored.Ladder {
 	if v.Analyzer != nil || v.Runtime != nil {
 		reach, ruled, present := false, false, false
 		for _, f := range is.Findings {
 			r := v.rateFinding(f)
 			switch r {
-			case RungReachable:
+			case gored.RungReachable:
 				reach = true
-			case RungRuledOut: // == RungAbsent
+			case gored.RungRuledOut: // == gored.RungAbsent
 				ruled = true
-			case RungPresent:
+			case gored.RungPresent:
 				present = true
 			}
 		}
 		switch {
 		case reach:
-			return LadderReachable
+			return gored.LadderReachable
 		case ruled:
-			return LadderRuledOut
+			return gored.LadderRuledOut
 		case present:
-			return LadderPresent
+			return gored.LadderPresent
 		}
 	}
 	switch {
 	case is.Reachable != nil && *is.Reachable:
-		return LadderReachable
+		return gored.LadderReachable
 	case is.Reachable != nil && !*is.Reachable:
-		return LadderRuledOut
+		return gored.LadderRuledOut
 	default:
-		return LadderReported
+		return gored.LadderReported
 	}
 }
 
 // rateFinding routes a finding to the analyzer that understands it: a Dockerfile/container
 // finding to the runtime analyzer, everything else to the language analyzer. A finding no
 // analyzer claims stays unknown — it is never falsely ruled out by the wrong analyzer.
-func (v *Validator) rateFinding(f ScannerFinding) Rung {
-	if isDockerfileFinding(f) {
+func (v *Validator) rateFinding(f gored.ScannerFinding) gored.Rung {
+	if ingest.IsDockerfileFinding(f) {
 		if v.Runtime != nil {
 			r, _ := v.Runtime.Analyze(f)
 			return r
 		}
-		return RungUnknown
+		return gored.RungUnknown
 	}
 	if v.Analyzer != nil {
 		r, _ := v.Analyzer.Analyze(f)
 		return r
 	}
-	return RungUnknown
+	return gored.RungUnknown
 }
 
 // chainHostCompromise adds the one runtime chain GORED asserts in v1: an exploitable
 // app-level issue plus a container that runs as root is a host-compromise path. It is
 // flagged on the exploitable verdict, never exploited — GORED does not run an escape.
-func chainHostCompromise(verdicts []Verdict) {
+func chainHostCompromise(verdicts []gored.Verdict) {
 	rootFlagged, rootConfirmed := map[string]bool{}, map[string]bool{}
 	for _, vd := range verdicts {
 		if hasStr(vd.CWEs, "CWE-250") || (vd.Locus == "Dockerfile" && containsSub(vd.Evidence, "root")) {
@@ -227,8 +171,8 @@ func chainHostCompromise(verdicts []Verdict) {
 
 // moreUrgent orders verdicts for triage: highest ladder, then confidence, then severity,
 // then a proven exploit, then app/locus for stability.
-func moreUrgent(a, b Verdict) bool {
-	if ra, rb := LadderRank(a.Rung), LadderRank(b.Rung); ra != rb {
+func moreUrgent(a, b gored.Verdict) bool {
+	if ra, rb := gored.LadderRank(a.Rung), gored.LadderRank(b.Rung); ra != rb {
 		return ra > rb
 	}
 	if ca, cb := confRank(a.Confidence), confRank(b.Confidence); ca != cb {
@@ -249,29 +193,29 @@ func moreUrgent(a, b Verdict) bool {
 // ---- adapters: GORED's own findings -> normalized proofs ----
 
 // ProofFromHunt/ProofFromMassAssign/ProofFromJWT moved to internal/probes (they adapt probe
-// findings into a core Proof). ProofFromContainerIssue stays here — ContainerIssue is an
+// findings into a core gored.Proof). ProofFromContainerIssue stays here — gored.ContainerIssue is an
 // ingest type, not a probe.
 
 // ProofFromContainerIssue normalizes a discovered container misconfiguration. It is
 // present/confirmed (read straight from the Dockerfile), never exploitable on its own —
 // its force comes from the host-compromise chain when the app is also exploitable.
-func ProofFromContainerIssue(ci ContainerIssue, app string) Proof {
-	return Proof{
+func ProofFromContainerIssue(ci gored.ContainerIssue, app string) gored.Proof {
+	return gored.Proof{
 		App: app, Locus: "Dockerfile", Kind: "container", CWE: ci.CWE,
-		Rung: LadderPresent, Confidence: ConfHigh, Source: "gored-runtime",
+		Rung: gored.LadderPresent, Confidence: gored.ConfHigh, Source: "gored-runtime",
 		Evidence: ci.Title + " — " + ci.Why,
 	}
 }
 
-func confRank(c Confidence) int {
+func confRank(c gored.Confidence) int {
 	switch c {
-	case ConfCertain:
+	case gored.ConfCertain:
 		return 4
-	case ConfHigh:
+	case gored.ConfHigh:
 		return 3
-	case ConfMedium:
+	case gored.ConfMedium:
 		return 2
-	case ConfLow:
+	case gored.ConfLow:
 		return 1
 	default:
 		return 0

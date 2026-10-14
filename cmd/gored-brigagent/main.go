@@ -16,7 +16,7 @@ import (
 	"os"
 	"strings"
 
-	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 	"github.com/t0ul/gobrig"
 )
 
@@ -48,7 +48,7 @@ func main() {
 	fmt.Printf("==> RCE confirmed=%v  escape confirmed=%v\n", rceConfirmed, escapeConfirmed)
 
 	proofs := buildProofs(*app, *base, f, rceConfirmed, escapeConfirmed)
-	verdicts := (&gored.Validator{}).Validate(nil, proofs)
+	verdicts := (&validate.Validator{}).Validate(nil, proofs)
 
 	fmt.Printf("\n==== verdicts ====\n%s", summarize(verdicts))
 }

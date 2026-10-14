@@ -23,6 +23,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
 	"github.com/t0ul/gobrig"
@@ -146,7 +147,7 @@ func main() {
 	req := captureURL(res.CaptureRequest, *base)
 	escapeConfirmed := strings.Contains(res.CapturedVia, "host")
 	proofs := gored.EscapeProofs("brig-target", endpointOf(req), req, req, "gored-brigswarm", escapeConfirmed)
-	verdicts := (&gored.Validator{}).Validate(nil, proofs)
+	verdicts := (&validate.Validator{}).Validate(nil, proofs)
 	fmt.Println("\n==== verdicts (from the model's capture) ====")
 	for _, v := range verdicts {
 		mark := ""

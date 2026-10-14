@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 	probes "github.com/t0ul/GORED/internal/probes"
 )
 
@@ -62,12 +63,12 @@ func TestValidatorLiveCapstone(t *testing.T) {
 		t.Fatalf("both probes should yield exploitable proofs; jwt=%+v mass=%+v", jp, mp)
 	}
 	cissues := gored.AnalyzeDockerfile([]byte(vulnDockerfile))
-	cp := gored.ProofFromContainerIssue(*issueByRule(cissues, "runs-as-root"), "demo")
+	cp := validate.ProofFromContainerIssue(*issueByRule(cissues, "runs-as-root"), "demo")
 
 	// A representative scanner claim on the same route GORED proved exploitable.
 	scanners := []gored.ScannerFinding{{Source: "Semgrep", App: "demo", Location: "/api/profile", Severity: "Medium", CWE: "CWE-862", Title: "missing authorization"}}
 
-	vs := (&gored.Validator{}).Validate(scanners, []gored.Proof{jp, mp, cp})
+	vs := (&validate.Validator{}).Validate(scanners, []gored.Proof{jp, mp, cp})
 
 	prof := findVerdict(vs, "demo", "/api/profile")
 	if prof == nil || !prof.Exploitable || prof.Repro == "" || len(prof.Chain) == 0 {

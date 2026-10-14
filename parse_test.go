@@ -10,12 +10,12 @@ func TestExtractJSONBalances(t *testing.T) {
 		"x {\"s\":\"escaped \\\" quote\",\"done\":true} y": `{"s":"escaped \" quote","done":true}`,
 	}
 	for in, want := range cases {
-		got, ok := extractJSON(in)
+		got, ok := ExtractJSON(in)
 		if !ok || got != want {
-			t.Errorf("extractJSON(%q) = %q,%v want %q", in, got, ok, want)
+			t.Errorf("ExtractJSON(%q) = %q,%v want %q", in, got, ok, want)
 		}
 	}
-	if _, ok := extractJSON("no json here"); ok {
+	if _, ok := ExtractJSON("no json here"); ok {
 		t.Error("expected no JSON")
 	}
 }
