@@ -30,6 +30,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/demotarget"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
@@ -81,8 +82,8 @@ func main() {
 		}
 		fmt.Printf("\n==== merged leaderboard (%d contenders) ====\n%s", len(all), gored.Table(all))
 		if *htmlOut != "" {
-			meta := gored.LeaderboardMeta{Title: *htmlTitle, Target: "demotarget", Flag: *flagID, Trials: *trials, Note: "merged"}
-			must(os.WriteFile(*htmlOut, gored.RenderLeaderboardHTML(meta, all), 0o644))
+			meta := report.LeaderboardMeta{Title: *htmlTitle, Target: "demotarget", Flag: *flagID, Trials: *trials, Note: "merged"}
+			must(os.WriteFile(*htmlOut, report.RenderLeaderboardHTML(meta, all), 0o644))
 			fmt.Printf("leaderboard HTML: %s\n", *htmlOut)
 		}
 		return
@@ -320,10 +321,10 @@ func main() {
 		if *skillsF != "" {
 			note = "skills=" + *skillsF
 		}
-		meta := gored.LeaderboardMeta{
+		meta := report.LeaderboardMeta{
 			Title: *htmlTitle, Target: "demotarget", Flag: *flagID, Trials: *trials, Note: note,
 		}
-		must(os.WriteFile(*htmlOut, gored.RenderLeaderboardHTML(meta, sums), 0o644))
+		must(os.WriteFile(*htmlOut, report.RenderLeaderboardHTML(meta, sums), 0o644))
 		fmt.Printf("leaderboard HTML: %s\n", *htmlOut)
 	}
 }

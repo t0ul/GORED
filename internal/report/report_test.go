@@ -1,6 +1,7 @@
-package gored
+package report
 
 import (
+	gored "github.com/t0ul/GORED"
 	"strings"
 	"testing"
 )
@@ -20,16 +21,16 @@ func TestRemediationFor(t *testing.T) {
 
 func TestSeverityDerivation(t *testing.T) {
 	cases := []struct {
-		v    Verdict
+		v    gored.Verdict
 		want string
 	}{
-		{Verdict{Exploitable: true, CWEs: []string{"CWE-78"}}, "Critical"},
-		{Verdict{Exploitable: true, CWEs: []string{"CWE-862"}}, "High"},
-		{Verdict{Exploitable: true, Chain: []string{"x"}}, "Critical"},
-		{Verdict{Rung: LadderReachable}, "Medium"},
-		{Verdict{Rung: LadderPresent}, "Low"},
-		{Verdict{Rung: "ruled-out"}, "Info"},
-		{Verdict{Severity: "High"}, "High"}, // explicit wins
+		{gored.Verdict{Exploitable: true, CWEs: []string{"CWE-78"}}, "Critical"},
+		{gored.Verdict{Exploitable: true, CWEs: []string{"CWE-862"}}, "High"},
+		{gored.Verdict{Exploitable: true, Chain: []string{"x"}}, "Critical"},
+		{gored.Verdict{Rung: gored.LadderReachable}, "Medium"},
+		{gored.Verdict{Rung: gored.LadderPresent}, "Low"},
+		{gored.Verdict{Rung: "ruled-out"}, "Info"},
+		{gored.Verdict{Severity: "High"}, "High"}, // explicit wins
 	}
 	for _, c := range cases {
 		if got := severityOf(c.v); got != c.want {
@@ -39,9 +40,9 @@ func TestSeverityDerivation(t *testing.T) {
 }
 
 func TestRenderReportHTML(t *testing.T) {
-	verdicts := []Verdict{
-		{App: "rr", Locus: "/api/reports/{id}", Rung: LadderReachable, Confidence: "high", CWEs: []string{"CWE-862"}, Sources: []string{"gored-hunt"}},
-		{App: "brig-target", Locus: "/exec", Rung: LadderExploitable, Confidence: "certain", Exploitable: true,
+	verdicts := []gored.Verdict{
+		{App: "rr", Locus: "/api/reports/{id}", Rung: gored.LadderReachable, Confidence: "high", CWEs: []string{"CWE-862"}, Sources: []string{"gored-hunt"}},
+		{App: "brig-target", Locus: "/exec", Rung: gored.LadderExploitable, Confidence: "certain", Exploitable: true,
 			Repro: "http://127.0.0.1:8088/exec?cmd=id", CWEs: []string{"CWE-78"}, Sources: []string{"gored-brigsweep"},
 			Chain: []string{"app RCE + root container = host compromise"}},
 	}

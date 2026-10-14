@@ -13,6 +13,7 @@ import (
 	"os"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/report"
 )
 
 func main() {
@@ -36,7 +37,7 @@ func main() {
 		log.Fatal("gored-report: no verdicts found in the input")
 	}
 
-	page := gored.RenderReportHTML(gored.ReportMeta{Title: *title, Target: *target, Scope: *scope}, verdicts)
+	page := report.RenderReportHTML(report.ReportMeta{Title: *title, Target: *target, Scope: *scope}, verdicts)
 	must(os.WriteFile(*htmlOut, page, 0o644))
 	fmt.Printf("report: %s (%d findings)\n", *htmlOut, len(verdicts))
 }
