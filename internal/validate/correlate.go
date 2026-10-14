@@ -1,7 +1,7 @@
 package validate
 
 import (
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"sort"
 	"strings"
 )
@@ -20,7 +20,7 @@ type CorrelatedIssue struct {
 	App       string           // the app the locus belongs to
 	Locus     string           // the normalized key: a route, a file, or a module
 	Kind      string           // how the locus was keyed: "route" | "file" | "module" | "other"
-	Findings  []gored.ScannerFinding // every finding that collapsed into this issue, in input order
+	Findings  []core.ScannerFinding // every finding that collapsed into this issue, in input order
 	Sources   []string         // the distinct scanners that reported it, sorted
 	Severity  string           // the worst severity in the group, normalized lower-case
 	Reachable *bool            // merged reachability (see type doc); nil = unknown
@@ -35,7 +35,7 @@ func (c CorrelatedIssue) Count() int { return len(c.Findings) }
 // no source tree, no network — so it runs on whatever an aggregator already holds. The
 // result is sorted by priority: worst severity first, then reachable before unknown
 // before ruled-out, then the larger pile-up, then app and locus for a stable order.
-func Correlate(findings []gored.ScannerFinding) []CorrelatedIssue {
+func Correlate(findings []core.ScannerFinding) []CorrelatedIssue {
 	groups := map[string]*CorrelatedIssue{}
 	order := []string{} // preserve first-seen order for determinism before the final sort
 	for _, f := range findings {
@@ -106,14 +106,14 @@ func rollup(ci *CorrelatedIssue) {
 // path but drops the line (so many rules in one file group). Classification is by shape,
 // not by language: a leading "/" is a route, a domain-like first segment (or "stdlib") is
 // a module, a trailing file extension is a file. Anything else keys on itself.
-func locusOf(f gored.ScannerFinding) (locus, kind string) {
-	return gored.NormLocus(f.Location)
+func locusOf(f core.ScannerFinding) (locus, kind string) {
+	return core.NormLocus(f.Location)
 }
 
 // normLocus reduces any location string (a scanner's or a GORED proof's) to the shared
 // (locus, kind) key, so a scanner finding and a GORED proof about the same surface collapse
 // onto one issue regardless of which produced them.
-// gored.NormLocus and its helpers (looksLikeModule/looksLikeFile/stripLineSuffix/normalizeRoute)
+// core.NormLocus and its helpers (looksLikeModule/looksLikeFile/stripLineSuffix/normalizeRoute)
 // are core evidence vocabulary (see evidence.go).
 
 // sevRank orders severities so the worst in a group wins. Unknown/empty ranks lowest —

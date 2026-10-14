@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	validate "github.com/t0ul/GORED/internal/validate"
 	"github.com/t0ul/gobrig"
 )
@@ -22,13 +22,13 @@ func TestBuildProofsAndValidate(t *testing.T) {
 
 	verdicts := (&validate.Validator{}).Validate(nil, ps)
 
-	var rce *gored.Verdict
+	var rce *core.Verdict
 	for i := range verdicts {
 		if verdicts[i].Locus == "/exec" {
 			rce = &verdicts[i]
 		}
 	}
-	if rce == nil || !rce.Exploitable || rce.Rung != gored.LadderExploitable {
+	if rce == nil || !rce.Exploitable || rce.Rung != core.LadderExploitable {
 		t.Fatalf("expected an exploitable /exec verdict, got %+v", rce)
 	}
 	if !slices.Contains(rce.CWEs, "CWE-78") {

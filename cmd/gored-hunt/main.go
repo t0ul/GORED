@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
@@ -68,8 +68,8 @@ func main() {
 	flag.Parse()
 	ctx := context.Background()
 
-	egress := gored.NewEgress(hostPort(*url))
-	httpTool := gored.NewHTTPRequestTool(*url, egress, nil)
+	egress := core.NewEgress(hostPort(*url))
+	httpTool := core.NewHTTPRequestTool(*url, egress, nil)
 	httpTool.AllowMethods = map[string]bool{"GET": true, "POST": true}
 
 	login := loginSpec{path: *loginPath, kind: *loginType, userField: *loginUser, passField: *loginPass}
@@ -81,7 +81,7 @@ func main() {
 
 	h := &probes.Hunt{
 		Base: *url, Egress: egress, Sessions: httpTool.Sessions,
-		Priv: privID, Low: lowID, Anon: &gored.Identity{Name: "anon", Session: "anon"},
+		Priv: privID, Low: lowID, Anon: &core.Identity{Name: "anon", Session: "anon"},
 		Audit: audit, Start: *start, SeedPaths: readSeedURLs(*seedURLs),
 		SpecPaths: readSpec(*openapi, egress),
 	}
@@ -101,7 +101,7 @@ func main() {
 	}
 
 	if *seed {
-		h.Seeder = &gored.CanarySeeder{
+		h.Seeder = &core.CanarySeeder{
 			Base: *url, Egress: egress, Sessions: httpTool.Sessions, Priv: privID, Model: h.Model, Audit: audit,
 		}
 	}
@@ -177,7 +177,7 @@ func (s loginSpec) body(user, pass string) (string, string) {
 
 // mustIdentity builds an identity from either creds (and logs it in so its cookie
 // jar is live) or a static header. One of creds/header must be set.
-func mustIdentity(ctx context.Context, tool *gored.HTTPRequestTool, name, creds, header string, login loginSpec) gored.Identity {
+func mustIdentity(ctx context.Context, tool *core.HTTPRequestTool, name, creds, header string, login loginSpec) core.Identity {
 	switch {
 	case creds != "":
 		user, pass, ok := strings.Cut(creds, ":")
@@ -192,16 +192,16 @@ func mustIdentity(ctx context.Context, tool *gored.HTTPRequestTool, name, creds,
 		if err != nil || !strings.Contains(out, "HTTP 200") {
 			log.Fatalf("login %s failed: %v\n%s", name, err, out)
 		}
-		return gored.Identity{Name: name, Session: name, LoginPath: login.path, LoginBody: body, LoginContentType: ct}
+		return core.Identity{Name: name, Session: name, LoginPath: login.path, LoginBody: body, LoginContentType: ct}
 	case header != "":
 		k, v, ok := strings.Cut(header, ":")
 		if !ok {
 			log.Fatalf("-%s-header must be 'Name: value'", name)
 		}
-		return gored.Identity{Name: name, Session: name, Headers: map[string]string{strings.TrimSpace(k): strings.TrimSpace(v)}}
+		return core.Identity{Name: name, Session: name, Headers: map[string]string{strings.TrimSpace(k): strings.TrimSpace(v)}}
 	default:
 		log.Fatalf("give -%s <email:password> or -%s-header 'Name: value'", name, name)
-		return gored.Identity{}
+		return core.Identity{}
 	}
 }
 
@@ -266,7 +266,7 @@ func readSeedURLs(path string) []string {
 
 // readSpec loads an OpenAPI/Swagger spec from a file or http URL (URL fetches go
 // through the egress gate) and parses its routes.
-func readSpec(src string, egress *gored.Egress) []gored.APIPath {
+func readSpec(src string, egress *core.Egress) []core.APIPath {
 	if src == "" {
 		return nil
 	}
@@ -288,7 +288,7 @@ func readSpec(src string, egress *gored.Egress) []gored.APIPath {
 	if err != nil {
 		log.Fatalf("read -openapi %s: %v", src, err)
 	}
-	paths, err := gored.PathsFromOpenAPI(data)
+	paths, err := core.PathsFromOpenAPI(data)
 	if err != nil {
 		log.Fatalf("-openapi: %v", err)
 	}

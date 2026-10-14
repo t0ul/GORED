@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	probes "github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 )
@@ -13,9 +13,9 @@ func aliceProbe(t *testing.T, base string) *probes.MassAssignProbe {
 	t.Helper()
 	return &probes.MassAssignProbe{
 		Base:     base,
-		Egress:   gored.NewEgress(authority(t, base)),
-		Sessions: gored.NewSessions(),
-		Low:      gored.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Egress:   core.NewEgress(authority(t, base)),
+		Sessions: core.NewSessions(),
+		Low:      core.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
 	}
 }
 
@@ -34,7 +34,7 @@ func TestMassAssignVulnerableHonorsRole(t *testing.T) {
 	if f.Field != "role" {
 		t.Errorf("want honored field role, got %q", f.Field)
 	}
-	if f.Confidence != gored.ConfCertain {
+	if f.Confidence != core.ConfCertain {
 		t.Errorf("read-back confirmed persistence, want certain, got %q", f.Confidence)
 	}
 	if f.WasValue != "user" || f.SentValue != "admin" {
@@ -73,8 +73,8 @@ func TestMassAssignUpdatesStillWork(t *testing.T) {
 	}
 	base := serveTarget(t, s)
 	p := &probes.MassAssignProbe{
-		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
-		Low:    gored.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Base: base, Egress: core.NewEgress(authority(t, base)), Sessions: core.NewSessions(),
+		Low:    core.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
 		Fields: []probes.MassAssignField{{Name: "name", Value: "Alice Updated"}},
 	}
 	f, err := p.Probe(context.Background(), "PUT", "/api/profile", "/api/profile")

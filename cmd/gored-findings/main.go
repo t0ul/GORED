@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	validate "github.com/t0ul/GORED/internal/validate"
 )
 
@@ -33,16 +33,16 @@ func main() {
 		log.Fatal("need -db <findings sqlite path>")
 	}
 
-	src := gored.SQLFindingSource{DBPath: *dbPath, Table: *table, Where: *where}
+	src := core.SQLFindingSource{DBPath: *dbPath, Table: *table, Where: *where}
 	findings, err := src.Findings(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	// Optional whitebox analysis: pick an analyzer by detecting the source language.
-	var analyzer gored.SourceAnalyzer
+	var analyzer core.SourceAnalyzer
 	if *source != "" {
-		analyzer = gored.DetectAnalyzer(*source)
+		analyzer = core.DetectAnalyzer(*source)
 		if analyzer == nil {
 			log.Printf("note: -source %s: unsupported language (no analyzer); skipping whitebox rungs", *source)
 		}
@@ -51,7 +51,7 @@ func main() {
 	bySource, byApp, byCWE, byRung := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
 	reach, ruledOut, unknown := 0, 0, 0
 	kept := 0
-	keptFindings := make([]gored.ScannerFinding, 0, len(findings))
+	keptFindings := make([]core.ScannerFinding, 0, len(findings))
 	for _, f := range findings {
 		if *app != "" && f.App != *app {
 			continue
@@ -107,8 +107,8 @@ func main() {
 // printRuntime reports the container runtime: the misconfigurations GORED discovers in
 // the Dockerfile (the discover lane) and, for any runtime finding a scanner reported, the
 // rung it reaches when validated against the file (confirmed vs ruled-out).
-func printRuntime(dir string, findings []gored.ScannerFinding) {
-	ra := gored.DetectRuntimeAnalyzer(dir)
+func printRuntime(dir string, findings []core.ScannerFinding) {
+	ra := core.DetectRuntimeAnalyzer(dir)
 	if ra == nil {
 		fmt.Printf("\n==== runtime (%s) ====\nno runtime artifact found (no Dockerfile); skipping\n", dir)
 		return
@@ -121,7 +121,7 @@ func printRuntime(dir string, findings []gored.ScannerFinding) {
 	}
 	// Validate any runtime-shaped scanner findings (e.g. trivy config) against the file.
 	for _, f := range findings {
-		if rung, why := ra.Analyze(f); rung != gored.RungUnknown {
+		if rung, why := ra.Analyze(f); rung != core.RungUnknown {
 			fmt.Printf("  validate [%s] %s @ %s -> %s (%s)\n", f.Source, f.Title, f.Asset, rung, why)
 		}
 	}
@@ -130,7 +130,7 @@ func printRuntime(dir string, findings []gored.ScannerFinding) {
 // printCorrelated collapses the findings into ranked issues and prints them, showing how
 // many raw rows became how many issues — the triage reduction. When a source analyzer is
 // available each issue also shows the best (most advanced) static rung across its members.
-func printCorrelated(findings []gored.ScannerFinding, analyzer gored.SourceAnalyzer) {
+func printCorrelated(findings []core.ScannerFinding, analyzer core.SourceAnalyzer) {
 	issues := validate.Correlate(findings)
 	fmt.Printf("\n==== correlated issues (dedup + triage) ====\n")
 	fmt.Printf("%d findings -> %d issues\n\n", len(findings), len(issues))
@@ -161,13 +161,13 @@ func printCorrelated(findings []gored.ScannerFinding, analyzer gored.SourceAnaly
 // not-reachable verdict (ruled-out) outranks a bare "present" from a presence-only
 // scanner — determining reachability is strictly more information than noting presence,
 // so present + ruled-out on the same dependency is ruled-out, not present.
-func bestRung(c validate.CorrelatedIssue, analyzer gored.SourceAnalyzer) gored.Rung {
+func bestRung(c validate.CorrelatedIssue, analyzer core.SourceAnalyzer) core.Rung {
 	// RungAbsent and RungRuledOut share the string "ruled-out", so one key covers both.
-	order := map[gored.Rung]int{
-		gored.RungUnknown: 0, gored.RungPresent: 1,
-		gored.RungRuledOut: 2, gored.RungReachable: 3,
+	order := map[core.Rung]int{
+		core.RungUnknown: 0, core.RungPresent: 1,
+		core.RungRuledOut: 2, core.RungReachable: 3,
 	}
-	best := gored.RungUnknown
+	best := core.RungUnknown
 	for _, f := range c.Findings {
 		r, _ := analyzer.Analyze(f)
 		if order[r] > order[best] {

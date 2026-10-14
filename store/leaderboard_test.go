@@ -5,20 +5,20 @@ import (
 	"path/filepath"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/store"
 )
 
 // seed writes one finished run with the given shape to a real SQLite store.
 func seed(t *testing.T, st *store.Store, model, temp, diff, outcome string, toolCalls, wallMS int) {
 	t.Helper()
-	id, err := st.StartRun("trace", gored.RunMeta{
-		Model: model, SkillTemp: temp, Difficulty: gored.Difficulty(diff), FlagID: "f",
+	id, err := st.StartRun("trace", core.RunMeta{
+		Model: model, SkillTemp: temp, Difficulty: core.Difficulty(diff), FlagID: "f",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishRun(id, gored.RunStats{Outcome: outcome, ToolCalls: toolCalls, WallMS: int64(wallMS)}); err != nil {
+	if err := st.FinishRun(id, core.RunStats{Outcome: outcome, ToolCalls: toolCalls, WallMS: int64(wallMS)}); err != nil {
 		t.Fatal(err)
 	}
 }

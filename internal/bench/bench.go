@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
@@ -86,7 +86,7 @@ func (f *Flags) Register(fs *flag.FlagSet) {
 // accounting-wrapped client and its compute account (already registered with the sweep) and
 // the shared audit log it opened; the callback wires the toolbox, skill, playbook and oracle
 // and returns the Runner (set its Audit to the audit passed in so trace events are emitted).
-type MakeRunner func(model string, cl *gored.AccountingClient, acct *gored.ComputeAccount, rt gored.RunTarget, audit *gledger.AuditLog) (gored.Runnable, error)
+type MakeRunner func(model string, cl *core.AccountingClient, acct *core.ComputeAccount, rt core.RunTarget, audit *gledger.AuditLog) (core.Runnable, error)
 
 // Sweep is a configured bench run. The cmd fills the varying bits; Run does the scaffolding.
 type Sweep struct {
@@ -97,14 +97,14 @@ type Sweep struct {
 	// Contender identity. Name is composed as "<NamePrefix>(<model>) {<Label>}" — matching the
 	// stage-sweeps' literal "solo(...)" prefix — with Label the skill tag (e.g.
 	// "recon-fingerprint-xss"). NamePrefix defaults to "solo"; Shape is the Contender.Shape
-	// the leaderboard scores by (gored.ShapeSolo = "A-solo"), kept separate from the label.
+	// the leaderboard scores by (core.ShapeSolo = "A-solo"), kept separate from the label.
 	Label      string
 	NamePrefix string
-	Shape      gored.Shape
-	Temp       gored.SkillTemp
+	Shape      core.Shape
+	Temp       core.SkillTemp
 
 	Make   MakeRunner
-	Target func() (gored.RunTarget, error)
+	Target func() (core.RunTarget, error)
 
 	// Output labels.
 	Banner     string // printed above the table, e.g. "vulnapp recon->fingerprint->XSS"
@@ -114,7 +114,7 @@ type Sweep struct {
 	Note       string // leaderboard note
 
 	// OnTrial is called per trial; nil installs a default one-line logger.
-	OnTrial func(gored.SweepResult)
+	OnTrial func(core.SweepResult)
 	// StartMsg is logged once before the run; nil skips it.
 	StartMsg string
 }
@@ -122,7 +122,7 @@ type Sweep struct {
 // Run boots the needed local models, opens the audit, builds the contenders, runs the
 // sweep, prints the table, and writes the JSON/HTML outputs. It returns the results so a
 // caller can do more with them.
-func (s *Sweep) Run(ctx context.Context) ([]gored.SweepResult, error) {
+func (s *Sweep) Run(ctx context.Context) ([]core.SweepResult, error) {
 	f := s.Flags
 	reg := loadRegistry(f.Registry, f.Model)
 	models := splitCSV(f.Models)
@@ -164,49 +164,49 @@ func (s *Sweep) Run(ctx context.Context) ([]gored.SweepResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	clientFor := func(name string) (*gored.AccountingClient, *gored.ComputeAccount) {
+	clientFor := func(name string) (*core.AccountingClient, *core.ComputeAccount) {
 		sp, _ := reg.Resolve(name)
-		acct := gored.NewComputeAccount(sp)
-		var inner gored.ModelClient
+		acct := core.NewComputeAccount(sp)
+		var inner core.ModelClient
 		if sp.Local() {
 			inner = modelclient.New(urls[name], sp.ModelID())
 		} else {
 			inner = modelclient.FromSpec(sp)
 		}
-		return gored.NewAccountingClient(inner, acct), acct
+		return core.NewAccountingClient(inner, acct), acct
 	}
 
 	shape := s.Shape
 	if shape == "" {
-		shape = gored.ShapeSolo
+		shape = core.ShapeSolo
 	}
 	prefix := s.NamePrefix
 	if prefix == "" {
 		prefix = "solo"
 	}
-	var contenders []gored.Contender
+	var contenders []core.Contender
 	for _, m := range models {
 		model := m
-		contenders = append(contenders, gored.Contender{
+		contenders = append(contenders, core.Contender{
 			Name: fmt.Sprintf("%s(%s) {%s}", prefix, model, s.Label), Shape: shape, Temp: s.Temp,
-			Build: func(rt gored.RunTarget) (gored.Runnable, []*gored.ComputeAccount, error) {
+			Build: func(rt core.RunTarget) (core.Runnable, []*core.ComputeAccount, error) {
 				cl, acct := clientFor(model)
 				runnable, berr := s.Make(model, cl, acct, rt, audit)
 				if berr != nil {
 					return nil, nil, berr
 				}
-				return runnable, []*gored.ComputeAccount{acct}, nil
+				return runnable, []*core.ComputeAccount{acct}, nil
 			},
 		})
 	}
 
 	onTrial := s.OnTrial
 	if onTrial == nil {
-		onTrial = func(r gored.SweepResult) {
+		onTrial = func(r core.SweepResult) {
 			log.Printf("  %-40s trial %d: %-8s via=%s tools=%d tokens=%d", r.Contender, r.Trial, r.Outcome, r.CapturedVia, r.ToolCalls, r.TokensIn+r.TokensOut)
 		}
 	}
-	sweep := &gored.Sweep{
+	sweep := &core.Sweep{
 		Contenders: contenders, Target: s.Target, FlagID: s.FlagID,
 		Goal: s.Goal, Trials: f.Trials, Audit: audit, OnTrial: onTrial,
 	}
@@ -218,8 +218,8 @@ func (s *Sweep) Run(ctx context.Context) ([]gored.SweepResult, error) {
 		return nil, err
 	}
 
-	sums := gored.Summarize(results)
-	fmt.Printf("\n==== %s ====\n%s", s.Banner, gored.Table(sums))
+	sums := core.Summarize(results)
+	fmt.Printf("\n==== %s ====\n%s", s.Banner, core.Table(sums))
 	fmt.Printf("trace: %s\n", f.Trace)
 	if f.JSONOut != "" {
 		b, _ := json.MarshalIndent(map[string]any{"summary": sums, "results": results}, "", "  ")
@@ -238,24 +238,24 @@ func (s *Sweep) Run(ctx context.Context) ([]gored.SweepResult, error) {
 }
 
 // Bounds builds the per-trial bounds from the flags.
-func (f *Flags) Bounds() gored.Bounds {
-	return gored.Bounds{MaxSteps: f.MaxSteps, Wall: f.Wall, MaxOutTokens: f.MaxOut}
+func (f *Flags) Bounds() core.Bounds {
+	return core.Bounds{MaxSteps: f.MaxSteps, Wall: f.Wall, MaxOutTokens: f.MaxOut}
 }
 
 // --- registry/model helpers (shared, previously copy-pasted per sweep) ---
 
-func loadRegistry(path, def string) *gored.ModelRegistry {
+func loadRegistry(path, def string) *core.ModelRegistry {
 	if path != "" {
-		reg, err := gored.LoadRegistry(path)
+		reg, err := core.LoadRegistry(path)
 		if err != nil {
 			log.Fatal(err)
 		}
 		return reg
 	}
-	return gored.NewModelRegistry([]gored.ModelSpec{{Name: strings.TrimSuffix(filepath.Base(def), ".gguf"), GGUF: def, ParamsB: 3}})
+	return core.NewModelRegistry([]core.ModelSpec{{Name: strings.TrimSuffix(filepath.Base(def), ".gguf"), GGUF: def, ParamsB: 3}})
 }
 
-func specFile(s gored.ModelSpec, fb string) string {
+func specFile(s core.ModelSpec, fb string) string {
 	if s.GGUF != "" {
 		return s.GGUF
 	}

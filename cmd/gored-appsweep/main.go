@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/internal/bench"
 	"github.com/t0ul/GORED/internal/brig"
 	"github.com/t0ul/GORED/internal/tools"
@@ -39,11 +39,11 @@ type stage struct {
 	targetName string
 	flag       string
 	note       string
-	skill      gored.Skill
-	phases     func() []gored.Phase
+	skill      core.Skill
+	phases     func() []core.Phase
 	detect     func(toolResult string) (bool, string)
 	// buildTools wires the stage's toolbox over a gate bound to the target.
-	buildTools func(gate *tools.Gate, base string) *gored.Toolbox
+	buildTools func(gate *tools.Gate, base string) *core.Toolbox
 }
 
 // stages is the registry the -stage flag selects from.
@@ -76,29 +76,29 @@ func main() {
 		Flags:  f,
 		Goal:   st.goal,
 		FlagID: "n/a",
-		Label:  st.label, Shape: gored.ShapeSolo, Temp: gored.SkillCold,
+		Label:  st.label, Shape: core.ShapeSolo, Temp: core.SkillCold,
 		Banner:     st.banner,
 		Title:      st.title,
 		TargetName: st.targetName,
 		Flag:       st.flag,
 		Note:       st.note,
 		StartMsg:   fmt.Sprintf("appsweep -stage %s vs %s, %d trials", *stageF, f.Base, f.Trials),
-		Target: func() (gored.RunTarget, error) {
+		Target: func() (core.RunTarget, error) {
 			if f.Ensure {
 				if err := ensureVulnapp(bc, f.Base); err != nil {
-					return gored.RunTarget{}, err
+					return core.RunTarget{}, err
 				}
 			}
-			return gored.RunTarget{Target: externalTarget{name: f.Base}, BaseURL: f.Base, Close: func() {}}, nil
+			return core.RunTarget{Target: externalTarget{name: f.Base}, BaseURL: f.Base, Close: func() {}}, nil
 		},
-		Make: func(model string, cl *gored.AccountingClient, acct *gored.ComputeAccount, rt gored.RunTarget, audit *gledger.AuditLog) (gored.Runnable, error) {
+		Make: func(model string, cl *core.AccountingClient, acct *core.ComputeAccount, rt core.RunTarget, audit *gledger.AuditLog) (core.Runnable, error) {
 			tr := brig.Transport{Bridge: f.Bridge, TraceID: *stageF}
 			gate := tools.NewGate(tr, tools.NewEgress(egressAuthority(f.Base)), func(u string) {
 				log.Printf("  egress denied (off-target host blocked): %s", u)
 			})
-			return &gored.Runner{
+			return &core.Runner{
 				Model: cl, Tools: st.buildTools(gate, f.Base), Skill: st.skill, Target: rt.Target,
-				Board: gored.NewUnscrubbedBlackboard(), Audit: audit, Bounds: f.Bounds(),
+				Board: core.NewUnscrubbedBlackboard(), Audit: audit, Bounds: f.Bounds(),
 				Detector: st.detect, Phases: st.phases(), CanaryURL: canaryBeacon,
 			}, nil
 		},
@@ -137,8 +137,8 @@ func egressAuthority(base string) string {
 
 type externalTarget struct{ name string }
 
-func (e externalTarget) Manifest() gored.Manifest { return gored.Manifest{Name: e.name} }
-func (externalTarget) Status() []gored.FlagStatus { return nil }
+func (e externalTarget) Manifest() core.Manifest { return core.Manifest{Name: e.name} }
+func (externalTarget) Status() []core.FlagStatus { return nil }
 
 // ensureVulnapp makes sure the vulnapp container answers on the guest loopback before a
 // trial. Stateless stages (XSS, recon) have no scoreboard to reset, so it only (re)launches

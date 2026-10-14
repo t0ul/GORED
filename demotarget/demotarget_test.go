@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 )
 
 // newLive starts the real demo target over a real TCP listener (httptest), so the
@@ -114,7 +114,7 @@ func TestOracleStatusEndpointHidesSecrets(t *testing.T) {
 		t.Fatalf("status endpoint %d", code)
 	}
 	var out struct {
-		Flags []gored.FlagStatus `json:"flags"`
+		Flags []core.FlagStatus `json:"flags"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestManifestMatchesTrackedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := gored.LoadManifest("demo.target.json")
+	m, err := core.LoadManifest("demo.target.json")
 	if err != nil {
 		t.Fatal(err)
 	}

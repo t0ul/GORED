@@ -1,4 +1,4 @@
-// Package modelclient is a concrete gored.ModelClient that speaks the
+// Package modelclient is a concrete core.ModelClient that speaks the
 // OpenAI-compatible chat-completions API a local OSS model exposes via goserve.
 // Keeping it out of the root package keeps the runtime model-agnostic.
 package modelclient
@@ -12,7 +12,7 @@ import (
 	"net/http"
 	"time"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 )
 
 // OpenAI is a minimal client for a /v1/chat/completions endpoint.
@@ -32,14 +32,14 @@ func (c *OpenAI) Name() string { return c.Model }
 
 type chatReq struct {
 	Model       string          `json:"model"`
-	Messages    []gored.Message `json:"messages"`
+	Messages    []core.Message `json:"messages"`
 	Temperature float64         `json:"temperature"`
 	MaxTokens   int             `json:"max_tokens,omitempty"`
 }
 
 type chatResp struct {
 	Choices []struct {
-		Message gored.Message `json:"message"`
+		Message core.Message `json:"message"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -47,7 +47,7 @@ type chatResp struct {
 	} `json:"usage"`
 }
 
-func (c *OpenAI) Chat(ctx context.Context, msgs []gored.Message, opts gored.ChatOpts) (string, gored.Usage, error) {
+func (c *OpenAI) Chat(ctx context.Context, msgs []core.Message, opts core.ChatOpts) (string, core.Usage, error) {
 	body, _ := json.Marshal(chatReq{
 		Model:       c.Model,
 		Messages:    msgs,
@@ -56,26 +56,26 @@ func (c *OpenAI) Chat(ctx context.Context, msgs []gored.Message, opts gored.Chat
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.ChatURL, bytes.NewReader(body))
 	if err != nil {
-		return "", gored.Usage{}, err
+		return "", core.Usage{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", gored.Usage{}, err
+		return "", core.Usage{}, err
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", gored.Usage{}, fmt.Errorf("modelclient: %s: HTTP %d: %s", c.ChatURL, resp.StatusCode, truncate(string(data), 300))
+		return "", core.Usage{}, fmt.Errorf("modelclient: %s: HTTP %d: %s", c.ChatURL, resp.StatusCode, truncate(string(data), 300))
 	}
 	var out chatResp
 	if err := json.Unmarshal(data, &out); err != nil {
-		return "", gored.Usage{}, fmt.Errorf("modelclient: decode: %w", err)
+		return "", core.Usage{}, fmt.Errorf("modelclient: decode: %w", err)
 	}
 	if len(out.Choices) == 0 {
-		return "", gored.Usage{}, fmt.Errorf("modelclient: no choices")
+		return "", core.Usage{}, fmt.Errorf("modelclient: no choices")
 	}
-	u := gored.Usage{PromptTokens: out.Usage.PromptTokens, CompletionTokens: out.Usage.CompletionTokens}
+	u := core.Usage{PromptTokens: out.Usage.PromptTokens, CompletionTokens: out.Usage.CompletionTokens}
 	return out.Choices[0].Message.Content, u, nil
 }
 

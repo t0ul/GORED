@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	validate "github.com/t0ul/GORED/internal/validate"
 	probes "github.com/t0ul/GORED/internal/probes"
 )
@@ -20,7 +20,7 @@ EXPOSE 8080
 CMD ["/app/server"]
 `
 
-func issueByRule(issues []gored.ContainerIssue, rule string) *gored.ContainerIssue {
+func issueByRule(issues []core.ContainerIssue, rule string) *core.ContainerIssue {
 	for i := range issues {
 		if issues[i].Rule == rule {
 			return &issues[i]
@@ -29,7 +29,7 @@ func issueByRule(issues []gored.ContainerIssue, rule string) *gored.ContainerIss
 	return nil
 }
 
-func findVerdict(vs []gored.Verdict, app, locus string) *gored.Verdict {
+func findVerdict(vs []core.Verdict, app, locus string) *core.Verdict {
 	for i := range vs {
 		if vs[i].App == app && vs[i].Locus == locus {
 			return &vs[i]
@@ -62,19 +62,19 @@ func TestValidatorLiveCapstone(t *testing.T) {
 	if !ok1 || !ok2 || !jp.Exploitable || !mp.Exploitable {
 		t.Fatalf("both probes should yield exploitable proofs; jwt=%+v mass=%+v", jp, mp)
 	}
-	cissues := gored.AnalyzeDockerfile([]byte(vulnDockerfile))
+	cissues := core.AnalyzeDockerfile([]byte(vulnDockerfile))
 	cp := validate.ProofFromContainerIssue(*issueByRule(cissues, "runs-as-root"), "demo")
 
 	// A representative scanner claim on the same route GORED proved exploitable.
-	scanners := []gored.ScannerFinding{{Source: "Semgrep", App: "demo", Location: "/api/profile", Severity: "Medium", CWE: "CWE-862", Title: "missing authorization"}}
+	scanners := []core.ScannerFinding{{Source: "Semgrep", App: "demo", Location: "/api/profile", Severity: "Medium", CWE: "CWE-862", Title: "missing authorization"}}
 
-	vs := (&validate.Validator{}).Validate(scanners, []gored.Proof{jp, mp, cp})
+	vs := (&validate.Validator{}).Validate(scanners, []core.Proof{jp, mp, cp})
 
 	prof := findVerdict(vs, "demo", "/api/profile")
 	if prof == nil || !prof.Exploitable || prof.Repro == "" || len(prof.Chain) == 0 {
 		t.Fatalf("fused /api/profile verdict should be exploitable, have a repro and the host chain; got %+v", prof)
 	}
-	if vs[0].Rung != gored.LadderExploitable {
+	if vs[0].Rung != core.LadderExploitable {
 		t.Errorf("a confirmed-exploitable verdict must rank first, got %s", vs[0].Rung)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	probes "github.com/t0ul/GORED/internal/probes"
 )
 
@@ -19,10 +19,10 @@ func TestHuntOnDemotargetGeneric(t *testing.T) {
 	_, base := liveTarget(t)
 
 	h := &probes.Hunt{
-		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
-		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
-		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
-		Anon: &gored.Identity{Name: "anon"},
+		Base: base, Egress: core.NewEgress(authority(t, base)), Sessions: core.NewSessions(),
+		Priv: core.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
+		Low:  core.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Anon: &core.Identity{Name: "anon"},
 		// Model nil: the model-dependent confirmation is exercised live; here we prove
 		// the generic discover+differential pipeline runs on a second app.
 	}
@@ -73,10 +73,10 @@ func contains(ss []string, want string) bool {
 func TestHuntMergesSeedPaths(t *testing.T) {
 	_, base := liveTarget(t)
 	h := &probes.Hunt{
-		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
-		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
-		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
-		Anon: &gored.Identity{Name: "anon"},
+		Base: base, Egress: core.NewEgress(authority(t, base)), Sessions: core.NewSessions(),
+		Priv: core.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
+		Low:  core.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
+		Anon: &core.Identity{Name: "anon"},
 		SeedPaths: []string{
 			base + "/api/spa-route",      // full same-origin URL from a crawler
 			"/api/xhr-endpoint",          // a bare path

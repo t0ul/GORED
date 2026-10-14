@@ -18,7 +18,7 @@ import (
 	"os"
 	"strings"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	validate "github.com/t0ul/GORED/internal/validate"
 	"github.com/t0ul/GORED/internal/probes"
 )
@@ -40,12 +40,12 @@ func main() {
 		log.Fatal("need -db <findings sqlite path>")
 	}
 
-	src := gored.SQLFindingSource{DBPath: *dbPath, Table: *table, Where: *where}
+	src := core.SQLFindingSource{DBPath: *dbPath, Table: *table, Where: *where}
 	findings, err := src.Findings(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
-	scanners := make([]gored.ScannerFinding, 0, len(findings))
+	scanners := make([]core.ScannerFinding, 0, len(findings))
 	for _, f := range findings {
 		if *app == "" || f.App == *app {
 			scanners = append(scanners, f)
@@ -54,12 +54,12 @@ func main() {
 
 	v := &validate.Validator{}
 	if *source != "" {
-		if a := gored.DetectAnalyzer(*source); a != nil {
+		if a := core.DetectAnalyzer(*source); a != nil {
 			v.Analyzer = a
 		} else {
 			log.Printf("note: -source %s: unsupported language; scanner issues rest on reachability", *source)
 		}
-		v.Runtime = gored.DetectRuntimeAnalyzer(*source) // rates any Dockerfile findings
+		v.Runtime = core.DetectRuntimeAnalyzer(*source) // rates any Dockerfile findings
 	}
 
 	proofs := huntProofs(*huntP, *app)
@@ -100,7 +100,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		s := ruler.Score(verdicts, gored.Ladder(*minR))
+		s := ruler.Score(verdicts, core.Ladder(*minR))
 		fmt.Printf("\n==== scored against %s (ruler: %s) ====\n", ruler.App, *rulerP)
 		fmt.Printf("recall: %.0f%% (%d/%d real bugs flagged)   precision: %.0f%% (%d false positive(s))\n",
 			100*s.Recall, s.TPFound, s.TPTotal, 100*s.Precision, s.FP)
@@ -117,7 +117,7 @@ func main() {
 }
 
 // huntProofs loads a gored-hunt report and turns each access-control finding into a proof.
-func huntProofs(path, app string) []gored.Proof {
+func huntProofs(path, app string) []core.Proof {
 	if path == "" {
 		return nil
 	}
@@ -133,7 +133,7 @@ func huntProofs(path, app string) []gored.Proof {
 	if name == "" {
 		name = rep.Target
 	}
-	var proofs []gored.Proof
+	var proofs []core.Proof
 	for _, f := range rep.Findings {
 		if p, ok := probes.ProofFromHunt(f, name); ok {
 			proofs = append(proofs, p)

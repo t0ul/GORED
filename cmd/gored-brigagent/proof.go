@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/gobrig"
 )
 
@@ -13,7 +13,7 @@ import (
 // misconfigured container, a second proof records the privileged/root container
 // (CWE-250); the Validator fuses the two on the same app into a host-compromise chain on
 // the exploitable verdict. Everything here is proven by canary, so the rungs are earned.
-func buildProofs(app, base string, f gobrig.RCEFinding, rceConfirmed, escapeConfirmed bool) []gored.Proof {
+func buildProofs(app, base string, f gobrig.RCEFinding, rceConfirmed, escapeConfirmed bool) []core.Proof {
 	if !f.Confirmed || !rceConfirmed {
 		if !escapeConfirmed {
 			return nil
@@ -21,11 +21,11 @@ func buildProofs(app, base string, f gobrig.RCEFinding, rceConfirmed, escapeConf
 	}
 	rceRepro := f.Exploit(base, "cat /flag-in-container") + "  (read the in-container canary)"
 	escRepro := f.Exploit(base, "cat /host/root/brig-canary") + "  (read a host-only canary from inside the container)"
-	return gored.EscapeProofs(app, f.Endpoint, rceRepro, escRepro, "gored-brigagent", escapeConfirmed)
+	return core.EscapeProofs(app, f.Endpoint, rceRepro, escRepro, "gored-brigagent", escapeConfirmed)
 }
 
 // summarize renders the verdicts for the agent's report.
-func summarize(verdicts []gored.Verdict) string {
+func summarize(verdicts []core.Verdict) string {
 	out := ""
 	for _, v := range verdicts {
 		mark := ""

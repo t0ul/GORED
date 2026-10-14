@@ -3,7 +3,7 @@ package validate_test
 import (
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	validate "github.com/t0ul/GORED/internal/validate"
 )
 
@@ -19,14 +19,14 @@ func TestRulerScore(t *testing.T) {
 		{App: "rr", Locus: "golang.org/x/crypto", Class: "sca", Label: validate.LabelFalsePositive},
 	}}
 
-	verdicts := []gored.Verdict{
-		{App: "rr", Locus: "/api/tickets", Rung: gored.LadderExploitable},  // TP, confirmed
-		{App: "rr", Locus: "/api/admin", Rung: gored.LadderReported},       // known-good, only reported -> not flagged (good)
-		{App: "rr", Locus: "golang.org/x/crypto", Rung: gored.LadderReachable}, // fp flagged -> false positive
+	verdicts := []core.Verdict{
+		{App: "rr", Locus: "/api/tickets", Rung: core.LadderExploitable},  // TP, confirmed
+		{App: "rr", Locus: "/api/admin", Rung: core.LadderReported},       // known-good, only reported -> not flagged (good)
+		{App: "rr", Locus: "golang.org/x/crypto", Rung: core.LadderReachable}, // fp flagged -> false positive
 		// /api/drafts/report/{id} absent -> a miss
 	}
 
-	s := ruler.Score(verdicts, gored.LadderReachable)
+	s := ruler.Score(verdicts, core.LadderReachable)
 
 	if s.TPTotal != 2 || s.TPFound != 1 || s.FN != 1 {
 		t.Errorf("want 2 TP / 1 found / 1 missed, got %+v", s)
@@ -51,8 +51,8 @@ func TestRulerLocusNormalization(t *testing.T) {
 	ruler := &validate.Ruler{Entries: []validate.RulerEntry{
 		{App: "rr", Locus: "/api/drafts/report/{id}", Label: validate.LabelTruePositive},
 	}}
-	verdicts := []gored.Verdict{{App: "rr", Locus: "/api/drafts/report/5", Rung: gored.LadderTriggerable}}
-	s := ruler.Score(verdicts, gored.LadderReachable)
+	verdicts := []core.Verdict{{App: "rr", Locus: "/api/drafts/report/5", Rung: core.LadderTriggerable}}
+	s := ruler.Score(verdicts, core.LadderReachable)
 	if s.TPFound != 1 {
 		t.Errorf("an instance route should match the {id} ruler entry, got %+v", s)
 	}

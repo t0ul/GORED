@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/demotarget"
 	"github.com/t0ul/GORED/modelclient"
 	"github.com/t0ul/GORED/store"
@@ -41,12 +41,12 @@ func main() {
 	flag.Parse()
 
 	ctx := context.Background()
-	spec := gored.MatrixSpec{
+	spec := core.MatrixSpec{
 		Models:  split(*modelsF),
 		Temps:   temps(*tempsF),
 		FlagIDs: split(*flagsF),
 		Trials:  *trials,
-		Bounds:  gored.Bounds{MaxSteps: *steps, Wall: 120 * time.Second},
+		Bounds:  core.Bounds{MaxSteps: *steps, Wall: 120 * time.Second},
 	}
 
 	audit, err := gledger.Open(*traceP, "gored")
@@ -57,13 +57,13 @@ func main() {
 
 	done := 0
 	total := len(spec.Cells())
-	mx := &gored.Matrix{
+	mx := &core.Matrix{
 		Spec:   spec,
 		Model:  gooseProvider(*modelDir, *port),
 		Target: targetProvider,
 		Store:  st,
 		Audit:  audit,
-		OnCell: func(c gored.Cell, res gored.RunResult) {
+		OnCell: func(c core.Cell, res core.RunResult) {
 			done++
 			log.Printf("[%d/%d] %-26s %-4s %-14s trial %d -> %-8s (%d calls, %dms)",
 				done, total, c.Model, c.Temp, c.Flag, c.Trial, res.Outcome, res.ToolCalls, res.WallMS)
@@ -85,8 +85,8 @@ func main() {
 //
 //	planexec:<plannerFile>:<executorFile>   two models, planner plans / executor formats
 //	selfcons:<file>:<K>                     one model, majority vote over K samples
-func gooseProvider(dir string, port int) gored.ModelProvider {
-	return func(ctx context.Context, spec string) (gored.ModelClient, func(), error) {
+func gooseProvider(dir string, port int) core.ModelProvider {
+	return func(ctx context.Context, spec string) (core.ModelClient, func(), error) {
 		parts := strings.Split(spec, ":")
 		bootCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 		boot := func(models []goserve.Model) (*goserve.Harness, error) {
@@ -106,7 +106,7 @@ func gooseProvider(dir string, port int) gored.ModelProvider {
 				cancel()
 				return nil, nil, err
 			}
-			client := gored.NewPlannerExecutor(
+			client := core.NewPlannerExecutor(
 				modelclient.New(h.ChatURL("planner"), modelName(parts[1])),
 				modelclient.New(h.ChatURL("executor"), modelName(parts[2])),
 			)
@@ -123,7 +123,7 @@ func gooseProvider(dir string, port int) gored.ModelProvider {
 				cancel()
 				return nil, nil, err
 			}
-			client := gored.NewSelfConsistency(modelclient.New(h.ChatURL("attacker"), modelName(parts[1])), k, 0.7)
+			client := core.NewSelfConsistency(modelclient.New(h.ChatURL("attacker"), modelName(parts[1])), k, 0.7)
 			return client, func() { h.Close(); cancel() }, nil
 
 		default: // solo
@@ -138,18 +138,18 @@ func gooseProvider(dir string, port int) gored.ModelProvider {
 	}
 }
 
-func targetProvider() (gored.RunTarget, error) {
+func targetProvider() (core.RunTarget, error) {
 	s, err := demotarget.New()
 	if err != nil {
-		return gored.RunTarget{}, err
+		return core.RunTarget{}, err
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return gored.RunTarget{}, err
+		return core.RunTarget{}, err
 	}
 	srv := &http.Server{Handler: s.Handler()}
 	go func() { _ = srv.Serve(ln) }()
-	return gored.RunTarget{
+	return core.RunTarget{
 		Target:  s,
 		BaseURL: "http://" + ln.Addr().String(),
 		Close:   func() { _ = srv.Close() },
@@ -212,10 +212,10 @@ func split(s string) []string {
 	return out
 }
 
-func temps(s string) []gored.SkillTemp {
-	var out []gored.SkillTemp
+func temps(s string) []core.SkillTemp {
+	var out []core.SkillTemp
 	for _, p := range split(s) {
-		out = append(out, gored.SkillTemp(p))
+		out = append(out, core.SkillTemp(p))
 	}
 	return out
 }

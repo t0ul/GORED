@@ -12,7 +12,7 @@ import (
 	"log"
 	"os"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/internal/report"
 )
 
@@ -44,13 +44,13 @@ func main() {
 
 // parseVerdicts accepts either a bare array or an object that wraps the array under a
 // "verdicts" key (what gored-validate -json emits), so either output feeds the report.
-func parseVerdicts(b []byte) ([]gored.Verdict, error) {
-	var arr []gored.Verdict
+func parseVerdicts(b []byte) ([]core.Verdict, error) {
+	var arr []core.Verdict
 	if json.Unmarshal(b, &arr) == nil && len(arr) > 0 {
 		return arr, nil
 	}
 	var wrap struct {
-		Verdicts []gored.Verdict `json:"verdicts"`
+		Verdicts []core.Verdict `json:"verdicts"`
 	}
 	if err := json.Unmarshal(b, &wrap); err != nil {
 		return nil, err

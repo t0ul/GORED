@@ -3,7 +3,7 @@ package validate_test
 import (
 	"testing"
 
-	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/core"
 	validate "github.com/t0ul/GORED/internal/validate"
 )
 
@@ -14,7 +14,7 @@ import (
 // issue, and two rules at one file:line fold to one file issue — each keeping its sources.
 func TestCorrelate(t *testing.T) {
 	yes, no := true, false
-	findings := []gored.ScannerFinding{
+	findings := []core.ScannerFinding{
 		// The money shot: Trivy says present (unknown reachability), govulncheck ruled it
 		// not-reachable. Same app, same module -> one issue, ruled-out, both sources.
 		{Source: "Trivy", App: "riskrancher", Location: "golang.org/x/crypto", Severity: "UNKNOWN", Title: "GO-2026-5932"},
@@ -117,7 +117,7 @@ func TestLocusClassification(t *testing.T) {
 		{"src/app.ts", "a:src/app.ts", "file"},
 	}
 	for _, c := range cases {
-		issues := validate.Correlate([]gored.ScannerFinding{{App: "a", Location: c.loc, Severity: "Low"}})
+		issues := validate.Correlate([]core.ScannerFinding{{App: "a", Location: c.loc, Severity: "Low"}})
 		got := issues[0].App + ":" + issues[0].Locus
 		if got != c.want || issues[0].Kind != c.kind {
 			t.Errorf("loc %q: want %q/%s, got %q/%s", c.loc, c.want, c.kind, got, issues[0].Kind)
