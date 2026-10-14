@@ -1,4 +1,4 @@
-package gored_test
+package probes_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	probes "github.com/t0ul/GORED/internal/probes"
 )
 
 // TestHuntOnDemotargetGeneric runs the whole generic hunt pipeline (discover ->
@@ -17,7 +18,7 @@ import (
 func TestHuntOnDemotargetGeneric(t *testing.T) {
 	_, base := liveTarget(t)
 
-	h := &gored.Hunt{
+	h := &probes.Hunt{
 		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
 		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
 		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
@@ -34,7 +35,7 @@ func TestHuntOnDemotargetGeneric(t *testing.T) {
 		t.Fatalf("discovery did not map the memo surface: %v", rep.Discovered)
 	}
 
-	var memos *gored.HuntFinding
+	var memos *probes.HuntFinding
 	for i := range rep.Findings {
 		if rep.Findings[i].Path == "/api/memos/mine" {
 			t.Errorf("scoped control /api/memos/mine must not be a finding")
@@ -71,7 +72,7 @@ func contains(ss []string, want string) bool {
 // surface (closing the SPA-depth gap), while off-origin URLs are dropped.
 func TestHuntMergesSeedPaths(t *testing.T) {
 	_, base := liveTarget(t)
-	h := &gored.Hunt{
+	h := &probes.Hunt{
 		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
 		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
 		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},

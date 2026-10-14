@@ -19,6 +19,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 	"github.com/t0ul/GORED/modelclient"
 	"github.com/t0ul/GORED/store"
@@ -96,7 +97,7 @@ func main() {
 			http := httpTool(base, eg)
 			r := &gored.Runner{
 				Model: mk(), Skill: soloSkill(temp),
-				Tools:  gored.NewToolbox(gored.NewDiscoverTool(base, eg), http, gored.DiffTool{}),
+				Tools:  gored.NewToolbox(probes.NewDiscoverTool(base, eg), http, gored.DiffTool{}),
 				Target: tgt, Board: gored.NewBlackboard(), Audit: audit, Store: st,
 				Bounds: gored.Bounds{MaxSteps: 10, Wall: 150 * time.Second}, CanaryURL: canary,
 			}
@@ -108,7 +109,7 @@ func main() {
 			eg := gored.NewEgress(hostPort(base))
 			var reconTools *gored.Toolbox
 			if reconDiscover {
-				reconTools = gored.NewToolbox(gored.NewDiscoverTool(base, eg))
+				reconTools = gored.NewToolbox(probes.NewDiscoverTool(base, eg))
 			} else {
 				reconTools = gored.NewToolbox(roTool(base, eg)) // ablation: no discover
 			}

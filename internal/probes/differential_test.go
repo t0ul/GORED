@@ -1,4 +1,4 @@
-package gored_test
+package probes_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	probes "github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 )
 
@@ -26,7 +27,7 @@ func serveTarget(t *testing.T, s *demotarget.Server) string {
 func TestDifferentialOracleFlagsBACNotScoped(t *testing.T) {
 	_, base := liveTarget(t)
 
-	oracle := &gored.DifferentialOracle{
+	oracle := &probes.DifferentialOracle{
 		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
 		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
 		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
@@ -42,20 +43,20 @@ func TestDifferentialOracleFlagsBACNotScoped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	byPath := map[string]gored.DiffFinding{}
+	byPath := map[string]probes.DiffFinding{}
 	for _, f := range findings {
 		byPath[f.Path] = f
 	}
 
-	if got := byPath["/api/memos"]; got.Verdict != gored.VerdictBAC {
+	if got := byPath["/api/memos"]; got.Verdict != probes.VerdictBAC {
 		t.Errorf("/api/memos: want bac, got %q (%s)", got.Verdict, got.Evidence)
 	} else if got.Marker == "" {
 		t.Errorf("/api/memos flagged bac but carries no marker for the repro")
 	}
-	if got := byPath["/api/memos/mine"]; got.Verdict == gored.VerdictBAC {
+	if got := byPath["/api/memos/mine"]; got.Verdict == probes.VerdictBAC {
 		t.Errorf("/api/memos/mine: scoped control must NOT be flagged bac (%s)", got.Evidence)
 	}
-	if got := byPath["/"]; got.Verdict == gored.VerdictBAC {
+	if got := byPath["/"]; got.Verdict == probes.VerdictBAC {
 		t.Errorf("/: public page must NOT be flagged bac (%s)", got.Evidence)
 	}
 }
@@ -71,7 +72,7 @@ func TestDifferentialOracleHardenedClosesBAC(t *testing.T) {
 	}
 	base := serveTarget(t, s)
 
-	oracle := &gored.DifferentialOracle{
+	oracle := &probes.DifferentialOracle{
 		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
 		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
 		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
@@ -125,7 +126,7 @@ func TestDifferentialConfidenceRanksChromeLow(t *testing.T) {
 	ts := httptest.NewServer(confidenceFixture())
 	t.Cleanup(ts.Close)
 
-	oracle := &gored.DifferentialOracle{
+	oracle := &probes.DifferentialOracle{
 		Base: ts.URL, Egress: gored.NewEgress(authority(t, ts.URL)), Sessions: gored.NewSessions(),
 		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Id": "admin"}},
 		Low:  gored.Identity{Name: "user", Headers: map[string]string{"X-Id": "user"}},
@@ -174,7 +175,7 @@ func TestDifferentialCanaryCertain(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 
-	oracle := &gored.DifferentialOracle{
+	oracle := &probes.DifferentialOracle{
 		Base: ts.URL, Egress: gored.NewEgress(authority(t, ts.URL)), Sessions: gored.NewSessions(),
 		Priv:    gored.Identity{Name: "admin", Headers: map[string]string{"X-Id": "admin"}},
 		Low:     gored.Identity{Name: "user", Headers: map[string]string{"X-Id": "user"}},

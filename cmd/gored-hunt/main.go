@@ -31,6 +31,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
 	goserve "github.com/t0ul/goserve"
@@ -78,7 +79,7 @@ func main() {
 	audit, err := gledger.Open(*traceP, "gored")
 	must(err)
 
-	h := &gored.Hunt{
+	h := &probes.Hunt{
 		Base: *url, Egress: egress, Sessions: httpTool.Sessions,
 		Priv: privID, Low: lowID, Anon: &gored.Identity{Name: "anon", Session: "anon"},
 		Audit: audit, Start: *start, SeedPaths: readSeedURLs(*seedURLs),
@@ -115,7 +116,7 @@ func main() {
 	// fields on a write endpoint and read them back. Separate from the read-only hunt
 	// because it writes; it uses the same identity, egress gate, and cookie jar.
 	if *massAssign != "" {
-		p := &gored.MassAssignProbe{
+		p := &probes.MassAssignProbe{
 			Base: *url, Egress: egress, Sessions: httpTool.Sessions, Low: lowID,
 		}
 		f, err := p.Probe(ctx, *massMethod, *massAssign, *massRead)
@@ -125,9 +126,9 @@ func main() {
 
 	// Opt-in JWT probe: inspect a token the app issued and try to forge one it accepts.
 	if *jwtToken != "" {
-		p := &gored.JWTProbe{Base: *url, Egress: egress, Sessions: httpTool.Sessions, Low: lowID}
+		p := &probes.JWTProbe{Base: *url, Egress: egress, Sessions: httpTool.Sessions, Low: lowID}
 		if *jwtSource != "" {
-			p.Secrets = gored.HarvestSecrets(*jwtSource)
+			p.Secrets = probes.HarvestSecrets(*jwtSource)
 		}
 		f, err := p.Analyze(ctx, *jwtToken, *jwtVerify)
 		must(err)
@@ -135,7 +136,7 @@ func main() {
 	}
 }
 
-func printJWT(f gored.JWTFinding) {
+func printJWT(f probes.JWTFinding) {
 	fmt.Printf("\n==== JWT probe ====\n")
 	if !f.IsJWT {
 		fmt.Printf("not a JWT: %s\n", f.Evidence)
@@ -149,7 +150,7 @@ func printJWT(f gored.JWTFinding) {
 		f.CWE, f.Vector, f.Confidence, f.ReplayStatus, f.Evidence)
 }
 
-func printMassAssign(f gored.MassAssignFinding) {
+func printMassAssign(f probes.MassAssignFinding) {
 	fmt.Printf("\n==== mass-assignment probe: %s %s ====\n", f.Method, f.WritePath)
 	if !f.Flagged() {
 		fmt.Printf("not flagged — the endpoint ignored the privileged fields tried\n")
@@ -204,7 +205,7 @@ func mustIdentity(ctx context.Context, tool *gored.HTTPRequestTool, name, creds,
 	}
 }
 
-func writeReport(path string, rep gored.HuntReport) error {
+func writeReport(path string, rep probes.HuntReport) error {
 	b, err := json.MarshalIndent(rep, "", "  ")
 	if err != nil {
 		return err
@@ -224,7 +225,7 @@ func writeReport(path string, rep gored.HuntReport) error {
 	return nil
 }
 
-func printSummary(rep gored.HuntReport, outP, traceP string) {
+func printSummary(rep probes.HuntReport, outP, traceP string) {
 	fmt.Printf("\n==== gored-hunt: %s ====\n", rep.Target)
 	fmt.Printf("surface: %d testable resource(s) discovered\n", rep.SurfaceCount)
 	if len(rep.Findings) == 0 {

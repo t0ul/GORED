@@ -19,6 +19,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
@@ -71,7 +72,7 @@ func main() {
 	// Recon gets ONLY discover, so a weak recon model is forced to enumerate the
 	// surface rather than guess endpoints with http_request.
 	reconTools := gored.NewToolbox(
-		gored.NewDiscoverTool(base, egress),
+		probes.NewDiscoverTool(base, egress),
 	)
 	exploitTools := gored.NewToolbox(
 		httpWith(base, egress, "GET", "POST", "HEAD"),

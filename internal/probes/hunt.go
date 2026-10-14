@@ -1,6 +1,8 @@
-package gored
+package probes
 
 import (
+	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/ingest"
 	"context"
 	"fmt"
 	"sort"
@@ -16,7 +18,7 @@ type HuntFinding struct {
 	Path             string
 	CWE              string // "CWE-862" for broken access control / missing authorization
 	Verdict          BACVerdict
-	Confidence       Confidence // certain (canary) | high | medium | low (false-positive likelihood)
+	Confidence       gored.Confidence // certain (canary) | high | medium | low (false-positive likelihood)
 	ConfidenceReason string
 	Verified         bool   // a verifier ran for this finding
 	Confirmed        bool   // the model-written repro reproduced the disclosure
@@ -46,15 +48,15 @@ type HuntReport struct {
 // login path — so the same hunt runs against any local app.
 type Hunt struct {
 	Base     string
-	Egress   *Egress
-	Sessions *Sessions
-	Priv     Identity
-	Low      Identity
-	Anon     *Identity
-	Model    ModelClient       // optional; nil leaves findings UNVERIFIED
+	Egress   *gored.Egress
+	Sessions *gored.Sessions
+	Priv     gored.Identity
+	Low      gored.Identity
+	Anon     *gored.Identity
+	Model    gored.ModelClient       // optional; nil leaves findings UNVERIFIED
 	Audit    *gledger.AuditLog // optional replayable trace
 	Start    string            // discovery start path (default "/")
-	Seeder   *CanarySeeder     // optional (6c); when set, plants canaries first so a disclosed marker is a certain finding
+	Seeder   *gored.CanarySeeder     // optional (6c); when set, plants canaries first so a disclosed marker is a certain finding
 	// SeedPaths are extra same-origin paths/URLs to test, from an external crawler
 	// (an OWASP ZAP ajax-spider run, a sitemap, a browser). Static discovery misses
 	// routes a SPA builds in JS at runtime; feeding a real crawler's URLs here closes
@@ -63,7 +65,7 @@ type Hunt struct {
 	// SpecPaths are routes from an API spec (OpenAPI/Swagger). For an API-first app the
 	// spec is a more complete surface than crawling — collections join the resources,
 	// {id} paths join the templates the id-swap step tests.
-	SpecPaths []APIPath
+	SpecPaths []gored.APIPath
 }
 
 // Run discovers the surface, flags broken access control differentially, and
@@ -94,7 +96,7 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 		resources, seeded = mergeSeedPaths(resources, h.SeedPaths, h.Base)
 	}
 	if len(h.SpecPaths) > 0 {
-		resources, templates = mergeSpecPaths(resources, templates, h.SpecPaths)
+		resources, templates = ingest.MergeSpecPaths(resources, templates, h.SpecPaths)
 	}
 	rep.Discovered, rep.SurfaceCount = resources, len(resources)
 	h.emit(traceID, "hunt", "discovered", gledger.F{
@@ -162,7 +164,7 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 		}
 		if h.Model != nil && f.Marker != "" {
 			hf.Verified = true
-			v := Verifier{Model: h.Model, Base: h.Base, Marker: f.Marker, Facts: h.facts(f.Path)}
+			v := gored.Verifier{Model: h.Model, Base: h.Base, Marker: f.Marker, Facts: h.facts(f.Path)}
 			vr, verr := v.Verify(ctx)
 			if verr == nil && vr.Confirmed {
 				hf.Confirmed, hf.ReproGo = true, vr.Go

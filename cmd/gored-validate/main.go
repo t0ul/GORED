@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/probes"
 )
 
 func main() {
@@ -123,7 +124,7 @@ func huntProofs(path, app string) []gored.Proof {
 	if err != nil {
 		log.Fatalf("read -hunt %s: %v", path, err)
 	}
-	var rep gored.HuntReport
+	var rep probes.HuntReport
 	if err := json.Unmarshal(b, &rep); err != nil {
 		log.Fatalf("-hunt %s is not a gored-hunt report: %v", path, err)
 	}
@@ -133,7 +134,7 @@ func huntProofs(path, app string) []gored.Proof {
 	}
 	var proofs []gored.Proof
 	for _, f := range rep.Findings {
-		if p, ok := gored.ProofFromHunt(f, name); ok {
+		if p, ok := probes.ProofFromHunt(f, name); ok {
 			proofs = append(proofs, p)
 		}
 	}

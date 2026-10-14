@@ -18,6 +18,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/modelclient"
 	goserve "github.com/t0ul/goserve"
 )
@@ -34,7 +35,7 @@ func main() {
 
 	// 1. Enumerate the real surface (deterministic, read-only).
 	egress := gored.NewEgress(hostPort(*url))
-	disc := gored.NewDiscoverTool(*url, egress)
+	disc := probes.NewDiscoverTool(*url, egress)
 	out, err := disc.Call(ctx, map[string]any{"path": "/"})
 	must(err)
 	var paths []string

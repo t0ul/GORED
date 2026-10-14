@@ -1,6 +1,7 @@
-package gored
+package probes
 
 import (
+	gored "github.com/t0ul/GORED"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -151,7 +152,7 @@ type JWTFinding struct {
 	Vector       string         // "secret-in-source" | "weak-secret" | "alg-none" | "no-signature-check" | ""
 	Secret       string         // the cracked secret, for the repro (empty for alg-none)
 	Forged       string         // the forged token that was accepted
-	Confidence   Confidence     // certain (forged token accepted on replay) | high (forgeable, replay not confirmed)
+	Confidence   gored.Confidence     // certain (forged token accepted on replay) | high (forgeable, replay not confirmed)
 	CWE          string         // CWE-347 (improper verification of a cryptographic signature)
 	Evidence     string         //
 	ReplayStatus int            // the status the forged token got on the protected path
@@ -171,9 +172,9 @@ func (f JWTFinding) Flagged() bool { return f.Vector != "" }
 // token signed with a strong, non-source secret yields nothing — no false positive.
 type JWTProbe struct {
 	Base          string
-	Egress        *Egress
-	Sessions      *Sessions
-	Low           Identity
+	Egress        *gored.Egress
+	Sessions      *gored.Sessions
+	Low           gored.Identity
 	Secrets       []string // extra candidates (e.g. HarvestSecrets output); tried before the defaults
 	EscalateClaim string   // the claim to flip when forging (default "role")
 	EscalateValue any      // the value to set it to (default "admin")
@@ -214,16 +215,16 @@ func (p *JWTProbe) Analyze(ctx context.Context, token, verifyPath string) (JWTFi
 		// Vector 2: the verifier trusts the header's alg and accepts an unsigned token.
 		none := ForgeNone(escalated)
 		if st, _ := p.replay(ctx, verifyPath, none); ok2xx(st) {
-			f.Vector, f.Forged, f.Confidence, f.ReplayStatus = "alg-none", none, ConfCertain, st
+			f.Vector, f.Forged, f.Confidence, f.ReplayStatus = "alg-none", none, gored.ConfCertain, st
 			f.Evidence = fmt.Sprintf("an alg:none token with %s=%v was accepted (HTTP %d) — the verifier trusts the header alg", claim, val, st)
 			f.Request = map[string]any{"method": "GET", "path": verifyPath, "authorization": "Bearer " + none}
 			return f, nil
 		}
 		// Vector 3: the verifier does not check the signature at all — a token signed
 		// with a secret the app cannot know is still accepted.
-		bogus := ForgeHS256(escalated, "gored-unknown-secret-"+newCanaryMarker())
+		bogus := ForgeHS256(escalated, "gored-unknown-secret-"+gored.NewCanaryMarker())
 		if st, _ := p.replay(ctx, verifyPath, bogus); ok2xx(st) {
-			f.Vector, f.Forged, f.Confidence, f.ReplayStatus = "no-signature-check", bogus, ConfCertain, st
+			f.Vector, f.Forged, f.Confidence, f.ReplayStatus = "no-signature-check", bogus, gored.ConfCertain, st
 			f.Evidence = fmt.Sprintf("a token signed with an unknown secret was accepted (HTTP %d) — the signature is not verified", st)
 			f.Request = map[string]any{"method": "GET", "path": verifyPath, "authorization": "Bearer " + bogus}
 			return f, nil
@@ -236,13 +237,13 @@ func (p *JWTProbe) Analyze(ctx context.Context, token, verifyPath string) (JWTFi
 // raise it from high (forgeable) to certain (accepted).
 func (p *JWTProbe) confirm(ctx context.Context, f JWTFinding, vector, secret, forged, verifyPath, evidence string) JWTFinding {
 	f.Vector, f.Secret, f.Forged, f.Evidence = vector, secret, forged, evidence
-	f.Confidence = ConfHigh
+	f.Confidence = gored.ConfHigh
 	if verifyPath != "" {
 		st, _ := p.replay(ctx, verifyPath, forged)
 		f.ReplayStatus = st
 		f.Request = map[string]any{"method": "GET", "path": verifyPath, "authorization": "Bearer " + forged}
 		if ok2xx(st) {
-			f.Confidence = ConfCertain
+			f.Confidence = gored.ConfCertain
 			f.Evidence += fmt.Sprintf("; replayed on %s and accepted (HTTP %d)", verifyPath, st)
 		} else {
 			f.Evidence += fmt.Sprintf("; replay on %s returned HTTP %d (forgeable, acceptance unconfirmed)", verifyPath, st)

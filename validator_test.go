@@ -1,7 +1,6 @@
 package gored_test
 
 import (
-	"context"
 	"testing"
 
 	gored "github.com/t0ul/GORED"
@@ -70,42 +69,3 @@ func TestValidatorFusionAndChain(t *testing.T) {
 	}
 }
 
-// TestValidatorLiveCapstone is the end-to-end proof with no mocks: real probes run against
-// the demo target, produce real exploitable proofs, and the validator fuses them with a
-// scanner finding and a discovered container misconfig into ranked, chained verdicts. The
-// mass-assignment and JWT probes confirm their own exploits (read-back / replay), so this
-// needs no model.
-func TestValidatorLiveCapstone(t *testing.T) {
-	_, base := liveTarget(t) // vulnerable build
-
-	// JWT first (alice's token is still role=user), then mass assignment (which flips it).
-	jf, err := jwtProbe(t, base, gored.HarvestSecrets("demotarget")).Analyze(context.Background(), aliceToken(t, base), "/api/whoami")
-	if err != nil {
-		t.Fatal(err)
-	}
-	mf, err := aliceProbe(t, base).Probe(context.Background(), "PUT", "/api/profile", "/api/profile")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	jp, ok1 := gored.ProofFromJWT(jf, "demo", "/api/whoami")
-	mp, ok2 := gored.ProofFromMassAssign(mf, "demo")
-	if !ok1 || !ok2 || !jp.Exploitable || !mp.Exploitable {
-		t.Fatalf("both probes should yield exploitable proofs; jwt=%+v mass=%+v", jp, mp)
-	}
-	cissues := gored.AnalyzeDockerfile([]byte(vulnDockerfile))
-	cp := gored.ProofFromContainerIssue(*issueByRule(cissues, "runs-as-root"), "demo")
-
-	// A representative scanner claim on the same route GORED proved exploitable.
-	scanners := []gored.ScannerFinding{{Source: "Semgrep", App: "demo", Location: "/api/profile", Severity: "Medium", CWE: "CWE-862", Title: "missing authorization"}}
-
-	vs := (&gored.Validator{}).Validate(scanners, []gored.Proof{jp, mp, cp})
-
-	prof := findVerdict(vs, "demo", "/api/profile")
-	if prof == nil || !prof.Exploitable || prof.Repro == "" || len(prof.Chain) == 0 {
-		t.Fatalf("fused /api/profile verdict should be exploitable, have a repro and the host chain; got %+v", prof)
-	}
-	if vs[0].Rung != gored.LadderExploitable {
-		t.Errorf("a confirmed-exploitable verdict must rank first, got %s", vs[0].Rung)
-	}
-}
