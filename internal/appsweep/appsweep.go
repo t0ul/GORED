@@ -42,15 +42,26 @@ type Stage struct {
 	Detect     func(toolResult string) (bool, string)
 	// BuildTools wires the stage's toolbox over a gate bound to the target.
 	BuildTools func(gate *tools.Gate, base string) *core.Toolbox
+	// Transport selects the outbound mechanism: "brig" (default) runs tools inside the
+	// contained chamber (for a Brig target like vulnapp); "direct" runs them over net/http
+	// (for a local app reached on the host, like demotarget or emaildrop).
+	Transport string
+	// FlagID is the oracle flag this stage captures; "" means the stage has no planted-flag
+	// oracle and relies on its Detect canary instead.
+	FlagID string
+	// Target, when set, builds the run target itself (e.g. an in-process demotarget whose
+	// own oracle decides capture). When nil, Run uses the default Brig vulnapp target.
+	Target func(f *bench.Flags) (core.RunTarget, error)
 }
 
 // Stages is the registry Run selects from, keyed by stage name.
 func Stages() map[string]Stage {
 	return map[string]Stage{
-		"recon":   reconStage(),
-		"map":     mapStage(),
-		"plan":    planStage(),
-		"exploit": exploitStage(),
+		"recon":      reconStage(),
+		"map":        mapStage(),
+		"plan":       planStage(),
+		"exploit":    exploitStage(),
+		"apiexploit": apiExploitStage(),
 	}
 }
 
@@ -111,11 +122,28 @@ func Run(ctx context.Context, f *bench.Flags, stageName string, opts ...Option) 
 	if o.goal != "" {
 		st.Goal = o.goal
 	}
+	flagID := st.FlagID
+	if flagID == "" {
+		flagID = "n/a"
+	}
 	bc := gobrig.Client{Bridge: f.Bridge}
+	// Target: the stage's own builder (e.g. an in-process demotarget with its own oracle),
+	// else the default Brig vulnapp.
+	targetFn := st.Target
+	if targetFn == nil {
+		targetFn = func(f *bench.Flags) (core.RunTarget, error) {
+			if f.Ensure {
+				if err := ensureVulnapp(bc, f.Base); err != nil {
+					return core.RunTarget{}, err
+				}
+			}
+			return core.RunTarget{Target: externalTarget{name: f.Base}, BaseURL: f.Base, Close: func() {}}, nil
+		}
+	}
 	sw := &bench.Sweep{
 		Flags:  f,
 		Goal:   st.Goal,
-		FlagID: "n/a",
+		FlagID: flagID,
 		Label:  st.Label, Shape: core.ShapeSolo, Temp: core.SkillCold,
 		Banner:     st.Banner,
 		Title:      st.Title,
@@ -123,21 +151,24 @@ func Run(ctx context.Context, f *bench.Flags, stageName string, opts ...Option) 
 		Flag:       st.Flag,
 		Note:       st.Note,
 		StartMsg:   fmt.Sprintf("appsweep -stage %s vs %s, %d trials", stageName, f.Base, f.Trials),
-		Target: func() (core.RunTarget, error) {
-			if f.Ensure {
-				if err := ensureVulnapp(bc, f.Base); err != nil {
-					return core.RunTarget{}, err
-				}
-			}
-			return core.RunTarget{Target: externalTarget{name: f.Base}, BaseURL: f.Base, Close: func() {}}, nil
-		},
+		Target:     func() (core.RunTarget, error) { return targetFn(f) },
 		Make: func(model string, cl *core.AccountingClient, acct *core.ComputeAccount, rt core.RunTarget, audit *gledger.AuditLog) (core.Runnable, error) {
-			tr := brig.Transport{Bridge: f.Bridge, TraceID: stageName}
-			gate := tools.NewGate(tr, tools.NewEgress(egressAuthority(f.Base)), func(u string) {
-				log.Printf("  egress denied (off-target host blocked): %s", u)
-			})
+			// The tools reach the target the run actually bound (rt.BaseURL), which for a
+			// stage-built target is its real listener; fall back to the configured base.
+			base := rt.BaseURL
+			if base == "" {
+				base = f.Base
+			}
+			onDeny := func(u string) { log.Printf("  egress denied (off-target host blocked): %s", u) }
+			egress := tools.NewEgress(egressAuthority(base))
+			var gate *tools.Gate
+			if st.Transport == "direct" {
+				gate = tools.NewGate(tools.DirectTransport{}, egress, onDeny)
+			} else {
+				gate = tools.NewGate(brig.Transport{Bridge: f.Bridge, TraceID: stageName}, egress, onDeny)
+			}
 			return &core.Runner{
-				Model: cl, Tools: st.BuildTools(gate, f.Base), Skill: st.Skill, Target: rt.Target,
+				Model: cl, Tools: st.BuildTools(gate, base), Skill: st.Skill, Target: rt.Target,
 				Board: core.NewUnscrubbedBlackboard(), Audit: audit, Bounds: f.Bounds(),
 				Detector: st.Detect, Phases: st.Phases(), CanaryURL: canaryBeacon,
 				Checkpoint: o.checkpoint,

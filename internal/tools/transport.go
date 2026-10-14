@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -22,6 +23,11 @@ type Transport interface {
 	// combined output. targetURL is passed separately so the Gate can authorize the
 	// host the scanner will reach even though it is embedded in argv.
 	Detonate(ctx context.Context, targetURL string, argv []string) (string, error)
+	// Request performs an arbitrary HTTP request (method, headers, body) and returns the
+	// status code and response body. It is the primitive the JSON-API exploit classes
+	// (broken authorization, JWT replay, mass-assignment) need — a method, headers and a
+	// request body that the GET-only Fetch cannot express.
+	Request(ctx context.Context, method, rawurl string, headers map[string]string, body string) (status int, respBody string, err error)
 	// Describe is a short label for traces/logs, e.g. "brig(127.0.0.1:5050)".
 	Describe() string
 }
@@ -70,6 +76,15 @@ func (g *Gate) Detonate(ctx context.Context, targetURL string, argv []string) (s
 	return g.tr.Detonate(ctx, targetURL, argv)
 }
 
+// Request authorizes rawurl, then delegates the arbitrary request to the transport. Like
+// Fetch, a denied host never reaches the transport.
+func (g *Gate) Request(ctx context.Context, method, rawurl string, headers map[string]string, body string) (int, string, error) {
+	if err := g.authorize(rawurl); err != nil {
+		return 0, "", err
+	}
+	return g.tr.Request(ctx, method, rawurl, headers, body)
+}
+
 // Egress returns the allowlist the gate enforces (for logging its authorities).
 func (g *Gate) Egress() *Egress { return g.egress }
 
@@ -115,6 +130,33 @@ func (d DirectTransport) Fetch(ctx context.Context, rawurl string) (string, erro
 
 func (DirectTransport) Detonate(_ context.Context, _ string, _ []string) (string, error) {
 	return "", fmt.Errorf("direct transport cannot detonate a scanner: scanner detonation runs only in the Brig's contained chamber")
+}
+
+// Request performs an arbitrary HTTP request over net/http and returns the status code and
+// (bounded) response body. Redirects are followed by the default client; the caller reads
+// status and body to judge the result.
+func (d DirectTransport) Request(ctx context.Context, method, rawurl string, headers map[string]string, body string) (int, string, error) {
+	var rdr io.Reader
+	if body != "" {
+		rdr = strings.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(method), rawurl, rdr)
+	if err != nil {
+		return 0, "", err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	if body != "" && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := d.client().Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	return resp.StatusCode, string(data), nil
 }
 
 func (DirectTransport) Describe() string { return "direct(net/http)" }

@@ -26,6 +26,11 @@ func (x tripwireTransport) Detonate(context.Context, string, []string) (string, 
 	x.t.Fatal("transport.Detonate was reached on a denied URL — the gate did not short-circuit")
 	return "", nil
 }
+func (x tripwireTransport) Request(context.Context, string, string, map[string]string, string) (int, string, error) {
+	x.t.Helper()
+	x.t.Fatal("transport.Request was reached on a denied URL — the gate did not short-circuit")
+	return 0, "", nil
+}
 func (tripwireTransport) Describe() string { return "tripwire" }
 
 func TestGateDeniesOffAllowlistAndBeacons(t *testing.T) {
@@ -39,8 +44,11 @@ func TestGateDeniesOffAllowlistAndBeacons(t *testing.T) {
 	if _, err := g.Detonate(context.Background(), bad, []string{"dalfox", "scan", bad}); !errors.Is(err, ErrEgressDenied) {
 		t.Fatalf("Detonate off-allowlist: err=%v, want ErrEgressDenied", err)
 	}
-	if len(denied) != 2 {
-		t.Fatalf("OnDeny beacon fired %d times, want 2 (one per denied call)", len(denied))
+	if _, _, err := g.Request(context.Background(), "POST", bad, map[string]string{"X": "y"}, "{}"); !errors.Is(err, ErrEgressDenied) {
+		t.Fatalf("Request off-allowlist: err=%v, want ErrEgressDenied", err)
+	}
+	if len(denied) != 3 {
+		t.Fatalf("OnDeny beacon fired %d times, want 3 (one per denied call)", len(denied))
 	}
 }
 
