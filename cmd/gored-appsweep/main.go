@@ -50,6 +50,8 @@ type stage struct {
 func stages() map[string]stage {
 	return map[string]stage{
 		"recon":   reconStage(),
+		"map":     mapStage(),
+		"plan":    planStage(),
 		"exploit": exploitStage(),
 	}
 }
@@ -113,6 +115,15 @@ func stageNames() string {
 	}
 	sort.Strings(ns)
 	return strings.Join(ns, "|")
+}
+
+// gateAuthorities exposes a gate's allowlist so a stage's http_request tool can report it to
+// the Runner for the denied-beacon log (the Runner reads EgressAuthorities off http_request).
+func gateAuthorities(g *tools.Gate) []string {
+	if g == nil || g.Egress() == nil {
+		return nil
+	}
+	return g.Egress().Authorities()
 }
 
 // egressAuthority extracts the host:port from a base URL, for the Egress allowlist.
