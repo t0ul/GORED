@@ -7,6 +7,7 @@ package brig
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -61,6 +62,15 @@ func (t Transport) Detonate(ctx context.Context, _ string, argv []string) (strin
 		return "", err
 	}
 	return r.Output, nil
+}
+
+// Request performs an arbitrary HTTP request through the chamber. The guest's HTTP client
+// is wget-only (GET), so arbitrary method/header/body requests are not yet carried over the
+// Brig transport — the JSON-API exploit stages run over the direct transport against a local
+// app for now. Wiring this through a curl argv in the chamber is the follow-up; until then it
+// fails closed rather than silently degrading to a GET.
+func (t Transport) Request(_ context.Context, method, _ string, _ map[string]string, _ string) (int, string, error) {
+	return 0, "", fmt.Errorf("brig transport does not yet support arbitrary %s requests; use the direct transport for JSON-API exploit stages", method)
 }
 
 // Describe labels the transport for traces.
