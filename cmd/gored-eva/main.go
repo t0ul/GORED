@@ -5,15 +5,37 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"path/filepath"
 
 	"github.com/t0ul/GORED/internal/eva"
+	"github.com/t0ul/GORED/store"
 )
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:4100", "listen address")
 	traces := flag.String("traces", ".", "directory for per-run trace files")
+	storePath := flag.String("store", "", "SQLite run registry (default <traces>/eva.db; '-' disables persistence)")
 	flag.Parse()
-	srv := eva.NewServer(*traces)
+
+	var st *store.Store
+	switch *storePath {
+	case "-":
+		// persistence disabled
+	default:
+		path := *storePath
+		if path == "" {
+			path = filepath.Join(*traces, "eva.db")
+		}
+		s, err := store.Open(path)
+		if err != nil {
+			log.Fatalf("open store %s: %v", path, err)
+		}
+		defer s.Close()
+		st = s
+		log.Printf("run registry: %s", path)
+	}
+
+	srv := eva.NewServer(*traces, st)
 	log.Printf("EVA cockpit on http://%s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, srv.Handler()))
 }
