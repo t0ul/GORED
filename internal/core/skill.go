@@ -35,6 +35,15 @@ Methodology, adapt as evidence arrives:
 Work one step at a time against observed evidence; do not invent endpoints.`,
 }
 
+// Catalog returns the built-in skills, the seed for the data-backed skills registry (the
+// Studio migration): the hardcoded catalog is the source of truth until the store holds it.
+func Catalog() []Skill {
+	return []Skill{
+		ColdWebSkill, ReconSkill, AuthReconSkill, ExploitSkill,
+		SoloColdSkill, WarmIDORSkill, WarmSSRFSkill,
+	}
+}
+
 // SkillFor selects the skill for a vuln class and scaffolding level. Cold is the
 // one generic methodology for every class; warm is the class-specific procedure.
 // It reports false when no warm skill exists for the class yet.

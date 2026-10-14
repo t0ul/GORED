@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS eva_runs (
   prompt    TEXT,
   sums_json TEXT
 );
+CREATE TABLE IF NOT EXISTS skills (
+  name        TEXT PRIMARY KEY,
+  temp        TEXT,
+  instruction TEXT,
+  builtin     INTEGER DEFAULT 0
+);
 `
 
 // Open opens (creating if needed) a run store at path.

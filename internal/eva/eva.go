@@ -53,6 +53,7 @@ type run struct {
 	// Server mutex.
 	Pending *pending
 	cp      *pilotCheckpoint
+	slot    int // the concurrency bay / port offset this run holds
 }
 
 // pending is a checkpoint surfaced to the pilot: the phase about to run, the ranked
@@ -123,24 +124,40 @@ func (c *pilotCheckpoint) Decide(ctx context.Context, phase string, board *core.
 
 // Server is the cockpit. It keeps a registry of runs and serializes execution: a run boots a
 // local model and reclaims its ports, so two at once would fight — one pilot, one EVA.
+// portStep spaces each concurrent run's model serve ports apart so two in-flight runs do
+// not fight over a port (each run boots one model; 20 is ample headroom).
+const portStep = 20
+
 type Server struct {
-	mu      sync.Mutex
-	runs    map[string]*run
-	order   []string // run ids, most recent first
-	running bool
-	traces  string       // directory for per-run trace files
-	store   *store.Store // durable run registry; nil = memory-only
+	mu     sync.Mutex
+	runs   map[string]*run
+	order  []string     // run ids, most recent first
+	slots  chan int     // one token per concurrency bay; the token is the port offset
+	traces string       // directory for per-run trace files
+	store  *store.Store // durable run registry; nil = memory-only
 }
 
-// NewServer builds the cockpit. A non-nil store makes the sortie log durable: existing runs
-// are loaded on boot and every transition is persisted. Runs that were mid-flight when the
-// process last died load as "aborted" (their decision channel is gone).
-func NewServer(traceDir string, st *store.Store) *Server {
+// NewServer builds the cockpit. maxConc is how many runs may be in flight at once (default
+// 1 — one at a time, as the local lab's RAM usually requires); each bay gets its own model
+// port window. A non-nil store makes the sortie log durable: existing runs load on boot and
+// every transition is persisted. Runs that were mid-flight when the process last died load
+// as "aborted" (their decision channel is gone).
+func NewServer(traceDir string, st *store.Store, maxConc int) *Server {
 	if traceDir == "" {
 		traceDir = "."
 	}
-	s := &Server{runs: map[string]*run{}, traces: traceDir, store: st}
+	if maxConc < 1 {
+		maxConc = 1
+	}
+	slots := make(chan int, maxConc)
+	for i := 0; i < maxConc; i++ {
+		slots <- i
+	}
+	s := &Server{runs: map[string]*run{}, traces: traceDir, store: st, slots: slots}
 	s.loadFromStore()
+	if st != nil {
+		_ = st.SeedSkills(core.Catalog()) // first step of the Studio migration: skills as data
+	}
 	return s
 }
 
@@ -196,6 +213,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /run/{id}/events", s.events)
 	mux.HandleFunc("POST /run/{id}/decide", s.decide)
 	mux.HandleFunc("GET /compare", s.compare)
+	mux.HandleFunc("GET /studio", s.studio)
 	return mux
 }
 
@@ -205,8 +223,8 @@ func (s *Server) home(w http.ResponseWriter, _ *http.Request) {
 	for _, id := range s.order {
 		recent = append(recent, s.runs[id])
 	}
-	busy := s.running
 	s.mu.Unlock()
+	busy := len(s.slots) == 0 // no free bay
 
 	// Stage cards from the library, so the cockpit always matches the real stages. The
 	// instruction map pre-fills the editable prompt knob per stage.
@@ -271,19 +289,23 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 		promptOverride = v
 	}
 
-	s.mu.Lock()
-	if s.running {
-		s.mu.Unlock()
-		http.Error(w, "a run is already in flight — one EVA at a time", http.StatusConflict)
+	// Claim a concurrency bay; its token is the port offset for this run's model.
+	var slot int
+	select {
+	case slot = <-s.slots:
+	default:
+		http.Error(w, "all EVA bays occupied — wait for a sortie to land", http.StatusConflict)
 		return
 	}
+	f.BasePort += slot * portStep
+
+	s.mu.Lock()
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
 	f.Trace = filepath.Join(s.traces, "gored-eva-"+id+"-trace.jsonl")
 	rn := &run{ID: id, Stage: stage, Base: f.Base, Model: f.Model, Trials: f.Trials,
-		Autonomy: autonomy, Status: "running", Started: time.Now(), Trace: f.Trace, Prompt: promptOverride}
+		Autonomy: autonomy, Status: "running", Started: time.Now(), Trace: f.Trace, Prompt: promptOverride, slot: slot}
 	s.runs[id] = rn
 	s.order = append([]string{id}, s.order...)
-	s.running = true
 	s.mu.Unlock()
 
 	s.persist(rn)
@@ -323,9 +345,9 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 			rn.Status = "done"
 		}
 	}
-	s.running = false
 	s.mu.Unlock()
 	s.persist(rn)
+	s.slots <- rn.slot // release the bay
 }
 
 // runView is the run plus render-time triage read from its trace (findings, repro). The
@@ -364,6 +386,41 @@ func (s *Server) compare(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	render(w, compareTmpl, map[string]any{"Runs": rns})
+}
+
+// studio is the read-only factory surface: the tools the stages actually carry, the skills
+// now held as data in the store, and the per-stage prompts. Authoring is deferred — the
+// plan is data-first, no edit button over hardcoded Go. This page is the migration milestone.
+func (s *Server) studio(w http.ResponseWriter, _ *http.Request) {
+	type stageInfo struct {
+		Name, Instruction string
+		Tools             []string
+	}
+	toolSet := map[string]bool{}
+	var stages []stageInfo
+	for name, st := range appsweep.Stages() {
+		var names []string
+		if st.BuildTools != nil {
+			names = st.BuildTools(nil, "").Names() // nil gate: reading names never dials out
+		}
+		for _, n := range names {
+			toolSet[n] = true
+		}
+		stages = append(stages, stageInfo{Name: name, Instruction: st.Skill.Instruction, Tools: names})
+	}
+	sort.Slice(stages, func(i, j int) bool { return stages[i].Name < stages[j].Name })
+	var tools []string
+	for n := range toolSet {
+		tools = append(tools, n)
+	}
+	sort.Strings(tools)
+
+	var skills []store.SkillRow
+	if s.store != nil {
+		skills, _ = s.store.ListSkills()
+	}
+
+	render(w, studioTmpl, map[string]any{"Tools": tools, "Skills": skills, "Stages": stages})
 }
 
 // traceTriage reads a run's trace and returns its blackboard findings and the capture repro
@@ -672,6 +729,31 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
 <p class="muted">trace: {{.Trace}}</p>
 ` + nervFoot))
 
+var studioTmpl = template.Must(template.New("studio").Funcs(funcs).Parse(baseCSS + nervHeadMini + `
+<p><a href="/">← cockpit</a></p>
+<h1 class="runhdr">STUDIO</h1>
+<p class="sub">the factory · tools · skills · prompts <span class="dim">(read-only — authoring lands once the registry drives the stages)</span></p>
+
+<h2>⬡ TOOLS</h2>
+<div class="chips">{{range .Tools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">none</span>{{end}}</div>
+
+<h2>⬡ SKILLS</h2>
+{{if .Skills}}{{range .Skills}}
+<div class="card frame skillcard">
+  <div class="card-tag">{{.Name}} <span class="temp temp-{{.Temp}}">{{.Temp}}</span> {{if .BuiltIn}}<span class="src-router">built-in</span>{{else}}<span class="src-model">authored</span>{{end}}</div>
+  <pre class="repro">{{.Instruction}}</pre>
+</div>
+{{end}}{{else}}<p class="muted">no skills registry (run with a -store to seed the catalog)</p>{{end}}
+
+<h2>⬡ PROMPTS · PER STAGE</h2>
+{{range .Stages}}
+<div class="card frame skillcard">
+  <div class="card-tag">{{.Name}} <span class="dim">tools: {{range .Tools}}{{.}} {{end}}</span></div>
+  <pre class="repro">{{.Instruction}}</pre>
+</div>
+{{end}}
+` + nervFoot))
+
 var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseCSS + nervHeadMini + `
 <p><a href="/">← cockpit</a></p>
 <h1 class="runhdr">COMPARE</h1>
@@ -692,7 +774,8 @@ var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseC
 const nervHead = `<div class="hdr">
   <div class="logo">⬡</div>
   <div><h1>EVA</h1><p class="sub">GORED // NERV TACTICAL OPS · PILOT A SECURITY-TESTING RUN AGAINST A LOCAL APP</p></div>
-</div><div class="stripe"></div>`
+</div><div class="stripe"></div>
+<p class="nav"><a href="/">⬡ COCKPIT</a> · <a href="/studio">⬡ STUDIO</a></p>`
 
 const nervHeadMini = `<div class="hdr mini"><div class="logo">⬡</div><div><span class="brand">EVA</span> <span class="sub">GORED // NERV</span></div></div><div class="stripe"></div>`
 
@@ -807,5 +890,12 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .ghost{background:transparent;color:var(--orange);border:1px solid var(--orange);margin-top:10px}
 .ghost:hover{background:var(--orange);color:#0a0a0a}
 .pick{width:auto;vertical-align:middle;accent-color:var(--orange)}
+.nav{font-size:12px;letter-spacing:2px;margin:-8px 0 16px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1px solid var(--orange);color:var(--orange);padding:4px 10px;font-size:12px;letter-spacing:1px}
+.skillcard{margin:10px 0}
+.temp{font-size:10px;letter-spacing:1px;padding:1px 6px;border:1px solid var(--line)}
+.temp-cold{color:#58a6ff;border-color:#58a6ff}
+.temp-warm{color:var(--amber);border-color:var(--amber)}
 </style>
 `
