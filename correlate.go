@@ -107,13 +107,13 @@ func rollup(ci *CorrelatedIssue) {
 // not by language: a leading "/" is a route, a domain-like first segment (or "stdlib") is
 // a module, a trailing file extension is a file. Anything else keys on itself.
 func locusOf(f ScannerFinding) (locus, kind string) {
-	return normLocus(f.Location)
+	return NormLocus(f.Location)
 }
 
 // normLocus reduces any location string (a scanner's or a GORED proof's) to the shared
 // (locus, kind) key, so a scanner finding and a GORED proof about the same surface collapse
 // onto one issue regardless of which produced them.
-func normLocus(location string) (locus, kind string) {
+func NormLocus(location string) (locus, kind string) {
 	loc := strings.TrimSpace(location)
 	switch {
 	case loc == "":

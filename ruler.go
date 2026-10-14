@@ -141,7 +141,7 @@ func (r *Ruler) Score(verdicts []Verdict, minRung Ladder) Score {
 // stored already-shaped (a route, module, or file), so this reuses the same reducer that
 // correlation and the validator use.
 func normLocusKey(locus string) string {
-	k, _ := normLocus(locus)
+	k, _ := NormLocus(locus)
 	return k
 }
 
