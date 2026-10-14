@@ -1,4 +1,4 @@
-package gored
+package ingest
 
 import (
 	"context"
