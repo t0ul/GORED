@@ -147,8 +147,15 @@ func parseMoves(reply string) []Move {
 func routeByPath(p string, tb *Toolbox) (surface, tool string) {
 	lp := strings.ToLower(p)
 	switch {
+	case strings.Contains(lp, "token") || strings.Contains(lp, "jwt") || strings.Contains(lp, "/auth") || strings.Contains(lp, "login"):
+		// an auth/token surface: forge a token if the box carries the tool
+		return "json-api", preferTool(tb, "jwt_forge", "api_request", "http_request")
+	case strings.Contains(lp, "profile") || strings.Contains(lp, "account") || strings.Contains(lp, "/users") || strings.Contains(lp, "settings"):
+		// a write surface for your own record: try mass assignment
+		return "json-api", preferTool(tb, "mass_assign", "api_request", "http_request")
 	case strings.Contains(lp, "/api") || strings.HasSuffix(lp, ".json"):
-		return "json-api", preferTool(tb, "probe_endpoint", "http_request")
+		// a JSON resource: an authenticated/id-swapped request, or a differential BAC check
+		return "json-api", preferTool(tb, "api_request", "bola", "probe_endpoint", "http_request")
 	case strings.Contains(lp, "?") || strings.Contains(lp, "search") || strings.Contains(lp, "greet") ||
 		strings.Contains(lp, "echo") || strings.Contains(lp, "q=") || strings.Contains(lp, "name="):
 		return "html-page", preferTool(tb, "xss_scan", "http_request")

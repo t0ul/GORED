@@ -1,10 +1,20 @@
 package core
 
 import (
+	"context"
 	"testing"
 
 	"github.com/t0ul/GORED/internal/tools"
 )
+
+// namedTool is a name-only Tool fixture for testing the pure routeByPath/preferTool logic
+// (it holds a name and does nothing). It is not a stand-in for a live system — the real
+// exploit tools are verified live in internal/probes.
+type namedTool struct{ n string }
+
+func (t namedTool) Name() string                                     { return t.n }
+func (namedTool) Describe() string                                   { return "" }
+func (namedTool) Call(context.Context, map[string]any) (string, error) { return "", nil }
 
 // These are pure-logic tests of the checkpoint's proposal plumbing: no model, no network.
 // The live behaviour (the loop actually pausing at a phase boundary and steering on the
@@ -51,6 +61,28 @@ func TestRouteByPath(t *testing.T) {
 		{"/api/tickets", "json-api", "http_request"}, // no probe_endpoint tool yet -> floor
 		{"/data.json", "json-api", "http_request"},
 		{"/about", "unknown", "http_request"},
+	}
+	for _, c := range cases {
+		s, tl := routeByPath(c.path, tb)
+		if s != c.surface || tl != c.tool {
+			t.Errorf("routeByPath(%q) = (%q,%q), want (%q,%q)", c.path, s, tl, c.surface, c.tool)
+		}
+	}
+}
+
+func TestRouteByPathExploitTools(t *testing.T) {
+	// A box carrying the Step-7 JSON-API exploit tools: routing should prefer them by surface.
+	tb := NewToolbox(
+		namedTool{"http_request"}, namedTool{"api_request"},
+		namedTool{"mass_assign"}, namedTool{"jwt_forge"}, namedTool{"bola"},
+	)
+	cases := []struct {
+		path, surface, tool string
+	}{
+		{"/api/token", "json-api", "jwt_forge"},
+		{"/api/profile", "json-api", "mass_assign"},
+		{"/api/memos", "json-api", "api_request"},
+		{"/api/notes/1000", "json-api", "api_request"},
 	}
 	for _, c := range cases {
 		s, tl := routeByPath(c.path, tb)
