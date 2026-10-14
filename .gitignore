@@ -27,3 +27,6 @@ coverage.*
 *.db-wal
 *.db-shm
 *.jsonl
+
+# built command binaries at repo root
+/gored-*

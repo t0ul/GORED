@@ -282,6 +282,7 @@ func main() {
 		maxSteps  = flag.Int("steps", 8, "max loop steps per agent")
 		maxOut    = flag.Int("max-out", 256, "max completion tokens per call (raise for reasoning models)")
 		stagedF   = flag.Bool("staged", false, "solo: use the staged find->log->re-plan discovery loop (recon->probe->exploit) instead of a flat skill")
+		noSolverF = flag.Bool("no-solver", false, "staged: DROP the find_injection deterministic solver (keep enumerate + smart http + the staged structure) — isolates how much the agent itself contributes vs the solver tool")
 		bridge    = flag.String("bridge", "127.0.0.1:5050", "the Brig vsock command bridge")
 		base      = flag.String("base", "http://127.0.0.1:8088", "the vulnapp base URL on the guest loopback")
 		htmlOut   = flag.String("html", "", "write the HTML leaderboard here")
@@ -403,6 +404,9 @@ func main() {
 			var phases []gored.Phase
 			if *stagedF {
 				skill, st, phases = gored.StagedWebSkill, gored.SkillCold, gored.WebInjectionPlaybook()
+				if *noSolverF {
+					phases = gored.WebInjectionPlaybookManual()
+				}
 			}
 			tag := ""
 			if multiTemp {
@@ -431,7 +435,13 @@ func main() {
 								// Staged mode gives the agent the full recon->probe->exploit
 								// toolkit: enumerate (surface map), find_injection (the
 								// deterministic probe), and the smart HTTP client.
-								tb = gored.NewToolbox(brigSmartTool{c: bc, base: *base}, brigEnumTool{c: bc, base: *base}, brigDiscoverTool{c: bc, base: *base})
+								if *noSolverF {
+									// Staged structure + generic tools, NO solver: the agent must find and
+									// exploit the injection itself. Measures agent autonomy under the scaffold.
+									tb = gored.NewToolbox(brigSmartTool{c: bc, base: *base}, brigEnumTool{c: bc, base: *base})
+								} else {
+									tb = gored.NewToolbox(brigSmartTool{c: bc, base: *base}, brigEnumTool{c: bc, base: *base}, brigDiscoverTool{c: bc, base: *base})
+								}
 							}
 							return &gored.Runner{
 								Model: cl, Tools: tb, Skill: skill, Target: rt.Target,
