@@ -255,7 +255,7 @@ func ProofFromHunt(f HuntFinding, app string) (Proof, bool) {
 	if f.Verdict != VerdictBAC {
 		return Proof{}, false
 	}
-	locus, kind := normLocus(f.Path)
+	locus, kind := NormLocus(f.Path)
 	p := Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
 		Source: "gored-hunt", Evidence: f.Evidence}
 	switch {
@@ -278,7 +278,7 @@ func ProofFromMassAssign(f MassAssignFinding, app string) (Proof, bool) {
 	if !f.Flagged() {
 		return Proof{}, false
 	}
-	locus, kind := normLocus(f.WritePath)
+	locus, kind := NormLocus(f.WritePath)
 	p := Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
 		Source: "gored-massassign", Evidence: f.Evidence}
 	if f.Confidence == ConfCertain {
@@ -297,7 +297,7 @@ func ProofFromJWT(f JWTFinding, app, locus string) (Proof, bool) {
 	if !f.Flagged() {
 		return Proof{}, false
 	}
-	l, kind := normLocus(locus)
+	l, kind := NormLocus(locus)
 	p := Proof{App: app, Locus: l, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
 		Source: "gored-jwt", Evidence: f.Evidence}
 	if f.Confidence == ConfCertain {
