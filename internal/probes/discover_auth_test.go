@@ -1,4 +1,4 @@
-package gored_test
+package probes_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	probes "github.com/t0ul/GORED/internal/probes"
 )
 
 // authFixture is a minimal app whose real API surface is reachable only once logged
@@ -88,7 +89,7 @@ func TestAuthenticatedCrawlSkipsLogout(t *testing.T) {
 	ts := httptest.NewServer(logoutFixture())
 	t.Cleanup(ts.Close)
 
-	httpTool, disc := gored.WebRecon(ts.URL, gored.NewEgress(authority(t, ts.URL)), nil)
+	httpTool, disc := probes.WebRecon(ts.URL, gored.NewEgress(authority(t, ts.URL)), nil)
 	ctx := context.Background()
 	if _, err := httpTool.Call(ctx, map[string]any{"method": "POST", "path": "/login", "session": "rh"}); err != nil {
 		t.Fatal(err)
@@ -108,7 +109,7 @@ func TestAuthenticatedDiscoveryNeedsLogin(t *testing.T) {
 	ts := httptest.NewServer(authFixture())
 	t.Cleanup(ts.Close)
 
-	httpTool, disc := gored.WebRecon(ts.URL, gored.NewEgress(authority(t, ts.URL)), nil)
+	httpTool, disc := probes.WebRecon(ts.URL, gored.NewEgress(authority(t, ts.URL)), nil)
 	ctx := context.Background()
 	authOnly := []string{"/api/tickets", "/api/reports/view/1", "/api/admin/users"}
 

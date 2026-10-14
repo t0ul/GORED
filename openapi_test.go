@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	probes "github.com/t0ul/GORED/internal/probes"
 )
 
 func TestPathsFromOpenAPI(t *testing.T) {
@@ -49,7 +50,7 @@ func TestPathsFromOpenAPI(t *testing.T) {
 // routes a crawler misses on an API-first app.
 func TestHuntMergesSpecPaths(t *testing.T) {
 	_, base := liveTarget(t)
-	h := &gored.Hunt{
+	h := &probes.Hunt{
 		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
 		Priv: gored.Identity{Name: "admin", Headers: map[string]string{"X-Session": "admin-session"}},
 		Low:  gored.Identity{Name: "alice", Headers: map[string]string{"X-Session": "alice-session"}},

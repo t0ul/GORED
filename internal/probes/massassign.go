@@ -1,6 +1,7 @@
-package gored
+package probes
 
 import (
+	gored "github.com/t0ul/GORED"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -43,7 +44,7 @@ type MassAssignFinding struct {
 	Field      string         // the privileged field the server honored; "" means not flagged
 	SentValue  any            // the value the probe injected
 	WasValue   any            // the field's value before the write (the baseline)
-	Confidence Confidence     // certain (persisted on an independent read) | high (reflected only); "" when not flagged
+	Confidence gored.Confidence     // certain (persisted on an independent read) | high (reflected only); "" when not flagged
 	CWE        string         // CWE-915 (mass assignment / improperly controlled object attributes)
 	Evidence   string         // one-line human summary
 	Request    map[string]any // the capturing write, for a repro / the verifier
@@ -66,9 +67,9 @@ func (f MassAssignFinding) Flagged() bool { return f.Field != "" }
 // endpoint it was told to probe, with the low-privilege identity, never a privileged one.
 type MassAssignProbe struct {
 	Base     string
-	Egress   *Egress
-	Sessions *Sessions
-	Low      Identity          // the caller that should NOT be able to set privileged fields
+	Egress   *gored.Egress
+	Sessions *gored.Sessions
+	Low      gored.Identity          // the caller that should NOT be able to set privileged fields
 	Fields   []MassAssignField // defaults to DefaultPrivilegedFields
 	Timeout  time.Duration
 }
@@ -114,7 +115,7 @@ func (p *MassAssignProbe) Probe(ctx context.Context, method, writePath, readPath
 			return MassAssignFinding{
 				Method: method, WritePath: writePath, ReadPath: readPath,
 				Field: f.Name, SentValue: f.Value, WasValue: was,
-				Confidence: ConfCertain, CWE: "CWE-915",
+				Confidence: gored.ConfCertain, CWE: "CWE-915",
 				Evidence: fmt.Sprintf("low-priv %q set %s=%v (was %v); read back %s=%v — server bound a client-controlled privileged field",
 					p.Low.Name, f.Name, f.Value, was, f.Name, after[f.Name]),
 				Request: req,
@@ -128,7 +129,7 @@ func (p *MassAssignProbe) Probe(ctx context.Context, method, writePath, readPath
 				fallback = &MassAssignFinding{
 					Method: method, WritePath: writePath, ReadPath: readPath,
 					Field: f.Name, SentValue: f.Value, WasValue: was,
-					Confidence: ConfHigh, CWE: "CWE-915",
+					Confidence: gored.ConfHigh, CWE: "CWE-915",
 					Evidence: fmt.Sprintf("low-priv %q set %s=%v and the write response reflected it, but a read-back did not confirm it persisted",
 						p.Low.Name, f.Name, f.Value),
 					Request: req,
@@ -189,7 +190,7 @@ func (p *MassAssignProbe) do(ctx context.Context, method, path, body string) (in
 	}
 	raw := p.Base + path
 	if !p.Egress.Allowed(raw) {
-		return 0, "", fmt.Errorf("%w: %s", ErrEgressDenied, raw)
+		return 0, "", fmt.Errorf("%w: %s", gored.ErrEgressDenied, raw)
 	}
 	var rdr io.Reader
 	if body != "" {

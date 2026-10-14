@@ -1,6 +1,8 @@
-package gored
+package probes
 
 import (
+	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/tools"
 	"context"
 	"fmt"
 	"io"
@@ -10,25 +12,6 @@ import (
 	"strings"
 	"time"
 )
-
-// Identity is a caller the differential oracle tests a resource as. Session names a
-// cookie jar in a shared Sessions registry (filled by an earlier http_request
-// login); Headers carries any static per-identity header (an X-Session or
-// Authorization token) an app uses instead of cookies. An anonymous identity has
-// neither a logged-in jar nor headers.
-//
-// LoginPath and LoginBody, when set, say how to authenticate this identity from
-// scratch (a POST login), so a hunt can tell the verifier how to reproduce a finding
-// as this identity without reusing the live cookie jar. A header-based identity
-// leaves them empty and carries Headers instead.
-type Identity struct {
-	Name             string
-	Session          string
-	Headers          map[string]string
-	LoginPath        string
-	LoginBody        string
-	LoginContentType string // e.g. application/json or application/x-www-form-urlencoded
-}
 
 // BACVerdict classifies a resource under differential testing.
 type BACVerdict string
@@ -46,11 +29,11 @@ type DiffFinding struct {
 	Method           string
 	Path             string
 	Verdict          BACVerdict
-	Confidence       Confidence // set for BAC; how likely it is a real bug vs a shared page
+	Confidence       gored.Confidence // set for BAC; how likely it is a real bug vs a shared page
 	ConfidenceReason string
 	Evidence         string         // one-line human summary (statuses + what overlapped)
 	Marker           string         // a privileged datum disclosed to the low-priv identity (for the 6b repro); "" unless BAC
-	Request          map[string]any // the low-priv capturing request, for CurlFor and the verifier facts
+	Request          map[string]any // the low-priv capturing request, for gored.CurlFor and the verifier facts
 
 	privStatus, lowStatus, anonStatus int
 }
@@ -78,14 +61,14 @@ func (f DiffFinding) Flagged() bool { return f.Verdict == VerdictBAC }
 // page every signed-in user shares, so each BAC flag carries a Confidence: JSON data
 // and content unique to one resource rank high; a response that is mostly chrome
 // common to other authenticated pages ranks low (see Sweep). An auto-seeded canary
-// (CanarySeeder) is the way to turn a high-likelihood flag into a certainty.
+// (gored.CanarySeeder) is the way to turn a high-likelihood flag into a certainty.
 type DifferentialOracle struct {
 	Base     string
-	Egress   *Egress
-	Sessions *Sessions
-	Priv     Identity
-	Low      Identity
-	Anon     *Identity // optional public baseline; when set, content anon also sees is not privileged
+	Egress   *gored.Egress
+	Sessions *gored.Sessions
+	Priv     gored.Identity
+	Low      gored.Identity
+	Anon     *gored.Identity // optional public baseline; when set, content anon also sees is not privileged
 	Markers  []string  // planted canaries (6c); a low-priv response containing one is certain BAC
 	OnDeny   func(string)
 	Timeout  time.Duration
@@ -199,7 +182,7 @@ func (d *DifferentialOracle) probe(ctx context.Context, method, path string) (pr
 	// in the low-priv response is broken access control with certainty — no heuristic.
 	if m := firstContained(d.Markers, lowBody); m != "" {
 		f.Verdict, f.Marker = VerdictBAC, m
-		f.Confidence = ConfCertain
+		f.Confidence = gored.ConfCertain
 		f.ConfidenceReason = "a canary planted as the privileged identity was disclosed to the low-privilege identity"
 		f.Evidence = fmt.Sprintf("planted canary disclosed to low-priv (HTTP %d)", lowStatus)
 		pr.finding, pr.certain = f, true
@@ -226,7 +209,7 @@ func (d *DifferentialOracle) probe(ctx context.Context, method, path string) (pr
 		if identical {
 			f.Evidence = fmt.Sprintf("low-priv response byte-identical to privileged (HTTP %d, %d bytes)", lowStatus, len(lowBody))
 		} else {
-			f.Evidence = fmt.Sprintf("low-priv discloses %d privileged-only token(s), e.g. %q", len(leaked), trunc(f.Marker, 48))
+			f.Evidence = fmt.Sprintf("low-priv discloses %d privileged-only token(s), e.g. %q", len(leaked), tools.Trunc(f.Marker, 48))
 		}
 		pr.finding = f
 		return pr, nil
@@ -243,12 +226,12 @@ func (d *DifferentialOracle) probe(ctx context.Context, method, path string) (pr
 // isChrome predicate marks as recurring across pages) and rates by how much unique
 // content is left: lots of resource-unique content is a real disclosure; all chrome
 // is a likely false positive.
-func scoreConfidence(pr probeResult, isChrome func(string) bool) (Confidence, string) {
+func scoreConfidence(pr probeResult, isChrome func(string) bool) (gored.Confidence, string) {
 	// Structured data disclosed cross-identity is the strong heuristic: an API returns
 	// a caller's records, not a page every signed-in user shares, so a match is rarely
 	// a false positive.
 	if pr.lowIsJSON {
-		return ConfHigh, "structured data (JSON) disclosed to a low-privilege identity; low false-positive likelihood"
+		return gored.ConfHigh, "structured data (JSON) disclosed to a low-privilege identity; low false-positive likelihood"
 	}
 	// An HTML page is inherently ambiguous without a canary: two users seeing the same
 	// page can be a real data leak OR just a shared static page (a form, a builder).
@@ -261,16 +244,16 @@ func scoreConfidence(pr probeResult, isChrome func(string) bool) (Confidence, st
 		}
 	}
 	if unique == 0 {
-		return ConfLow, "HTML that is page chrome shared with other authenticated pages; high false-positive likelihood"
+		return gored.ConfLow, "HTML that is page chrome shared with other authenticated pages; high false-positive likelihood"
 	}
-	return ConfMedium, fmt.Sprintf("an HTML page with %d resource-specific token(s) disclosed cross-identity; could be user data or a shared page — plant a canary to confirm", unique)
+	return gored.ConfMedium, fmt.Sprintf("an HTML page with %d resource-specific token(s) disclosed cross-identity; could be user data or a shared page — plant a canary to confirm", unique)
 }
 
 // fetch does one read-only GET as an identity, through the egress gate, without
 // following redirects so the real status (401/403/3xx) is visible. The identity's
 // cookie jar (from the shared Sessions) carries a cookie login; its Headers carry a
 // header-based session. It returns the status, content type, and body.
-func (d *DifferentialOracle) fetch(ctx context.Context, id Identity, method, path string) (int, string, string, error) {
+func (d *DifferentialOracle) fetch(ctx context.Context, id gored.Identity, method, path string) (int, string, string, error) {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
@@ -279,7 +262,7 @@ func (d *DifferentialOracle) fetch(ctx context.Context, id Identity, method, pat
 		if d.OnDeny != nil {
 			d.OnDeny(raw)
 		}
-		return 0, "", "", fmt.Errorf("%w: %s", ErrEgressDenied, raw)
+		return 0, "", "", fmt.Errorf("%w: %s", gored.ErrEgressDenied, raw)
 	}
 	to := d.Timeout
 	if to == 0 {

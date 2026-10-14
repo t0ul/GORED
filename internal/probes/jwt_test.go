@@ -1,4 +1,4 @@
-package gored_test
+package probes_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	probes "github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 )
 
@@ -48,9 +49,9 @@ func aliceToken(t *testing.T, base string) string {
 	return out.Token
 }
 
-func jwtProbe(t *testing.T, base string, secrets []string) *gored.JWTProbe {
+func jwtProbe(t *testing.T, base string, secrets []string) *probes.JWTProbe {
 	t.Helper()
-	return &gored.JWTProbe{
+	return &probes.JWTProbe{
 		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
 		Low:     gored.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
 		Secrets: secrets,
@@ -63,7 +64,7 @@ func jwtProbe(t *testing.T, base string, secrets []string) *gored.JWTProbe {
 func TestJWTForgeWithSourceSecret(t *testing.T) {
 	_, base := liveTarget(t) // vulnerable build, signs with the in-source secret
 
-	secrets := gored.HarvestSecrets("demotarget") // finds jwtDevSecret in demotarget.go
+	secrets := probes.HarvestSecrets("../../demotarget") // finds jwtDevSecret in demotarget.go
 	if len(secrets) == 0 {
 		t.Fatal("expected to harvest the dev signing secret from the demotarget source")
 	}
@@ -95,7 +96,7 @@ func TestJWTHardenedNotForged(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := serveTarget(t, s)
-	f, err := jwtProbe(t, base, gored.HarvestSecrets("demotarget")).Analyze(context.Background(), aliceToken(t, base), "/api/whoami")
+	f, err := jwtProbe(t, base, probes.HarvestSecrets("../../demotarget")).Analyze(context.Background(), aliceToken(t, base), "/api/whoami")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestJWTAlgNoneAccepted(t *testing.T) {
 
 	// Any HS256 token the app "issued"; its secret is unknown to the probe, so only the
 	// alg:none path can land here.
-	token := gored.ForgeHS256(map[string]any{"sub": "alice", "role": "user"}, "a-secret-the-probe-does-not-have")
+	token := probes.ForgeHS256(map[string]any{"sub": "alice", "role": "user"}, "a-secret-the-probe-does-not-have")
 	f, err := jwtProbe(t, ts.URL, nil).Analyze(context.Background(), token, "/api/whoami")
 	if err != nil {
 		t.Fatal(err)
@@ -143,14 +144,14 @@ func TestJWTAlgNoneAccepted(t *testing.T) {
 // TestCrackAndHarvest covers the offline primitives: a token forged with a secret is
 // cracked back to it, and HarvestSecrets pulls a signing secret out of a source file.
 func TestCrackAndHarvest(t *testing.T) {
-	tok, err := gored.ParseJWT(gored.ForgeHS256(map[string]any{"sub": "x"}, "hunter2key"))
+	tok, err := probes.ParseJWT(probes.ForgeHS256(map[string]any{"sub": "x"}, "hunter2key"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := gored.CrackHS256(tok, []string{"nope", "hunter2key", "other"}); got != "hunter2key" {
+	if got := probes.CrackHS256(tok, []string{"nope", "hunter2key", "other"}); got != "hunter2key" {
 		t.Errorf("crack: want hunter2key, got %q", got)
 	}
-	if got := gored.CrackHS256(tok, []string{"nope", "other"}); got != "" {
+	if got := probes.CrackHS256(tok, []string{"nope", "other"}); got != "" {
 		t.Errorf("crack: a wrong dictionary must not match, got %q", got)
 	}
 
@@ -158,7 +159,7 @@ func TestCrackAndHarvest(t *testing.T) {
 	if err := writeFile(dir, "config.go", "package c\n\nconst jwtSecret = \"topsecretvalue\"\n"); err != nil {
 		t.Fatal(err)
 	}
-	found := gored.HarvestSecrets(dir)
+	found := probes.HarvestSecrets(dir)
 	if !contains(found, "topsecretvalue") {
 		t.Errorf("harvest: want topsecretvalue, got %v", found)
 	}

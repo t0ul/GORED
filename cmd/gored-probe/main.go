@@ -21,6 +21,7 @@ import (
 	"time"
 
 	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/modelclient"
 	gledger "github.com/t0ul/gledger"
 	goserve "github.com/t0ul/goserve"
@@ -70,7 +71,7 @@ func main() {
 
 	runner := &gored.Runner{
 		Model:     modelclient.New(h.ChatURL("attacker"), modelName(*modelF)),
-		Tools:     gored.NewToolbox(httpTool, gored.NewDiscoverTool(*url, egress), gored.NewExecTool()),
+		Tools:     gored.NewToolbox(httpTool, probes.NewDiscoverTool(*url, egress), gored.NewExecTool()),
 		Skill:     gored.ReconSkill,
 		Target:    externalTarget{name: *url},
 		Board:     gored.NewBlackboard(),

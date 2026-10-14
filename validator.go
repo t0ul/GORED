@@ -248,66 +248,9 @@ func moreUrgent(a, b Verdict) bool {
 
 // ---- adapters: GORED's own findings -> normalized proofs ----
 
-// ProofFromHunt normalizes a gored-hunt access-control finding. A confirmed finding (the
-// model-written repro reproduced the disclosure) is exploitable and carries that repro;
-// a certain-but-unconfirmed one is triggerable; a high one is reachable.
-func ProofFromHunt(f HuntFinding, app string) (Proof, bool) {
-	if f.Verdict != VerdictBAC {
-		return Proof{}, false
-	}
-	locus, kind := NormLocus(f.Path)
-	p := Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
-		Source: "gored-hunt", Evidence: f.Evidence}
-	switch {
-	case f.Confirmed:
-		p.Rung, p.Exploitable, p.Repro = LadderExploitable, true, f.ReproGo
-	case f.Confidence == ConfCertain:
-		p.Rung = LadderTriggerable
-	case f.Confidence == ConfHigh:
-		p.Rung = LadderReachable
-	default:
-		p.Rung = LadderReported
-	}
-	return p, true
-}
-
-// ProofFromMassAssign normalizes a mass-assignment finding. Certain means the probe wrote
-// a privileged field and read it back changed — an executed privilege escalation, so
-// exploitable; high (reflected only) is triggerable.
-func ProofFromMassAssign(f MassAssignFinding, app string) (Proof, bool) {
-	if !f.Flagged() {
-		return Proof{}, false
-	}
-	locus, kind := NormLocus(f.WritePath)
-	p := Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
-		Source: "gored-massassign", Evidence: f.Evidence}
-	if f.Confidence == ConfCertain {
-		p.Rung, p.Exploitable = LadderExploitable, true
-		p.Repro = fmt.Sprintf("%s %s with {\"%s\":%v} as the low-priv identity; read it back changed", f.Method, f.WritePath, f.Field, f.SentValue)
-	} else {
-		p.Rung = LadderTriggerable
-	}
-	return p, true
-}
-
-// ProofFromJWT normalizes a JWT finding. Certain means a forged token was accepted on
-// replay — an executed authentication bypass, so exploitable; high (forgeable, replay
-// not confirmed) is triggerable. locus is the protected path the token unlocks.
-func ProofFromJWT(f JWTFinding, app, locus string) (Proof, bool) {
-	if !f.Flagged() {
-		return Proof{}, false
-	}
-	l, kind := NormLocus(locus)
-	p := Proof{App: app, Locus: l, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
-		Source: "gored-jwt", Evidence: f.Evidence}
-	if f.Confidence == ConfCertain {
-		p.Rung, p.Exploitable = LadderExploitable, true
-		p.Repro = fmt.Sprintf("forge a %s token (vector %s) and replay it on %s", f.Alg, f.Vector, locus)
-	} else {
-		p.Rung = LadderTriggerable
-	}
-	return p, true
-}
+// ProofFromHunt/ProofFromMassAssign/ProofFromJWT moved to internal/probes (they adapt probe
+// findings into a core Proof). ProofFromContainerIssue stays here — ContainerIssue is an
+// ingest type, not a probe.
 
 // ProofFromContainerIssue normalizes a discovered container misconfiguration. It is
 // present/confirmed (read straight from the Dockerfile), never exploitable on its own —

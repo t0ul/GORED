@@ -171,3 +171,12 @@ func TestDiffTool(t *testing.T) {
 		t.Fatalf("want a line-2 diff, got %q", ne)
 	}
 }
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}

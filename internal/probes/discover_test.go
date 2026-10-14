@@ -1,4 +1,4 @@
-package gored_test
+package probes_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	probes "github.com/t0ul/GORED/internal/probes"
 )
 
 func TestDiscoverExtractsSameOriginSurface(t *testing.T) {
@@ -31,7 +32,7 @@ func TestDiscoverExtractsSameOriginSurface(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 
-	d := gored.NewDiscoverTool(ts.URL, gored.NewEgress(authority(t, ts.URL)))
+	d := probes.NewDiscoverTool(ts.URL, gored.NewEgress(authority(t, ts.URL)))
 	out, err := d.Call(context.Background(), map[string]any{"path": "/"})
 	if err != nil {
 		t.Fatal(err)

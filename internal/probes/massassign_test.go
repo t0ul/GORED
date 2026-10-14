@@ -1,16 +1,17 @@
-package gored_test
+package probes_test
 
 import (
 	"context"
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	probes "github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 )
 
-func aliceProbe(t *testing.T, base string) *gored.MassAssignProbe {
+func aliceProbe(t *testing.T, base string) *probes.MassAssignProbe {
 	t.Helper()
-	return &gored.MassAssignProbe{
+	return &probes.MassAssignProbe{
 		Base:     base,
 		Egress:   gored.NewEgress(authority(t, base)),
 		Sessions: gored.NewSessions(),
@@ -71,10 +72,10 @@ func TestMassAssignUpdatesStillWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := serveTarget(t, s)
-	p := &gored.MassAssignProbe{
+	p := &probes.MassAssignProbe{
 		Base: base, Egress: gored.NewEgress(authority(t, base)), Sessions: gored.NewSessions(),
 		Low:    gored.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
-		Fields: []gored.MassAssignField{{Name: "name", Value: "Alice Updated"}},
+		Fields: []probes.MassAssignField{{Name: "name", Value: "Alice Updated"}},
 	}
 	f, err := p.Probe(context.Background(), "PUT", "/api/profile", "/api/profile")
 	if err != nil {

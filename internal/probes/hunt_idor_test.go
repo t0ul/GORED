@@ -1,4 +1,4 @@
-package gored_test
+package probes_test
 
 import (
 	"context"
@@ -6,15 +6,16 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	probes "github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/demotarget"
 )
 
-func idorHunt(t *testing.T, base string) gored.HuntReport {
+func idorHunt(t *testing.T, base string) probes.HuntReport {
 	t.Helper()
 	sessions := gored.NewSessions()
 	eg := gored.NewEgress(authority(t, base))
 	priv := gored.Identity{Name: "admin", Session: "admin", Headers: map[string]string{"X-Session": "admin-session"}}
-	h := &gored.Hunt{
+	h := &probes.Hunt{
 		Base: base, Egress: eg, Sessions: sessions,
 		Priv: priv,
 		Low:  gored.Identity{Name: "alice", Session: "alice", Headers: map[string]string{"X-Session": "alice-session"}},
@@ -38,7 +39,7 @@ func TestHuntObjectLevelIDOR(t *testing.T) {
 	_, base := liveTarget(t)
 	rep := idorHunt(t, base)
 
-	var idor *gored.HuntFinding
+	var idor *probes.HuntFinding
 	for i := range rep.Findings {
 		if rep.Findings[i].CWE == "CWE-639" && strings.HasPrefix(rep.Findings[i].Path, "/api/memos/") {
 			idor = &rep.Findings[i]

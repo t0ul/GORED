@@ -1,6 +1,8 @@
-package gored
+package probes
 
 import (
+	gored "github.com/t0ul/GORED"
+	"github.com/t0ul/GORED/internal/tools"
 	"context"
 	"fmt"
 	"io"
@@ -25,14 +27,14 @@ import (
 // it crawls jarless, the unauthenticated surface only.
 type DiscoverTool struct {
 	Base     string
-	Egress   *Egress
+	Egress   *gored.Egress
 	Max      int // max fetches per call (default 40)
 	Depth    int // how many page levels deep to crawl (default 2)
-	Sessions *Sessions
+	Sessions *gored.Sessions
 	client   *http.Client
 }
 
-func NewDiscoverTool(base string, e *Egress) *DiscoverTool {
+func NewDiscoverTool(base string, e *gored.Egress) *DiscoverTool {
 	return &DiscoverTool{
 		Base:   strings.TrimRight(base, "/"),
 		Egress: e,
@@ -56,7 +58,7 @@ var (
 )
 
 func (t *DiscoverTool) Call(ctx context.Context, args map[string]any) (string, error) {
-	start := asString(args["path"])
+	start := tools.AsString(args["path"])
 	if start == "" {
 		start = "/"
 	}
@@ -70,7 +72,7 @@ func (t *DiscoverTool) Call(ctx context.Context, args map[string]any) (string, e
 	// surface. With no registry it stays jarless — the unauthenticated surface only.
 	client := t.client
 	if t.Sessions != nil {
-		client = t.Sessions.Client(asString(args["session"]))
+		client = t.Sessions.Client(tools.AsString(args["session"]))
 	}
 
 	found := map[string]bool{}
@@ -220,8 +222,8 @@ func cleanPath(p string) string {
 // registry. Give both to the same recon agent so it can log in with http_request
 // under a session name and then discover the authenticated surface under that same
 // name — the "recon logs in, then crawls" step. onDeny may be nil.
-func WebRecon(base string, e *Egress, onDeny func(string)) (*HTTPRequestTool, *DiscoverTool) {
-	h := NewHTTPRequestTool(base, e, onDeny)
+func WebRecon(base string, e *gored.Egress, onDeny func(string)) (*gored.HTTPRequestTool, *DiscoverTool) {
+	h := gored.NewHTTPRequestTool(base, e, onDeny)
 	d := NewDiscoverTool(base, e)
 	d.Sessions = h.Sessions
 	return h, d

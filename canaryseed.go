@@ -64,7 +64,7 @@ func (s *CanarySeeder) Seed(ctx context.Context, endpoints []string) ([]Canary, 
 			continue
 		}
 		sample := s.get(ctx, ep)
-		marker := newCanaryMarker()
+		marker := NewCanaryMarker()
 		c := Canary{Marker: marker, Endpoint: ep}
 		for _, body := range s.candidateBodies(ctx, ep, sample, marker) {
 			if !strings.Contains(body, marker) {
@@ -100,12 +100,12 @@ func (s *CanarySeeder) SeedItems(ctx context.Context, templates []string) ([]Can
 		if !strings.ContainsAny(tpl, "{}") || strings.HasPrefix(tpl, "/api/auth/") {
 			continue
 		}
-		id := "gored7a-" + newCanaryMarker()[13:25] // a distinctive, caller-chosen id
+		id := "gored7a-" + NewCanaryMarker()[13:25] // a distinctive, caller-chosen id
 		concrete := fillTemplate(tpl, id)
 		if concrete == "" {
 			continue
 		}
-		marker := newCanaryMarker()
+		marker := NewCanaryMarker()
 		body := minimalBody(s.get(ctx, concrete), marker)
 		if !strings.Contains(body, marker) {
 			body = injectMarker(body, marker)
@@ -202,7 +202,7 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-func newCanaryMarker() string {
+func NewCanaryMarker() string {
 	b := make([]byte, 12)
 	_, _ = rand.Read(b)
 	return "GORED-CANARY-" + hex.EncodeToString(b)
