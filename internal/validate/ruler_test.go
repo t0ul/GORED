@@ -1,9 +1,10 @@
-package gored_test
+package validate_test
 
 import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 )
 
 // TestRulerScore checks recall/precision/confirmed against a small ground-truth ruler that
@@ -11,11 +12,11 @@ import (
 // positive dependency. The verdicts find one TP at the exploitable rung, miss the other,
 // correctly leave the known-good unflagged, and wrongly flag the fp — exercising every path.
 func TestRulerScore(t *testing.T) {
-	ruler := &gored.Ruler{App: "rr", Entries: []gored.RulerEntry{
-		{App: "rr", Locus: "/api/tickets", Class: "authz", Label: gored.LabelTruePositive},
-		{App: "rr", Locus: "/api/drafts/report/{id}", Class: "idor", Label: gored.LabelTruePositive},
-		{App: "rr", Locus: "/api/admin", Class: "authz", Label: gored.LabelKnownGood},
-		{App: "rr", Locus: "golang.org/x/crypto", Class: "sca", Label: gored.LabelFalsePositive},
+	ruler := &validate.Ruler{App: "rr", Entries: []validate.RulerEntry{
+		{App: "rr", Locus: "/api/tickets", Class: "authz", Label: validate.LabelTruePositive},
+		{App: "rr", Locus: "/api/drafts/report/{id}", Class: "idor", Label: validate.LabelTruePositive},
+		{App: "rr", Locus: "/api/admin", Class: "authz", Label: validate.LabelKnownGood},
+		{App: "rr", Locus: "golang.org/x/crypto", Class: "sca", Label: validate.LabelFalsePositive},
 	}}
 
 	verdicts := []gored.Verdict{
@@ -47,8 +48,8 @@ func TestRulerScore(t *testing.T) {
 // TestRulerLocusNormalization confirms a ruler entry and a verdict on the same instance
 // route match through the shared locus reducer: /api/drafts/report/5 matches {id}.
 func TestRulerLocusNormalization(t *testing.T) {
-	ruler := &gored.Ruler{Entries: []gored.RulerEntry{
-		{App: "rr", Locus: "/api/drafts/report/{id}", Label: gored.LabelTruePositive},
+	ruler := &validate.Ruler{Entries: []validate.RulerEntry{
+		{App: "rr", Locus: "/api/drafts/report/{id}", Label: validate.LabelTruePositive},
 	}}
 	verdicts := []gored.Verdict{{App: "rr", Locus: "/api/drafts/report/5", Rung: gored.LadderTriggerable}}
 	s := ruler.Score(verdicts, gored.LadderReachable)

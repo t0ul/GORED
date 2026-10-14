@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 	"github.com/t0ul/gobrig"
 )
 
@@ -19,7 +20,7 @@ func TestBuildProofsAndValidate(t *testing.T) {
 		t.Fatalf("want 2 proofs (RCE + container), got %d", len(ps))
 	}
 
-	verdicts := (&gored.Validator{}).Validate(nil, ps)
+	verdicts := (&validate.Validator{}).Validate(nil, ps)
 
 	var rce *gored.Verdict
 	for i := range verdicts {
@@ -49,7 +50,7 @@ func TestBuildProofsRCEOnly(t *testing.T) {
 	if len(ps) != 1 {
 		t.Fatalf("want 1 proof, got %d", len(ps))
 	}
-	v := (&gored.Validator{}).Validate(nil, ps)
+	v := (&validate.Validator{}).Validate(nil, ps)
 	if len(v) != 1 || !v[0].Exploitable {
 		t.Fatalf("want 1 exploitable verdict, got %+v", v)
 	}

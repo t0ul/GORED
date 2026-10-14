@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 )
 
 func main() {
@@ -130,7 +131,7 @@ func printRuntime(dir string, findings []gored.ScannerFinding) {
 // many raw rows became how many issues — the triage reduction. When a source analyzer is
 // available each issue also shows the best (most advanced) static rung across its members.
 func printCorrelated(findings []gored.ScannerFinding, analyzer gored.SourceAnalyzer) {
-	issues := gored.Correlate(findings)
+	issues := validate.Correlate(findings)
 	fmt.Printf("\n==== correlated issues (dedup + triage) ====\n")
 	fmt.Printf("%d findings -> %d issues\n\n", len(findings), len(issues))
 	for _, c := range issues {
@@ -160,7 +161,7 @@ func printCorrelated(findings []gored.ScannerFinding, analyzer gored.SourceAnaly
 // not-reachable verdict (ruled-out) outranks a bare "present" from a presence-only
 // scanner — determining reachability is strictly more information than noting presence,
 // so present + ruled-out on the same dependency is ruled-out, not present.
-func bestRung(c gored.CorrelatedIssue, analyzer gored.SourceAnalyzer) gored.Rung {
+func bestRung(c validate.CorrelatedIssue, analyzer gored.SourceAnalyzer) gored.Rung {
 	// RungAbsent and RungRuledOut share the string "ruled-out", so one key covers both.
 	order := map[gored.Rung]int{
 		gored.RungUnknown: 0, gored.RungPresent: 1,

@@ -2,6 +2,7 @@ package probes
 
 import (
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 	"github.com/t0ul/GORED/internal/ingest"
 	"context"
 	"fmt"
@@ -164,7 +165,7 @@ func (h *Hunt) Run(ctx context.Context) (HuntReport, error) {
 		}
 		if h.Model != nil && f.Marker != "" {
 			hf.Verified = true
-			v := gored.Verifier{Model: h.Model, Base: h.Base, Marker: f.Marker, Facts: h.facts(f.Path)}
+			v := validate.Verifier{Model: h.Model, Base: h.Base, Marker: f.Marker, Facts: h.facts(f.Path)}
 			vr, verr := v.Verify(ctx)
 			if verr == nil && vr.Confirmed {
 				hf.Confirmed, hf.ReproGo = true, vr.Go

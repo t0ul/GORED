@@ -1,6 +1,7 @@
-package gored
+package validate
 
 import (
+	gored "github.com/t0ul/GORED"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -53,19 +54,7 @@ func LoadRuler(path string) (*Ruler, error) {
 	return &r, nil
 }
 
-// Score is a run's result against a ruler: recall over the real bugs, precision against the
-// known-good/false-positive set, and the loci confirmed with an executed repro.
-type Score struct {
-	TPTotal        int      `json:"tp_total"`
-	TPFound        int      `json:"tp_found"`
-	FN             int      `json:"fn"`
-	FP             int      `json:"fp"`
-	Recall         float64  `json:"recall"`
-	Precision      float64  `json:"precision"`
-	Missed         []string `json:"missed,omitempty"`          // TP loci no verdict reached
-	FalsePositives []string `json:"false_positives,omitempty"` // known-good/fp loci the run flagged
-	Confirmed      []string `json:"confirmed,omitempty"`       // TP loci reached at the exploitable rung (with a repro)
-}
+// Score (the type) is core evidence vocabulary (see evidence.go).
 
 // Score grades verdicts against the ruler. A verdict "flags" a locus when its rung reaches
 // at least minRung (default reachable) — i.e. the run actively considers it a real or
@@ -73,29 +62,29 @@ type Score struct {
 // the ruler's true positives; precision counts a flag on a known-good/fp locus as a false
 // positive; flagged loci absent from the ruler are left unscored, since the ruler is not
 // exhaustive.
-func (r *Ruler) Score(verdicts []Verdict, minRung Ladder) Score {
+func (r *Ruler) Score(verdicts []gored.Verdict, minRung gored.Ladder) gored.Score {
 	if minRung == "" {
-		minRung = LadderReachable
+		minRung = gored.LadderReachable
 	}
-	threshold := LadderRank(minRung)
+	threshold := gored.LadderRank(minRung)
 
 	// Highest rung the run reached per (app, normalized locus).
-	best := map[string]Ladder{}
+	best := map[string]gored.Ladder{}
 	for _, v := range verdicts {
 		k := v.App + "\x00" + normLocusKey(v.Locus)
-		if cur, ok := best[k]; !ok || LadderRank(v.Rung) > LadderRank(cur) {
+		if cur, ok := best[k]; !ok || gored.LadderRank(v.Rung) > gored.LadderRank(cur) {
 			best[k] = v.Rung
 		}
 	}
-	flagged := func(app, locus string) (Ladder, bool) {
+	flagged := func(app, locus string) (gored.Ladder, bool) {
 		rung, ok := best[app+"\x00"+normLocusKey(locus)]
-		if !ok || LadderRank(rung) < threshold {
+		if !ok || gored.LadderRank(rung) < threshold {
 			return rung, false
 		}
 		return rung, true
 	}
 
-	var s Score
+	var s gored.Score
 	labelByKey := map[string]RulerLabel{}
 	for _, e := range r.Entries {
 		labelByKey[e.App+"\x00"+normLocusKey(e.Locus)] = e.Label
@@ -106,7 +95,7 @@ func (r *Ruler) Score(verdicts []Verdict, minRung Ladder) Score {
 		rung, hit := flagged(e.App, e.Locus)
 		if hit {
 			s.TPFound++
-			if rung == LadderExploitable {
+			if rung == gored.LadderExploitable {
 				s.Confirmed = append(s.Confirmed, e.App+":"+e.Locus)
 			}
 		} else {
@@ -116,7 +105,7 @@ func (r *Ruler) Score(verdicts []Verdict, minRung Ladder) Score {
 	}
 	// Precision: flags landing on a known-good / fp entry are false positives.
 	for k, rung := range best {
-		if LadderRank(rung) < threshold {
+		if gored.LadderRank(rung) < threshold {
 			continue
 		}
 		if lbl, ok := labelByKey[k]; ok && lbl != LabelTruePositive {
@@ -141,7 +130,7 @@ func (r *Ruler) Score(verdicts []Verdict, minRung Ladder) Score {
 // stored already-shaped (a route, module, or file), so this reuses the same reducer that
 // correlation and the validator use.
 func normLocusKey(locus string) string {
-	k, _ := NormLocus(locus)
+	k, _ := gored.NormLocus(locus)
 	return k
 }
 

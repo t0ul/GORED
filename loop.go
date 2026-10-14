@@ -559,7 +559,7 @@ func repairNearJSON(s string) string {
 	return s
 }
 
-// extractJSON returns the first balanced {...} object in s.
+// ExtractJSON returns the first balanced {...} object in s.
 // balancedEnd returns the index just past the '}' closing the object that starts
 // at s[start]=='{', or -1 if unbalanced.
 func balancedEnd(s string, start int) int {
@@ -586,7 +586,7 @@ func balancedEnd(s string, start int) int {
 	return -1
 }
 
-func extractJSON(s string) (string, bool) {
+func ExtractJSON(s string) (string, bool) {
 	i := strings.IndexByte(s, '{')
 	if i < 0 {
 		return "", false

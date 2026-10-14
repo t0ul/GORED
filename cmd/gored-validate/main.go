@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	gored "github.com/t0ul/GORED"
+	validate "github.com/t0ul/GORED/internal/validate"
 	"github.com/t0ul/GORED/internal/probes"
 )
 
@@ -51,7 +52,7 @@ func main() {
 		}
 	}
 
-	v := &gored.Validator{}
+	v := &validate.Validator{}
 	if *source != "" {
 		if a := gored.DetectAnalyzer(*source); a != nil {
 			v.Analyzer = a
@@ -95,7 +96,7 @@ func main() {
 	fmt.Printf("\n%d confirmed-exploitable (with a repro) out of %d verdicts\n", exploitable, len(verdicts))
 
 	if *rulerP != "" {
-		ruler, err := gored.LoadRuler(*rulerP)
+		ruler, err := validate.LoadRuler(*rulerP)
 		if err != nil {
 			log.Fatal(err)
 		}

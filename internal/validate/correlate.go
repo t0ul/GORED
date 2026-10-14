@@ -1,7 +1,7 @@
-package gored
+package validate
 
 import (
-	"regexp"
+	gored "github.com/t0ul/GORED"
 	"sort"
 	"strings"
 )
@@ -20,7 +20,7 @@ type CorrelatedIssue struct {
 	App       string           // the app the locus belongs to
 	Locus     string           // the normalized key: a route, a file, or a module
 	Kind      string           // how the locus was keyed: "route" | "file" | "module" | "other"
-	Findings  []ScannerFinding // every finding that collapsed into this issue, in input order
+	Findings  []gored.ScannerFinding // every finding that collapsed into this issue, in input order
 	Sources   []string         // the distinct scanners that reported it, sorted
 	Severity  string           // the worst severity in the group, normalized lower-case
 	Reachable *bool            // merged reachability (see type doc); nil = unknown
@@ -35,7 +35,7 @@ func (c CorrelatedIssue) Count() int { return len(c.Findings) }
 // no source tree, no network — so it runs on whatever an aggregator already holds. The
 // result is sorted by priority: worst severity first, then reachable before unknown
 // before ruled-out, then the larger pile-up, then app and locus for a stable order.
-func Correlate(findings []ScannerFinding) []CorrelatedIssue {
+func Correlate(findings []gored.ScannerFinding) []CorrelatedIssue {
 	groups := map[string]*CorrelatedIssue{}
 	order := []string{} // preserve first-seen order for determinism before the final sort
 	for _, f := range findings {
@@ -106,71 +106,15 @@ func rollup(ci *CorrelatedIssue) {
 // path but drops the line (so many rules in one file group). Classification is by shape,
 // not by language: a leading "/" is a route, a domain-like first segment (or "stdlib") is
 // a module, a trailing file extension is a file. Anything else keys on itself.
-func locusOf(f ScannerFinding) (locus, kind string) {
-	return NormLocus(f.Location)
+func locusOf(f gored.ScannerFinding) (locus, kind string) {
+	return gored.NormLocus(f.Location)
 }
 
 // normLocus reduces any location string (a scanner's or a GORED proof's) to the shared
 // (locus, kind) key, so a scanner finding and a GORED proof about the same surface collapse
 // onto one issue regardless of which produced them.
-func NormLocus(location string) (locus, kind string) {
-	loc := strings.TrimSpace(location)
-	switch {
-	case loc == "":
-		return "(unknown)", "other"
-	case strings.HasPrefix(loc, "/"):
-		return normalizeRoute(loc), "route"
-	case looksLikeModule(loc):
-		return modulePath(loc), "module"
-	case looksLikeFile(loc):
-		return stripLineSuffix(loc), "file"
-	default:
-		return loc, "other"
-	}
-}
-
-// looksLikeModule is true for a dependency path whose first segment is a registry domain
-// (golang.org/x/net, github.com/org/repo, gopkg.in/yaml.v2) or the Go stdlib marker.
-func looksLikeModule(loc string) bool {
-	if loc == "stdlib" {
-		return true
-	}
-	first := loc
-	if i := strings.IndexByte(loc, '/'); i >= 0 {
-		first = loc[:i]
-	}
-	return strings.Contains(first, ".")
-}
-
-var reFileExt = regexp.MustCompile(`\.[A-Za-z][A-Za-z0-9]*(?::\d+)?$`)
-
-// looksLikeFile is true for a source path ending in an extension, optionally with a
-// :line suffix (pkg/auth/auth_handlers.go:111, src/app.ts).
-func looksLikeFile(loc string) bool { return reFileExt.MatchString(loc) }
-
-var reLineSuffix = regexp.MustCompile(`:\d+$`)
-
-// stripLineSuffix drops a trailing :line so findings at different lines of one file group.
-func stripLineSuffix(loc string) string { return reLineSuffix.ReplaceAllString(loc, "") }
-
-var (
-	reNumSeg  = regexp.MustCompile(`^\d+$`)
-	reUUIDSeg = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	reHexSeg  = regexp.MustCompile(`^[0-9a-fA-F]{16,}$`)
-)
-
-// normalizeRoute folds instance identifiers in a URL path to {id} so findings on, say,
-// /api/drafts/5 and /api/drafts/9 collapse onto one route. It uses the same {id}
-// convention as the OpenAPI ingestion so a correlated route lines up with a hunt target.
-func normalizeRoute(p string) string {
-	segs := strings.Split(p, "/")
-	for i, s := range segs {
-		if reNumSeg.MatchString(s) || reUUIDSeg.MatchString(s) || reHexSeg.MatchString(s) {
-			segs[i] = "{id}"
-		}
-	}
-	return strings.Join(segs, "/")
-}
+// gored.NormLocus and its helpers (looksLikeModule/looksLikeFile/stripLineSuffix/normalizeRoute)
+// are core evidence vocabulary (see evidence.go).
 
 // sevRank orders severities so the worst in a group wins. Unknown/empty ranks lowest —
 // GORED does not inflate an issue past what a scanner actually claimed.
