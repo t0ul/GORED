@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/t0ul/GORED/internal/tools"
+)
 
 // TestMineEndpoints checks the JS-bundle miner against literal shapes taken from real
 // bundles (Juice Shop's main.js carries /api/* and /rest/* route strings; static assets and
@@ -56,8 +60,8 @@ func TestClassifySurfaceMap(t *testing.T) {
 		``:                                                     "unknown",
 	}
 	for body, want := range cases {
-		if got := classifySurface(body); got != want {
-			t.Errorf("classifySurface(%.20q) = %q, want %q", body, got, want)
+		if got, _ := tools.ClassifySurface(body); got != want {
+			t.Errorf("ClassifySurface(%.20q) = %q, want %q", body, got, want)
 		}
 	}
 }

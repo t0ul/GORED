@@ -194,7 +194,7 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 			ph := r.Phases[phaseIdx]
 			goalLine = fmt.Sprintf("Phase %d/%d (%s): %s\nOverall objective: %s", phaseIdx+1, len(r.Phases), ph.Name, ph.Brief, obj.Goal)
 		}
-		user := fmt.Sprintf("Blackboard (what you have found so far):\n%s\n\n%s\nReply with ONE JSON object. To call a tool: {\"tool\":\"http_request\",\"args\":{...}} (tool must be one of: %s). When you have read the flag: {\"done\":true,\"flag\":\"GORED{...}\"}.", r.Board.Render(), goalLine, strings.Join(r.Tools.names(), ", "))
+		user := fmt.Sprintf("Blackboard (what you have found so far):\n%s\n\n%s\nReply with ONE JSON object. To call a tool: {\"tool\":\"http_request\",\"args\":{...}} (tool must be one of: %s). When you have read the flag: {\"done\":true,\"flag\":\"GORED{...}\"}.", r.Board.Render(), goalLine, strings.Join(r.Tools.Names(), ", "))
 		turn := append(msgs, Message{Role: RoleUser, Content: user})
 
 		reply, usage, err := r.Model.Chat(ctx, turn, ChatOpts{Temperature: 0.2, MaxTokens: b.MaxOutTokens})
@@ -448,6 +448,10 @@ func (r *Runner) allowlist() string {
 	if t, ok := r.Tools.Get("http_request"); ok {
 		if h, ok := t.(*HTTPRequestTool); ok {
 			return strings.Join(h.Egress.Authorities(), ",")
+		}
+		// A gated tool (e.g. internal/tools.GetTool) exposes its allowlist this way.
+		if a, ok := t.(interface{ EgressAuthorities() []string }); ok {
+			return strings.Join(a.EgressAuthorities(), ",")
 		}
 	}
 	return ""
