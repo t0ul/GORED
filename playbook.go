@@ -37,6 +37,17 @@ func WebInjectionPlaybook() []Phase {
 	}
 }
 
+// WebInjectionPlaybookManual is the same staging WITHOUT a deterministic solver tool:
+// the probe phase tells the agent to test for injection by hand (send a command, look for
+// its output). It isolates how much the agent itself contributes under the staged
+// structure, versus how much the find_injection solver does.
+func WebInjectionPlaybookManual() []Phase {
+	pb := WebInjectionPlaybook()
+	pb[1].Brief = "Find the endpoint that executes commands. Test parameters by hand: on an endpoint, send a parameter whose value RUNS a command such as `id`, " +
+		"and look for its OUTPUT (for example uid=0(root)). A string merely echoed back unchanged is NOT execution. Try different endpoints and parameter names until you confirm real command output."
+	return pb
+}
+
 // StagedWebSkill is the minimal skill for a staged web run: the phases carry the
 // methodology, so the skill only sets the frame and the one-tool contract.
 var StagedWebSkill = Skill{
