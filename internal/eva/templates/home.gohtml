@@ -1,0 +1,113 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">EVA · GORED <span class="badge done">LAUNCH BAY</span></span>
+  <span class="hudcfg">piloted app-layer red-team · the model is the weapon</span>
+  <span class="hudphase" id="hudphase">MAGI 3 / 3</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ PREFLIGHT</div>
+      <div class="readout">
+        <div class="ro">MODEL <b id="pf-model">—</b></div>
+        <div class="ro">TARGET <b id="pf-target">—</b></div>
+        <div class="ro">CONTAINMENT <b class="grn">ARMED</b></div>
+        <div class="ro">ORACLE <b>REAL-BYTES</b></div>
+        <div class="ro">A.T. FIELD <b class="pur">ACTIVE</b></div>
+      </div>
+      <div class="panel-tag" style="margin-top:14px">QUICK LAUNCH</div>
+      <div class="chips" id="presets">
+        <span class="chip act" onclick="preset('apiexploit')">API IDOR</span>
+        <span class="chip act" onclick="preset('exploit')">XSS SWEEP</span>
+        <span class="chip act" onclick="preset('llmattack')">LLM JAILBREAK</span>
+        <span class="chip act" onclick="preset('plan')">FULL PLAN</span>
+        <span class="chip act" onclick="preset('recon')">RECON</span>
+        <span class="chip act" onclick="preset('map')">MAP</span>
+      </div>
+      <p class="hint" style="margin-top:12px">A preset arms the dial; chips below set the weapon. Target only on the egress allowlist — the oracle confirms on real bytes.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ LAUNCH CONFIG</div>
+      <form method="post" action="/run" id="launchform">
+        <label>STAGE <select name="stage" id="stageSel">{{range .Stages}}<option value="{{.Name}}"{{if eq .Name $.SelStage}} selected{{end}}>{{.Name}} — {{.Goal}}</option>{{end}}</select></label>
+        <label>TARGET BASE URL <input name="base" id="baseinput" value="{{.Base}}"></label>
+        <label>MODEL (GGUF) <input name="model" id="modelinput" value="{{.Model}}"></label>
+        {{if .Models}}<div class="chips modelchips"><span class="chip act mtxtoggle" id="mtxbtn" onclick="toggleMtx(this)" title="when on, chips add to the matrix">⊞ MATRIX</span>{{range .Models}}<span class="chip act" onclick="pickModel('{{.}}')">{{.}}</span>{{end}}</div>{{end}}
+        <label>MODEL MATRIX · RESEARCHER MODE <input name="models" id="matrixinput" value="{{.MatrixModels}}" placeholder="qwen2.5-0.5b-instruct.gguf, qwen2.5-1.5b-instruct.gguf"></label>
+        <p class="hint">Leave blank for a single-model run. A comma-separated list runs one contender per model and compares them on the leaderboard — always autonomous.</p>
+        <label>BRIG BRIDGE <input name="bridge" value="{{.Bridge}}"></label>
+        <label>SYNC PROMPT · SKILL INSTRUCTION <textarea name="skill" id="skill" rows="4">{{.SkillText}}</textarea></label>
+        <fieldset class="dial">
+          <legend>AUTONOMY DIAL</legend>
+          <label class="radio"><input type="radio" name="autonomy" value="piloted"{{if eq .Autonomy "piloted"}} checked{{end}}> <b>PILOTED</b><span>pause at every gate — you pick the moves</span></label>
+          <label class="radio"><input type="radio" name="autonomy" value="assisted"{{if eq .Autonomy "assisted"}} checked{{end}}> <b>ASSISTED</b><span>acts on its own after a beat unless you intervene</span></label>
+          <label class="radio"><input type="radio" name="autonomy" value="autonomous"{{if eq .Autonomy "autonomous"}} checked{{end}}> <b>BERSERK</b><span>no gate — runs free, the headless/CI loop</span></label>
+        </fieldset>
+        <label>TRIALS (BERSERK / MATRIX) <input name="trials" type="number" value="{{.Trials}}" min="1"></label>
+        <label class="chk"><input type="checkbox" name="ensure" value="1"{{if .Ensure}} checked{{end}}> auto-launch vulnapp</label>
+      </form>
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ SORTIE LOG</div>
+      {{if .Recent}}
+      <input class="directivein" id="sortiesearch" style="width:100%;margin-bottom:8px" placeholder="filter sorties…" oninput="filterSorties(this.value)">
+      <form method="get" action="/compare">
+        <ul class="runs" id="sortielist">{{range .Recent}}
+          <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span>{{if .IsMatrix}} <span class="badge matrix">matrix</span>{{end}} <span class="badge {{.Status}}">{{.Status}}</span>{{if captured .Sums}} <span class="badge cap">CAPTURED</span>{{end}}</li>
+        {{end}}</ul>
+        <div class="btnrow rectrow"><button class="rect">COMPARE</button><button class="rect" formaction="/leaderboard">PROMOTE</button></div>
+      </form>
+      {{else}}<p class="muted">no sorties yet</p>{{end}}
+    </section>
+  </div>
+</div>
+<div class="dock homedock">
+  <span></span>
+  <button class="go" form="launchform" {{if .Busy}}disabled{{end}}>{{if .Busy}}EVA IN FLIGHT…{{else}}LAUNCH{{end}}</button>
+  <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav>
+</div>
+<script>
+(function(){
+  var INSTR = {{.StageInstr}};
+  var sel = document.getElementById('stageSel');
+  var ta = document.getElementById('skill');
+  if (sel && ta) sel.addEventListener('change', function(){ if (INSTR[sel.value] !== undefined) ta.value = INSTR[sel.value]; });
+
+  // quick-launch preset: arm a stage (fills the prompt via the change handler)
+  window.preset = function(stage){ if(!sel) return; sel.value = stage; sel.dispatchEvent(new Event('change')); };
+
+  // searchable sortie log
+  window.filterSorties = function(q){ q=(q||'').toLowerCase(); var ul=document.getElementById('sortielist'); if(!ul) return; [].forEach.call(ul.children, function(li){ li.style.display = li.textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none'; }); };
+
+  // model chips: set the single model, or append to the matrix when MATRIX mode is on
+  var mtxMode = false;
+  window.toggleMtx = function(c){ mtxMode = !mtxMode; c.classList.toggle('on', mtxMode); };
+  window.pickModel = function(m){
+    if(mtxMode){
+      var mx = document.getElementById('matrixinput');
+      var set = mx.value.split(',').map(function(s){return s.trim();}).filter(Boolean);
+      if(set.indexOf(m) < 0) set.push(m);
+      mx.value = set.join(', ');
+    } else {
+      document.getElementById('modelinput').value = m; checkModel();
+    }
+  };
+
+  // preflight lights
+  var MODELS = [].map.call(document.querySelectorAll('.modelchips .chip.act:not(.mtxtoggle)'), function(c){ return c.textContent; });
+  function light(id, state, txt){ var b=document.getElementById(id); if(!b) return; b.textContent=txt; b.className = state; }
+  function checkModel(){ var m=(document.getElementById('modelinput').value||'').trim(); if(!m){ light('pf-model','','—'); return; } var ok=MODELS.indexOf(m)>=0; light('pf-model', ok?'grn':'bad', ok?'PRESENT':'MISSING'); }
+  var pfT;
+  function checkTarget(){ var base=(document.getElementById('baseinput').value||'').trim(); if(!base){ light('pf-target','','—'); return; } light('pf-target','','…');
+    fetch('/preflight?base='+encodeURIComponent(base)).then(function(r){return r.json();}).then(function(j){ light('pf-target', j.ok?'grn':'bad', j.ok?'REACHABLE':'DOWN'); }).catch(function(){ light('pf-target','bad','DOWN'); }); }
+  var mi=document.getElementById('modelinput'); if(mi) mi.addEventListener('input', checkModel);
+  var bi=document.getElementById('baseinput'); if(bi) bi.addEventListener('input', function(){ clearTimeout(pfT); pfT=setTimeout(checkTarget, 500); });
+  checkModel(); checkTarget();
+})();
+</script>
+{{- end}}

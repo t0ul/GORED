@@ -1,0 +1,72 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">STUDIO <span class="badge done">FACTORY</span></span>
+  <span class="hudcfg">tools · skills · stages <span class="dim">· author the registry — edits drive the stages</span></span>
+  <span class="hudphase">{{len .Stages}} STAGES</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ CATALOG</div>
+      <div class="readout">
+        <div class="ro">TOOLS <b>{{len .Tools}}</b></div>
+        <div class="ro">SKILLS <b>{{len .Skills}}</b></div>
+        <div class="ro">STAGES <b>{{len .Stages}}</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px">Edit a skill and SAVE: the stages read their instruction from this registry, so the change drives the next run of any stage that uses it. Tools stay code-defined — the inventory is read-only. ARM a stage to launch it.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ TOOLS · <span class="count">{{len .Tools}}</span></div>
+      <div class="chips">{{range .Tools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">none</span>{{end}}</div>
+      <div class="rolehdr" style="margin-top:18px">◉ SKILLS · <span class="count">{{len .Skills}}</span> <span class="dim" style="font-size:11px">editable</span></div>
+      {{if .Skills}}{{range .Skills}}
+      <form method="post" action="/studio/skill" class="card frame skillcard"{{if .Stage}} data-stage="{{.Stage}}"{{end}}>
+        <div class="card-tag">{{.Name}} <span class="temp temp-{{.Temp}}">{{.Temp}}</span> {{if .Changed}}<span class="badge cap">EDITED</span>{{else if .BuiltIn}}<span class="src-router">built-in</span>{{else}}<span class="src-model">authored</span>{{end}}{{if .Stage}} <span class="dim">→ {{.Stage}}</span>{{end}}</div>
+        <input type="hidden" name="name" value="{{.Name}}">
+        <input type="hidden" name="temp" value="{{.Temp}}">
+        <textarea name="instruction" rows="4" readonly>{{.Instruction}}</textarea>
+        <div class="btnrow rectrow">
+          <button type="button" class="rect" onclick="editSkill(this)">EDIT</button>
+          <button class="rect save" disabled>SAVE</button>
+          <button type="button" class="rect ico" title="copy instruction" aria-label="copy instruction" onclick="copySkill(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button>
+          {{if .Changed}}<button type="button" class="rect danger" onclick="revertSkill(this)">REVERT</button>{{end}}{{if .Stage}}<button type="button" class="rect" onclick="dryRun(this)">DRY-RUN</button>{{end}}
+        </div>
+      </form>
+      {{end}}{{else}}<p class="muted">no skills registry (run with -store to seed the catalog)</p>{{end}}
+      <div class="rolehdr" style="margin-top:18px">◉ STAGES · <span class="count">{{len .Stages}}</span></div>
+      {{range .Stages}}
+      <div class="card frame skillcard">
+        <div class="card-tag">{{.Name}} <span class="dim">skill: {{.Skill}} · tools: {{range .Tools}}{{.}} {{end}}</span></div>
+        <div class="btnrow"><a class="chip act" href="/?stage={{.Name}}">ARM</a></div>
+      </div>
+      {{end}}
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ INVENTORY</div>
+      <div class="readout">
+        {{range .Stages}}<div class="ro">{{.Name}} <b>{{len .Tools}} tools</b></div>{{end}}
+      </div>
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav></div>
+  <span></span>
+</div>
+<script>
+window.editSkill=function(btn){ var f=btn.closest('form'); var t=f.querySelector('textarea'); if(!t) return; t.readOnly=false; f.classList.add('editing'); var s=f.querySelector('.rect.save'); if(s) s.disabled=false; t.focus(); var v=t.value; t.value=''; t.value=v; };
+window.copySkill=function(btn){ var t=btn.closest('form').querySelector('textarea'); if(!t) return; (navigator.clipboard&&navigator.clipboard.writeText(t.value)); btn.classList.add('ok'); btn.title='copied'; setTimeout(function(){btn.classList.remove('ok'); btn.title='copy instruction';}, 1000); };
+window.revertSkill=function(btn){ var name=btn.closest('form').querySelector('input[name=name]').value; var ff=document.createElement('form'); ff.method='post'; ff.action='/studio/revert'; var i=document.createElement('input'); i.type='hidden'; i.name='name'; i.value=name; ff.appendChild(i); document.body.appendChild(ff); ff.submit(); };
+window.dryRun=function(btn){ var f=btn.closest('form'); var stage=f.getAttribute('data-stage'); if(!stage) return; var skill=f.querySelector('textarea[name=instruction]').value;
+  var ff=document.createElement('form'); ff.method='post'; ff.action='/run';
+  function add(n,v){ var i=document.createElement('input'); i.type='hidden'; i.name=n; i.value=v; ff.appendChild(i); }
+  add('stage',stage); add('autonomy','autonomous'); add('trials','1'); add('base','http://127.0.0.1:8088'); add('model','qwen2.5-3b-instruct.gguf'); add('ensure','1'); add('skill',skill);
+  document.body.appendChild(ff); ff.submit(); };
+</script>
+{{- end}}

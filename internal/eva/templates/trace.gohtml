@@ -1,0 +1,80 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">TRACE <span class="badge {{if .Verified}}done{{else}}error{{end}}">{{if .Verified}}VERIFIED{{else}}UNVERIFIED{{end}}</span></span>
+  <span class="hudcfg">run {{.ID}} · gledger append-only audit</span>
+  <span class="hudphase">{{.Count}} RECORDS</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ RUN</div>
+      <div class="readout">
+        <div class="ro">RUN <b>{{.ID}}</b></div>
+        <div class="ro">RECORDS <b>{{.Count}}</b></div>
+        <div class="ro">CHAIN <b class="{{if .Verified}}grn{{end}}">{{if .Verified}}VERIFIED{{else}}BROKEN{{end}}</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px">Replay the sortie step by step — each record is hash-chained to the one before it. Keys: space play/pause · ← → step · j jump to capture.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ REPLAY · <span class="count" id="tpos">0 / {{.Count}}</span> <span class="feedchips">
+        <span class="fchip" data-span="model" onclick="tfilter('model',this)">MODEL</span>
+        <span class="fchip" data-span="tool" onclick="tfilter('tool',this)">TOOL</span>
+        <span class="fchip" data-span="board" onclick="tfilter('board',this)">BOARD</span>
+        <span class="fchip" data-span="phase" onclick="tfilter('phase',this)">PHASE</span>
+        <span class="fchip" data-span="checkpoint" onclick="tfilter('checkpoint',this)">GATE</span>
+      </span></div>
+      <div class="player">
+        <button class="rect" onclick="tstep(-1)">◀ STEP</button>
+        <button class="rect" onclick="tplay()" id="playbtn">PLAY</button>
+        <button class="rect" onclick="tstep(1)">STEP ▶</button>
+        <button class="rect" onclick="tspeed(this)" id="speedbtn">1×</button>
+        <button class="rect" onclick="tjump()">CAPTURE</button>
+        <button class="rect" onclick="treset()">RESET</button>
+      </div>
+      <div class="tl" id="tl">
+      {{range .Events}}<div class="tlev seen {{.Cls}}" data-span="{{.Span}}"><span class="sp">[{{.Span}}] {{.Event}}</span>{{if .Detail}}<div class="tx">{{.Detail}}</div>{{end}}</div>{{end}}
+      </div>
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ INTEGRITY</div>
+      {{if .Verified}}<div class="verdict-bar hit">● HASH-CHAIN VERIFIED</div>{{else}}<div class="verdict-bar miss">○ UNVERIFIED</div>{{end}}
+      <p class="hint" style="margin-top:10px">gledger stamps each record with the hash of the previous — an append-only, tamper-evident ledger. The verdicts shown in the cockpit are reproduced from exactly these bytes.</p>
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/run/{{.ID}}">BACK TO SORTIE</a> · <a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a></nav></div>
+  <span></span>
+</div>
+<script>
+(function(){
+  var evs=[].slice.call(document.querySelectorAll('#tl .tlev')); var i=-1; var timer=null;
+  var pos=document.getElementById('tpos'); var total=evs.length;
+  var speeds=[450,225,112], labels=['1×','2×','4×'], si=0;
+  function playbtn(){ return document.getElementById('playbtn'); }
+  function visible(){ return evs.filter(function(e){ return e.style.display!=='none'; }); }
+  function show(n){ if(n<-1)n=-1; if(n>=evs.length)n=evs.length-1; evs.forEach(function(e,k){e.classList.toggle('active',k===n);}); if(n>=0&&evs[n])evs[n].scrollIntoView({block:'nearest'}); i=n; pos.textContent=(n+1)+' / '+total; }
+  function stop(){ if(timer){clearInterval(timer);timer=null;} var b=playbtn(); if(b)b.textContent='PLAY'; }
+  window.tstep=function(d){ stop(); show(i+d); };
+  window.treset=function(){ stop(); show(-1); };
+  window.tplay=function(){ if(timer){ stop(); return; } var b=playbtn(); if(b)b.textContent='PAUSE'; timer=setInterval(function(){ if(i>=evs.length-1){ stop(); return; } show(i+1); }, speeds[si]); };
+  window.tspeed=function(b){ si=(si+1)%speeds.length; b.textContent=labels[si]; if(timer){ clearInterval(timer); timer=null; tplay(); } };
+  window.tjump=function(){ for(var k=0;k<evs.length;k++){ if(evs[k].classList.contains('hit')){ show(k); return; } } };
+  var tHidden={};
+  window.tfilter=function(span,chip){ if(tHidden[span]){delete tHidden[span];chip.classList.remove('off');}else{tHidden[span]=1;chip.classList.add('off');} evs.forEach(function(e){ e.style.display = tHidden[e.getAttribute('data-span')]?'none':''; }); };
+  document.addEventListener('keydown', function(e){
+    if(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if(e.key===' '){ e.preventDefault(); tplay(); }
+    else if(e.key==='ArrowLeft'){ tstep(-1); }
+    else if(e.key==='ArrowRight'){ tstep(1); }
+    else if(e.key==='j'||e.key==='J'){ tjump(); }
+  });
+})();
+</script>
+{{- end}}

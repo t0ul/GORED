@@ -1,0 +1,135 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">LEADERBOARD <span class="badge done">MAGI</span></span>
+  <span class="hudcfg">{{.Title}}{{if .Target}} · {{.Target}}{{end}}{{if .Note}} · {{.Note}}{{end}}</span>
+  <span class="hudphase">{{len .Rows}} CONTENDERS</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ READ-OUT</div>
+      <div class="readout">
+        <div class="ro">RANK <b>capture %</b></div>
+        <div class="ro">CAP <b>oracle-confirmed</b></div>
+        <div class="ro">CAP/MTOK <b>efficiency</b></div>
+        <div class="ro">VERDICT <b class="grn">REAL BYTES</b></div>
+      </div>
+      <div class="panel-tag" style="margin-top:14px">FILTER</div>
+      <div class="chips" id="lbfilters"><span class="muted" style="font-size:11px">—</span></div>
+      <p class="hint" style="margin-top:12px">Click a column to sort, a chip to filter, a row to pin it to TOP WEAPON. Each row is a contender — a model × skill — scored on real target bytes.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ CONTENDERS · <span class="count" id="lbcount">{{len .Rows}}</span></div>
+      {{if .Rows}}
+      <div class="tblwrap"><table class="lb" id="lbtable"><thead><tr>
+        <th data-k="rank" class="sortable">#<i></i></th>
+        <th data-k="name" class="sortable">contender<i></i></th>
+        <th data-k="cap" class="capcell sortable">capture<i></i></th>
+        <th data-k="capn" class="sortable">cap<i></i></th>
+        <th data-k="tools" class="sortable">tools<i></i></th>
+        <th data-k="tok" class="sortable">tok<i></i></th>
+        <th data-k="eff" class="sortable">cap/Mtok<i></i></th>
+      </tr></thead><tbody>
+      {{range $i, $r := .Rows}}<tr{{if eq $i 0}} class="top"{{end}} data-name="{{$r.Contender}}" data-cap="{{pct $r.CaptureRate}}" data-capn="{{$r.Captured}}/{{$r.Trials}}" data-tools="{{printf "%.1f" $r.MeanToolCall}}" data-tok="{{printf "%.0f" $r.MeanTokens}}" data-eff="{{if gt $r.CapturePerMTok 0.0}}{{printf "%.0f" $r.CapturePerMTok}}{{else}}—{{end}}">
+        <td class="rank" data-v="{{add $i 1}}">{{add $i 1}}</td>
+        <td data-v="{{$r.Contender}}">{{$r.Contender}}</td>
+        <td class="capcell" data-v="{{$r.CaptureRate}}"><div class="capbar"><i style="width:{{pct $r.CaptureRate}}"></i><span>{{pct $r.CaptureRate}}</span></div></td>
+        <td data-v="{{$r.Captured}}">{{$r.Captured}}/{{$r.Trials}}</td>
+        <td data-v="{{printf "%.1f" $r.MeanToolCall}}">{{printf "%.1f" $r.MeanToolCall}}</td>
+        <td data-v="{{printf "%.0f" $r.MeanTokens}}">{{printf "%.0f" $r.MeanTokens}}</td>
+        <td data-v="{{if gt $r.CapturePerMTok 0.0}}{{printf "%.0f" $r.CapturePerMTok}}{{else}}-1{{end}}">{{if gt $r.CapturePerMTok 0.0}}{{printf "%.0f" $r.CapturePerMTok}}{{else}}—{{end}}</td>
+      </tr>{{end}}
+      </tbody></table></div>
+      {{else}}<p class="muted">no contenders yet — launch a sortie from the cockpit.</p>{{end}}
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ TOP WEAPON</div>
+      {{if .Rows}}{{with index .Rows 0}}
+      <div class="verdict-bar hit" id="tw-name">● {{.Contender}}</div>
+      <div class="readout">
+        <div class="ro">CAPTURE <b id="tw-cap">{{pct .CaptureRate}}</b></div>
+        <div class="ro">CAPTURED <b id="tw-capn">{{.Captured}}/{{.Trials}}</b></div>
+        <div class="ro">TOOLS <b id="tw-tools">{{printf "%.1f" .MeanToolCall}}</b></div>
+        <div class="ro">TOKENS <b id="tw-tok">{{printf "%.0f" .MeanTokens}}</b></div>
+        <div class="ro">CAP/MTOK <b id="tw-eff">{{if gt .CapturePerMTok 0.0}}{{printf "%.0f" .CapturePerMTok}}{{else}}—{{end}}</b></div>
+      </div>
+      {{end}}{{else}}<p class="muted">—</p>{{end}}
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav></div>
+  <span></span>
+</div>
+<script>
+(function(){
+  var table=document.getElementById('lbtable'); if(!table) return;
+  var tbody=table.querySelector('tbody');
+  var rows=function(){ return [].slice.call(tbody.querySelectorAll('tr')); };
+  function el(id){ return document.getElementById(id); }
+
+  // sort — click a column header; numeric where possible, toggles asc/desc
+  var sortK=null, sortAsc=false;
+  [].forEach.call(table.querySelectorAll('th.sortable'), function(th){
+    th.addEventListener('click', function(){
+      var k=th.getAttribute('data-k');
+      sortAsc = (sortK===k) ? !sortAsc : false;
+      sortK=k;
+      [].forEach.call(table.querySelectorAll('th.sortable'), function(h){ h.removeAttribute('data-dir'); });
+      th.setAttribute('data-dir', sortAsc?'asc':'desc');
+      var rs=rows();
+      rs.sort(function(a,b){
+        var av=a.children[cellIdx(k)].getAttribute('data-v'), bv=b.children[cellIdx(k)].getAttribute('data-v');
+        var an=parseFloat(av), bn=parseFloat(bv);
+        var cmp = (!isNaN(an)&&!isNaN(bn)) ? an-bn : (''+av).localeCompare(''+bv);
+        return sortAsc?cmp:-cmp;
+      });
+      rs.forEach(function(r){ tbody.appendChild(r); });
+    });
+  });
+  function cellIdx(k){ return {rank:0,name:1,cap:2,capn:3,tools:4,tok:5,eff:6}[k]; }
+
+  // filter chips — distinct skills {…} and models (…) parsed from contender names
+  var tokens={};
+  rows().forEach(function(r){
+    var n=r.getAttribute('data-name')||'';
+    var sk=n.match(/\{([^}]+)\}/); if(sk) tokens[sk[1]]=1;
+    var md=n.match(/\(([^)]+)\)/); if(md) tokens[md[1]]=1;
+  });
+  var box=el('lbfilters'); var active={};
+  var keys=Object.keys(tokens).sort();
+  if(keys.length){ box.innerHTML=''; keys.forEach(function(t){
+    var c=document.createElement('span'); c.className='chip toggle'; c.textContent=t;
+    c.addEventListener('click', function(){ if(active[t]){delete active[t];c.classList.remove('on');}else{active[t]=1;c.classList.add('on');} applyFilter(); });
+    box.appendChild(c);
+  }); }
+  function applyFilter(){
+    var on=Object.keys(active); var shown=0;
+    rows().forEach(function(r){
+      var n=r.getAttribute('data-name')||'';
+      var vis = on.length===0 || on.some(function(t){ return n.indexOf(t)>=0; });
+      r.style.display = vis?'':'none'; if(vis) shown++;
+    });
+    el('lbcount').textContent=shown;
+  }
+
+  // click a row -> pin it to TOP WEAPON
+  tbody.addEventListener('click', function(e){
+    var tr=e.target.closest('tr'); if(!tr) return;
+    [].forEach.call(tbody.querySelectorAll('tr'), function(r){ r.classList.remove('pinned'); });
+    tr.classList.add('pinned');
+    function set(id,v){ var n=el(id); if(n) n.textContent=v; }
+    set('tw-name','● '+tr.getAttribute('data-name'));
+    set('tw-cap',tr.getAttribute('data-cap')); set('tw-capn',tr.getAttribute('data-capn'));
+    set('tw-tools',tr.getAttribute('data-tools')); set('tw-tok',tr.getAttribute('data-tok'));
+    set('tw-eff',tr.getAttribute('data-eff'));
+  });
+})();
+</script>
+{{- end}}

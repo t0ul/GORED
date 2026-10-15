@@ -1,6 +1,10 @@
 package store
 
-import "github.com/t0ul/GORED/internal/core"
+import (
+	"database/sql"
+
+	"github.com/t0ul/GORED/internal/core"
+)
 
 // The skills table is the first step of the Studio migration: the agent's skills become
 // DATA in the datastore instead of hardcoded Go vars, so a surface can list (and later
@@ -47,6 +51,24 @@ func (s *Store) ListSkills() ([]SkillRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// GetSkill returns one skill by name; found is false when the registry has no such skill.
+func (s *Store) GetSkill(name string) (SkillRow, bool, error) {
+	var r SkillRow
+	var temp string
+	var builtin int
+	err := s.db.QueryRow(`SELECT name, temp, instruction, builtin FROM skills WHERE name=?`, name).
+		Scan(&r.Name, &temp, &r.Instruction, &builtin)
+	if err == sql.ErrNoRows {
+		return SkillRow{}, false, nil
+	}
+	if err != nil {
+		return SkillRow{}, false, err
+	}
+	r.Temp = core.SkillTemp(temp)
+	r.BuiltIn = builtin != 0
+	return r, true, nil
 }
 
 // UpsertSkill writes a user-authored (or edited) skill. The authoring surface is deferred;
