@@ -189,6 +189,18 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .lb th{color:var(--orange);letter-spacing:1.5px;text-transform:uppercase;font-size:11px}
 .lb tr.top td{color:var(--fg)}
 .lb tr.top .rank{color:var(--yellow);text-shadow:0 0 10px rgba(255,210,26,.5)}
+/* console controls: sortable headers, toggle filter chips, clickable/pinned rows */
+.sortable{cursor:pointer;user-select:none}
+.sortable:hover{color:var(--amber)}
+.sortable i{font-style:normal;opacity:.6;font-size:9px;margin-left:3px}
+.sortable[data-dir=asc] i::after{content:"▲"}
+.sortable[data-dir=desc] i::after{content:"▼"}
+.chip.toggle{cursor:pointer;opacity:.55}
+.chip.toggle:hover{opacity:1}
+.chip.toggle.on{opacity:1;background:rgba(255,210,26,.14);color:var(--yellow);border-color:var(--yellow)}
+.lb tbody tr{cursor:pointer}
+.lb tbody tr:hover td{background:rgba(255,120,0,.06)}
+.lb tr.pinned td{background:rgba(255,210,26,.1);color:var(--yellow)}
 .capcell{min-width:150px}
 .capbar{height:12px;background:#0c0703;border:1px solid var(--line);position:relative;overflow:hidden}
 .capbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--yellow))}
