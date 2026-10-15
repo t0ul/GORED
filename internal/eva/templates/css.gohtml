@@ -348,4 +348,22 @@ button.rect.ico svg{width:14px;height:14px;display:block}
 button.rect.ico.ok{border-color:var(--green);color:var(--green);background:rgba(134,214,51,.16)}
 .skillcard textarea[readonly]{opacity:.72;cursor:default;border-style:dashed}
 .skillcard.editing textarea{opacity:1;border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
+
+/* Keyboard focus: a bright yellow ring so tabbing is visible. clip-path clips outlines, so the
+   hexagon buttons get a drop-shadow ring instead; rect buttons / links / inputs get a real outline. */
+a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,.chip:focus-visible,button.rect:focus-visible{outline:2px solid var(--yellow);outline-offset:2px;filter:none}
+button:focus-visible{outline:none;filter:drop-shadow(0 0 1px var(--yellow)) drop-shadow(0 0 7px var(--yellow))}
+
+/* Boot/loading state: a launching run shows this over the centre plane until telemetry arrives. */
+.bootstate{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;background:radial-gradient(60% 50% at 50% 45%,rgba(169,95,212,.12),rgba(10,6,3,.55))}
+.bootstate .bootmark{font-size:46px;line-height:1;color:var(--purple);filter:drop-shadow(0 0 16px rgba(169,95,212,.6));animation:bootpulse 1.4s ease-in-out infinite}
+.bootstate .boottext{font-size:16px;letter-spacing:6px;color:var(--amber)}
+.bootstate .bootsub{font-size:11px;letter-spacing:2px;color:var(--mut)}
+@keyframes bootpulse{0%,100%{opacity:.5;transform:scale(.94)}50%{opacity:1;transform:scale(1.06)}}
+
+/* Respect reduced-motion: kill the ambient cockpit animation (breathe, scanline flicker, Angel
+   shake/ripple, overlay rise, toasts) for anyone who asks the OS to reduce motion. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.001ms !important;animation-iteration-count:1 !important;transition-duration:.001ms !important}
+}
 {{- end}}
