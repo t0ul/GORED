@@ -15,6 +15,13 @@
       "difficulty": "medium",
       "where": "GET /api/fetch?url= proxies to loopback without an intended-host allowlist; GET /internal/flag holds the flag behind a header only the proxy sets",
       "detect": "oracle records capture when /internal/flag is served through the proxy"
+    },
+    {
+      "id": "nosqli-login",
+      "class": "injection",
+      "difficulty": "medium",
+      "where": "POST /api/login builds its query from the JSON body without neutralizing operators, so {\"username\":{\"$ne\":null},\"password\":{\"$ne\":null}} authenticates and discloses the flag",
+      "detect": "oracle records capture when the flag is served on an operator-injection bypass"
     }
   ]
 }

@@ -12,7 +12,7 @@ func TestLoadDemoManifestIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Name != "demotarget" || len(m.Flags) != 2 {
+	if m.Name != "demotarget" || len(m.Flags) != 3 {
 		t.Fatalf("unexpected manifest: %+v", m)
 	}
 }
