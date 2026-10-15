@@ -386,13 +386,14 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 // the run actually did.
 type runView struct {
 	*run
-	Findings []core.Finding
+	Events   []traceEvt     // the FEED lens: the event stream so far
+	Findings []core.Finding // the FINDINGS lens
 	Repro    string
-	Targets  []targetNode // the discovered surface, for the target "Angel" panel
+	Targets  []targetNode // the MAP lens: the discovered surface
 	Breached bool         // a capture landed — the Angel's pattern goes red
 }
 
-// targetNode is one discovered request on the target surface (the Angel's map).
+// targetNode is one discovered request on the target surface (the MAP lens).
 type targetNode struct {
 	Method string
 	Path   string
@@ -407,13 +408,72 @@ func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := runView{run: rn}
-	if rn.Status == "done" || rn.Status == "aborted" || rn.Status == "error" {
-		v.Findings, v.Repro = traceTriage(rn.Trace)
+	// Seed all three lenses from the trace so far — live or finished. SSE appends new events.
+	v.Events, v.Findings, v.Targets, v.Repro, v.Breached = parseRunTrace(rn.Trace)
+	if captured(rn.Sums) {
+		v.Breached = true
 	}
-	// The target map fills from the trace as recon/attack touches the surface — live too.
-	v.Targets = traceSitemap(rn.Trace)
-	v.Breached = captured(rn.Sums)
 	render(w, runTmpl, v)
+}
+
+// parseRunTrace reads a run's trace once and builds all three lenses: the event feed, the
+// blackboard findings, the discovered surface (map), the capture repro, and whether a capture
+// landed. One pass, so the page seeds live and finished runs the same way.
+func parseRunTrace(path string) (events []traceEvt, findings []core.Finding, targets []targetNode, repro string, breached bool) {
+	recs, err := gledger.Read(path)
+	if err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, rec := range recs {
+		ev := traceEvt{Span: rec.Span, Event: rec.Event, Detail: eventDetail(rec.Fields)}
+		switch {
+		case strings.Contains(rec.Event, "capture"):
+			ev.Cls = "hit"
+			breached = true
+		case strings.Contains(rec.Event, "error"), strings.Contains(rec.Event, "denied"), strings.Contains(rec.Event, "breach"):
+			ev.Cls = "warn"
+		}
+		events = append(events, ev)
+
+		if rec.Span == "board" && rec.Event == "finding" {
+			f := core.Finding{}
+			if v, ok := rec.Fields["type"].(string); ok {
+				f.Type = core.FindingType(v)
+			}
+			if v, ok := rec.Fields["value"].(string); ok {
+				f.Value = v
+			}
+			findings = append(findings, f)
+		}
+		if rec.Span == "tool" && rec.Event == "tool_call" {
+			if args, ok := rec.Fields["args"].(map[string]any); ok {
+				method := strings.ToUpper(asStr(args["method"]))
+				if method == "" {
+					method = "GET"
+				}
+				p := asStr(args["path"])
+				if p == "" {
+					p = urlPath(asStr(args["url"]))
+				}
+				if p != "" && strings.HasPrefix(p, "/") {
+					if len(p) > 80 {
+						p = p[:80] + "…"
+					}
+					if k := method + " " + p; !seen[k] {
+						seen[k] = true
+						targets = append(targets, targetNode{Method: method, Path: p})
+					}
+				}
+			}
+		}
+		if rec.Span == "verify" && rec.Event == "repro" {
+			if v, ok := rec.Fields["curl"].(string); ok && v != "" {
+				repro = v
+			}
+		}
+	}
+	return
 }
 
 // compare renders two or more runs side by side (their summaries), for the A/B research.
@@ -712,7 +772,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	sent, lastStatus := 0, ""
+	sent, lastStatus, pendingSent := 0, "", false
 	for {
 		select {
 		case <-ctx.Done():
@@ -725,10 +785,26 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Lock()
 		st := rn.Status
+		pend := rn.Pending
 		s.mu.Unlock()
 		if st != lastStatus {
 			lastStatus = st
 			send(fmt.Sprintf(`{"_eva":"status","status":%q}`, st))
+		}
+		// Live pilot decision: push the open gate so the client raises the decision overlay
+		// without a reload; a resume frame clears it when the pilot has acted.
+		if pend != nil && !pendingSent {
+			pendingSent = true
+			type mv struct{ Tool, Path, Surface, Source, Why string }
+			ms := make([]mv, 0, len(pend.Proposals))
+			for _, m := range pend.Proposals {
+				ms = append(ms, mv{m.Tool, m.Path, m.Surface, m.Source, m.Why})
+			}
+			b, _ := json.Marshal(map[string]any{"_eva": "pending", "phase": pend.Phase, "proposals": ms})
+			send(string(b))
+		} else if pend == nil && pendingSent {
+			pendingSent = false
+			send(`{"_eva":"resume"}`)
 		}
 		if st == "done" || st == "error" || st == "aborted" {
 			lines, total = readTraceLines(rn.Trace)
@@ -868,96 +944,135 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + s
 
 var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
 {{if or (eq .Status "running") (eq .Status "waiting")}}<noscript><meta http-equiv="refresh" content="3"></noscript>{{end}}
-` + shellTop + `
-<main class="viewscreen">
-<h1 class="runhdr">{{.Stage}} <span class="badge {{.Status}}">{{.Status}}</span></h1>
-<p class="sub">vs {{.Base}} · {{if .IsMatrix}}matrix <b class="dim">{{.Models}}</b>{{else}}model {{.Model}}{{end}} · dial <b class="dim">{{.Autonomy}}</b> · {{.Trials}} trial(s){{if .Prompt}} · <span class="dim">custom prompt</span>{{end}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</p>
-{{if eq .Status "running"}}<p class="muted scan">⬡ booting the model and running the loop… live telemetry below.</p>{{end}}
-
-{{if .Pending}}
-<div class="card frame alert">
-  <div class="card-tag warn">⚠ PILOT DECISION REQUIRED — PHASE: {{.Pending.Phase}}</div>
-  <p class="muted">The EVA has reached a phase boundary. Select the moves to spend tokens on, add a constraint, and proceed. The oracle still confirms every finding on the target's real bytes — you choose the move, not the verdict.</p>
-  <form method="post" action="/run/{{.ID}}/decide">
-    <div class="moves">
-    {{range $i, $m := .Pending.Proposals}}
-      <label class="move">
-        <input type="checkbox" name="move" value="{{$i}}">
-        <span class="mv-tool">{{$m.Tool}}</span>
-        <span class="mv-path">{{if $m.Path}}{{$m.Path}}{{else}}—{{end}}</span>
-        <span class="mv-surface s-{{$m.Surface}}">{{$m.Surface}}</span>
-        <span class="mv-src src-{{$m.Source}}">{{$m.Source}}</span>
-        <span class="mv-why">{{$m.Why}}</span>
-      </label>
-    {{else}}
-      <p class="muted">no proposals — type a directive below and proceed.</p>
-    {{end}}
-    </div>
-    <label>CONSTRAINT / HINT <input name="hint" placeholder="e.g. focus /greeting, try the reflected name param"></label>
-    <div class="btnrow">
-      <button name="action" value="proceed">⬡ PROCEED</button>
-      <button name="action" value="abort" class="danger">■ ABORT</button>
-    </div>
-  </form>
-  {{if .Pending.Board}}
-  <details class="board"><summary>BLACKBOARD ({{len .Pending.Board}} findings)</summary>
-    <ul>{{range .Pending.Board}}<li><span class="ft">{{.Type}}</span> {{trunc .Value 160}}</li>{{end}}</ul>
-  </details>
-  {{end}}
+<div class="hudbar">
+  <span class="dtitle">{{.Stage}} <span class="badge {{.Status}}">{{.Status}}</span></span>
+  <span class="hudcfg">{{.Base}} · {{.ModelLabel}} · {{.Autonomy}}{{if .Prompt}} · custom prompt{{end}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</span>
+  <span class="hudphase" id="hudphase">PHASE —</span>
 </div>
-{{end}}
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left" onclick="manualSwap('left')"></div>
+  <div class="slot slot-center" id="slot-center">
+    <div class="decision" id="decision" hidden>
+      <div class="card-tag warn">⚠ PILOT DECISION — PHASE <span id="dphase"></span></div>
+      <p class="muted">Pick the moves to spend tokens on, add a constraint, proceed. The oracle confirms on real bytes — you pick the move, not the verdict.</p>
+      <div class="moves" id="dmoves"></div>
+      <label>CONSTRAINT / HINT <input id="dhint" placeholder="e.g. focus /greeting, try the reflected param"></label>
+      <div class="btnrow"><button type="button" onclick="submitDecision('proceed')">⬡ PROCEED</button><button type="button" class="danger" onclick="submitDecision('abort')">■ ABORT</button></div>
+    </div>
+  </div>
+  <div class="slot slot-right" id="slot-right" onclick="manualSwap('right')"></div>
+</div>
+<div class="dock">
+  <button class="swap" onclick="manualSwap('left')" title="focus left ( &lt; )">◀</button>
+  <div class="dockmid">
+    <button class="swap reset" onclick="resetFocus()">RESET</button>
+    <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/studio">STUDIO</a> · <a href="/run/{{.ID}}/trace">TRACE</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">LEADERBOARD</a>{{end}}</nav>
+  </div>
+  <button class="swap" onclick="manualSwap('right')" title="focus right ( &gt; )">▶</button>
+</div>
 
-{{if .Err}}<pre class="err">{{.Err}}</pre>{{end}}
-{{if .Sums}}
-  {{if captured .Sums}}
-  <div class="verdict-bar hit">● PATTERN ORANGE — TARGET CAPTURED (ORACLE-CONFIRMED)</div>
-  {{else}}
-  <div class="verdict-bar miss">○ NO CAPTURE — TARGET HELD</div>
-  {{end}}
-  <div class="tblwrap"><table><thead><tr><th>contender</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
-  {{range .Sums}}<tr><td>{{.Contender}}</td><td>{{pct .CaptureRate}}</td><td>{{.Captured}}/{{.Trials}}</td><td>{{printf "%.1f" .MeanToolCall}}</td><td>{{printf "%.0f" .MeanTokens}}</td></tr>{{end}}
-  </tbody></table></div>
-{{end}}
-{{if .Repro}}<div class="card frame"><div class="card-tag">REPRO — THE CAPTURING REQUEST</div><pre class="repro">{{.Repro}}</pre></div>{{end}}
-{{if .Findings}}
-<details class="board" open><summary>FINDINGS ({{len .Findings}})</summary>
-  <ul>{{range .Findings}}<li><span class="ft">{{.Type}}</span> {{trunc .Value 200}}</li>{{end}}</ul>
-</details>
-{{end}}
-{{if ne .Status "running"}}<p class="nav"><a href="/run/{{.ID}}/trace">⬡ FULL TRACE VIEWER</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">⬡ LEADERBOARD</a>{{end}}</p>{{end}}
-{{if or (eq .Status "running") (eq .Status "waiting")}}
-<div class="card frame"><div class="card-tag">LIVE TELEMETRY</div><div id="log" class="log"></div></div>
+<div id="roles" hidden>
+  <section class="role lens" data-lens="feed" id="lens-feed">
+    <div class="rolehdr">◢ FEED</div>
+    <div id="feed" class="log">{{range .Events}}<div class="logln {{.Cls}}">[{{.Span}}] {{.Event}}{{if .Detail}}  {{.Detail}}{{end}}</div>{{end}}</div>
+  </section>
+  <section class="role lens" data-lens="map" id="lens-map">
+    <div class="rolehdr">◉ MAP · <span class="count" id="mapcount">{{len .Targets}} paths</span></div>
+    <div class="angel{{if .Breached}} breached{{end}}" id="angel"><div class="core"><div class="cross"></div><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="pat" id="angelpat">{{if .Breached}}● BREACH{{else}}◎ LOCKED{{end}}</div></div></div>
+    <div class="nodes" id="mapnodes">{{range .Targets}}<div class="node"><span class="m">{{.Method}}</span><span class="p">{{.Path}}</span></div>{{end}}</div>
+  </section>
+  <section class="role lens" data-lens="findings" id="lens-findings">
+    <div class="rolehdr">◆ FINDINGS · <span class="count" id="findcount">{{len .Findings}}</span></div>
+    {{if .Sums}}{{if captured .Sums}}<div class="verdict-bar hit">● CAPTURED</div>{{else}}<div class="verdict-bar miss">○ HELD</div>{{end}}
+    <div class="tblwrap"><table><thead><tr><th>contender</th><th>cap%</th><th>cap</th><th>tools</th><th>tok</th></tr></thead><tbody>{{range .Sums}}<tr><td>{{.Contender}}</td><td>{{pct .CaptureRate}}</td><td>{{.Captured}}/{{.Trials}}</td><td>{{printf "%.1f" .MeanToolCall}}</td><td>{{printf "%.0f" .MeanTokens}}</td></tr>{{end}}</tbody></table></div>{{end}}
+    <div id="findlist" class="evlog">{{range .Findings}}<div class="ev"><span class="ft">{{.Type}}</span> {{trunc .Value 200}}</div>{{end}}</div>
+    {{if .Repro}}<div class="card-tag">REPRO</div><pre class="repro">{{.Repro}}</pre>{{end}}
+  </section>
+</div>
+
 <script>
 (function(){
   var PAGE_STATUS = "{{.Status}}";
-  var log = document.getElementById('log');
-  function line(txt, cls){ var d=document.createElement('div'); d.className='logln '+(cls||''); d.textContent=txt; log.appendChild(d); log.scrollTop=log.scrollHeight; }
-  var es = new EventSource('/run/{{.ID}}/events');
-  es.onmessage = function(e){
-    var r; try{ r=JSON.parse(e.data); }catch(_){ return; }
-    if (r._eva === 'status'){ if (r.status !== PAGE_STATUS){ es.close(); location.reload(); } return; }
-    if (r._eva === 'done'){ es.close(); location.reload(); return; }
-    var span=r.span||'', ev=r.event||'', f=r.fields||{};
-    var detail = f.tool||f.via||f.phase||f.hint||f.value||f.result||f.error||f.reply||'';
-    if (typeof detail !== 'string') detail = JSON.stringify(detail);
-    if (detail.length > 140) detail = detail.slice(0,140)+'…';
-    var cls = ev.indexOf('capture')>=0 ? 'hit' : ((ev.indexOf('error')>=0||ev.indexOf('denied')>=0||ev.indexOf('breach')>=0) ? 'warn' : '');
-    line('[' + span + '] ' + ev + (detail ? '  ' + detail : ''), cls);
+  var RUN_ID = "{{.ID}}";
+  var state = {left:'lens-feed', center:'lens-map', right:'lens-findings'};
+  var manual = false, lastPhase = '';
+  function el(id){ return document.getElementById(id); }
+  function place(){ ['left','center','right'].forEach(function(s){ var ln=el(state[s]); if(ln) el('slot-'+s).appendChild(ln); }); }
+  function slotOf(lens){ for(var s in state){ if(state[s]===lens) return s; } return null; }
+  function setCenter(lens){ var s=slotOf(lens); if(!s||s==='center') return; var t=state.center; state.center=lens; state[s]=t; place(); }
+  function focus(lens){ if(manual) return; setCenter(lens); }
+  function lensForPhase(p){ p=(p||'').toLowerCase();
+    if(p.indexOf('recon')>=0||p.indexOf('finger')>=0||p.indexOf('map')>=0||p.indexOf('discover')>=0) return 'lens-map';
+    if(p.indexOf('exploit')>=0||p.indexOf('attack')>=0||p.indexOf('probe')>=0||p.indexOf('inject')>=0) return 'lens-feed';
+    if(p.indexOf('valid')>=0||p.indexOf('verif')>=0||p.indexOf('chain')>=0) return 'lens-findings';
+    return 'lens-map'; }
+  window.manualSwap=function(side){ manual=true; var t=state.center; state.center=state[side]; state[side]=t; place(); };
+  window.resetFocus=function(){ manual=false; if(PAGE_STATUS==='running'||PAGE_STATUS==='waiting'){ focus(lensForPhase(lastPhase)); } else { setCenter('lens-findings'); } };
+  place();
+
+  document.addEventListener('keydown', function(e){
+    if(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if(e.key==='<'||e.key===',') manualSwap('left');
+    else if(e.key==='>'||e.key==='.') manualSwap('right');
+  });
+
+  var feed=el('feed'), mapnodes=el('mapnodes'), findlist=el('findlist'), seenPath={};
+  function feedLine(span,ev,detail,cls){ var d=document.createElement('div'); d.className='logln '+(cls||''); d.textContent='['+span+'] '+ev+(detail?'  '+detail:''); feed.appendChild(d); feed.scrollTop=feed.scrollHeight; }
+  function pathOf(u){ var i=(''+u).indexOf('://'); if(i>=0){ var j=(''+u).indexOf('/',i+3); return j>=0?(''+u).slice(j):''; } return ''+u; }
+  function addNode(method,p){ if(!p||p[0]!=='/') return; if(p.length>80)p=p.slice(0,80)+'…'; var k=method+' '+p; if(seenPath[k])return; seenPath[k]=1; var d=document.createElement('div'); d.className='node'; var ms=document.createElement('span'); ms.className='m'; ms.textContent=method; var ps=document.createElement('span'); ps.className='p'; ps.textContent=p; d.appendChild(ms); d.appendChild(ps); mapnodes.appendChild(d); el('mapcount').textContent=mapnodes.children.length+' paths'; }
+  function addFinding(type,val){ var d=document.createElement('div'); d.className='ev'; var ft=document.createElement('span'); ft.className='ft'; ft.textContent=type; d.appendChild(ft); d.appendChild(document.createTextNode(' '+(val.length>200?val.slice(0,200)+'…':val))); findlist.appendChild(d); el('findcount').textContent=findlist.children.length; }
+  function setBreach(){ var a=el('angel'); if(a) a.classList.add('breached'); var p=el('angelpat'); if(p) p.textContent='● BREACH'; }
+  [].forEach.call(mapnodes.children, function(n){ seenPath[(n.children[0].textContent+' '+n.children[1].textContent)]=1; });
+
+  var decision=el('decision'), cockpit=document.querySelector('.cockpit3');
+  function raiseDecision(phase, proposals){
+    el('dphase').textContent=(phase||'').toUpperCase();
+    var box=el('dmoves'); box.innerHTML='';
+    (proposals||[]).forEach(function(m,i){
+      var l=document.createElement('label'); l.className='move';
+      var cb=document.createElement('input'); cb.type='checkbox'; cb.name='move'; cb.value=i; l.appendChild(cb);
+      function sp(c,t){ var s=document.createElement('span'); s.className=c; s.textContent=t; l.appendChild(s); }
+      sp('mv-tool',m.Tool||''); sp('mv-path',m.Path||'—'); sp('mv-surface s-'+(m.Surface||''),m.Surface||''); sp('mv-src src-'+(m.Source||''),m.Source||''); sp('mv-why',m.Why||'');
+      box.appendChild(l);
+    });
+    if(!proposals||!proposals.length){ box.innerHTML='<p class="muted">no proposals — type a directive and proceed.</p>'; }
+    decision.hidden=false; decision.classList.remove('rise'); void decision.offsetWidth; decision.classList.add('rise');
+    cockpit.classList.add('decided');
+  }
+  function lowerDecision(){ decision.hidden=true; cockpit.classList.remove('decided'); if(!manual) focus(lensForPhase(lastPhase)); }
+  window.submitDecision=function(action){
+    var body='action='+action+'&hint='+encodeURIComponent(el('dhint').value);
+    [].forEach.call(decision.querySelectorAll('input[name=move]:checked'), function(c){ body+='&move='+c.value; });
+    lowerDecision();
+    fetch('/run/'+RUN_ID+'/decide', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body});
   };
+
+  if(PAGE_STATUS==='running'||PAGE_STATUS==='waiting'){
+    var es=new EventSource('/run/'+RUN_ID+'/events');
+    es.onmessage=function(e){
+      var r; try{ r=JSON.parse(e.data); }catch(_){ return; }
+      if(r._eva==='status'){ var b=document.querySelector('.hudbar .badge'); if(b){ b.textContent=r.status; b.className='badge '+r.status; } return; }
+      if(r._eva==='done'){ es.close(); location.reload(); return; }
+      if(r._eva==='pending'){ raiseDecision(r.phase, r.proposals); return; }
+      if(r._eva==='resume'){ lowerDecision(); return; }
+      var span=r.span||'', ev=r.event||'', f=r.fields||{};
+      var detail=f.tool||f.via||f.phase||f.hint||f.value||f.result||f.error||f.reply||'';
+      if(typeof detail!=='string') detail=JSON.stringify(detail);
+      if(detail.length>140) detail=detail.slice(0,140)+'…';
+      var cls= ev.indexOf('capture')>=0?'hit':((ev.indexOf('error')>=0||ev.indexOf('denied')>=0||ev.indexOf('breach')>=0)?'warn':'');
+      feedLine(span,ev,detail,cls);
+      if(span==='tool'&&ev==='tool_call'&&f.args){ var m=(f.args.method||'GET').toString().toUpperCase(); addNode(m, f.args.path||pathOf(f.args.url||'')); }
+      if(span==='board'&&ev==='finding'&&f.value){ var ty=(f.type||'')+'' , v=(''+f.value); if(ty==='flag-candidate'||ty==='vuln-candidate'||ty==='scanner'||v.indexOf('GORED{')>=0||v.indexOf('CONFIRMED')>=0||v.indexOf('VERIFIED')>=0) addFinding(ty||'finding', v); }
+      if(ev.indexOf('capture')>=0){ setBreach(); addFinding('capture', detail); focus('lens-findings'); }
+      if(span==='phase'&&ev==='phase_advance'){ lastPhase=((f.to||'')+''); el('hudphase').textContent='PHASE '+lastPhase.toUpperCase(); focus(lensForPhase(lastPhase)); }
+    };
+    focus('lens-map');
+  } else {
+    setCenter('lens-findings'); el('hudphase').textContent='PHASE COMPLETE';
+  }
 })();
 </script>
-{{end}}
-<p class="muted">trace: {{.Trace}}</p>
-</main>
-<aside class="sidepanel"><div class="cwrap tilt-r">
-  <div class="panel-tag">TARGET ◈ {{if .Breached}}PATTERN RED{{else}}PATTERN BLUE{{end}}</div>
-  <div class="angel{{if .Breached}} breached{{end}}">
-    <div class="core"><div class="cross"></div><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="pat">{{if .Breached}}● BREACH{{else}}◎ LOCKED{{end}}</div></div>
-    <div class="count">SURFACE · {{len .Targets}} paths touched</div>
-    <div class="nodes">{{range .Targets}}<div class="node"><span class="m">{{.Method}}</span><span class="p">{{.Path}}</span></div>{{else}}<div class="muted" style="font-size:11px">no requests yet</div>{{end}}</div>
-  </div>
-</div></aside>
-` + shellBottom))
+`))
 
 var studioTmpl = template.Must(template.New("studio").Funcs(funcs).Parse(baseCSS + shellTop + `
 <main class="viewscreen">
@@ -1047,24 +1162,28 @@ var traceTmpl = template.Must(template.New("trace").Funcs(funcs).Parse(baseCSS +
 // trapezoidal and angled toward the central viewscreen. Every page opens with shellTop, emits
 // its own <main class="viewscreen">…</main> plus a right <aside class="sidepanel">…</aside>,
 // and closes with shellBottom, so the whole cockpit stays one coherent frame.
+// The wings carry text on a plane that recedes toward the centre (the "horizon"): a 3D
+// perspective + rotateY on the text block, so rows converge toward the central viewscreen.
 const shellTop = `<div class="cockpit">
-  <aside class="console"><div class="cwrap tilt-l">
-    <div class="brand">EVA</div>
-    <div class="ro"><span>UNIT</span><b>EVA-01</b></div>
-    <nav class="cnav"><a href="/">COCKPIT</a><a href="/studio">STUDIO</a></nav>
-    <div class="ro"><span>LINK</span><b class="grn">NOMINAL</b></div>
+  <aside class="console"><div class="wing-face wf-left">
+    <div class="wf-title">EVA-01</div>
+    <a class="wf-row" href="/">COCKPIT</a>
+    <a class="wf-row" href="/studio">STUDIO</a>
+    <div class="wf-row">LINK NOMINAL</div>
+    <div class="wf-row">A.T. FIELD ACTIVE</div>
+    <div class="wf-row">HARMONICS STABLE</div>
   </div></aside>`
 
 const shellBottom = `</div>`
 
-// sideHUD is the default right panel for pages without their own: a compact status readout so
-// every screen fills all three columns.
-const sideHUD = `<aside class="sidepanel"><div class="cwrap tilt-r">
-  <div class="panel-tag">SYSTEM</div>
-  <div class="ro"><span>A.T. FIELD</span><b class="grn">ACTIVE</b></div>
-  <div class="ro"><span>MAGI</span><b class="grn">3 / 3</b></div>
-  <div class="ro"><span>EGRESS</span><b class="grn">SEALED</b></div>
-  <div class="ro"><span>ORACLE</span><b class="grn">REAL</b></div>
+// sideHUD is the default right wing: status text on the receding plane.
+const sideHUD = `<aside class="sidepanel"><div class="wing-face wf-right">
+  <div class="wf-title">SYSTEM</div>
+  <div class="wf-row">MAGI 3 / 3</div>
+  <div class="wf-row">EGRESS SEALED</div>
+  <div class="wf-row">ORACLE REAL-BYTES</div>
+  <div class="wf-row">CONTAINMENT OK</div>
+  <div class="wf-row">LINK NOMINAL</div>
 </div></aside>`
 
 const baseCSS = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVA · GORED</title>
@@ -1081,7 +1200,7 @@ body{
     radial-gradient(1200px 600px at 70% -10%, rgba(255,106,0,.08), transparent 60%),
     var(--bg);
   color:var(--fg); font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  max-width:1200px; margin:0 auto; padding:18px 16px 44px; letter-spacing:.2px;
+  max-width:none; margin:0; padding:14px 14px; letter-spacing:.2px;
 }
 a{color:var(--amber);text-decoration:none}a:hover{text-decoration:underline}
 h1,h2{letter-spacing:3px;text-transform:uppercase;margin:.3rem 0}
@@ -1106,18 +1225,23 @@ h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);paddin
    converging to a short inner edge at the central viewscreen. The slant is fixed-angle: the
    top edge drops tan(15deg)*width, so console(200w)=54px and sidepanel(240w)=64px, and the
    content is counter-rotated by the same 15deg so the words run PARALLEL to the top edge. */
-.cockpit{display:grid;grid-template-columns:230px minmax(0,1fr) 230px;gap:18px;align-items:start}
-.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.5);position:sticky;top:14px;min-height:440px;display:flex;align-items:center;justify-content:center;padding:14px;overflow:hidden}
-/* fixed 12deg slant: top edge drops tan(12)*230 = 49px, so the content's rotate(12deg) is parallel to it */
-.console{clip-path:polygon(0 0, 100% 49px, 100% calc(100% - 49px), 0 100%)}
-.sidepanel{clip-path:polygon(0 49px, 100% 0, 100% 100%, 0 calc(100% - 49px))}
-/* the content block, rotated to run parallel to the wing's slanted top edge; kept compact so the rotated box fits inside the trapezoid */
-.cwrap{display:grid;gap:9px;width:165px;justify-items:stretch}
-.tilt-l{transform:rotate(12deg)} .tilt-r{transform:rotate(-12deg)}
-.cwrap .brand{font-size:30px;letter-spacing:5px;text-align:center}
-.cwrap .cnav a{text-align:center}
-/* central viewscreen reads as the main screen between the wings */
-.viewscreen{min-width:0;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,106,0,.03),transparent 40%);padding:16px 18px}
+/* MECHA COCKPIT: full-height bowtie console wings that run top to bottom of the viewport,
+   their big outer ends converging to a compact central monitor that scrolls. */
+.cockpit{max-width:none;margin:0;display:grid;grid-template-columns:1fr 440px 1fr;gap:18px;align-items:stretch;min-height:calc(100vh - 28px)}
+.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.6);overflow:hidden;display:flex;align-items:center;justify-content:center}
+/* %-based taper scales with the full height: big outer ends, converging inner waist at the box */
+.console{clip-path:polygon(0 0, 100% 20%, 100% 80%, 0 100%)}
+.sidepanel{clip-path:polygon(0 20%, 100% 0, 100% 100%, 0 80%)}
+/* text on the wing lies on a plane receding toward the central horizon (one-point perspective) */
+.wing-face{display:grid;gap:16px;width:78%;text-transform:uppercase;letter-spacing:2px}
+.wf-title{font-size:26px;letter-spacing:5px;color:var(--orange);text-shadow:0 0 14px rgba(255,106,0,.4)}
+.wf-row{font-size:15px;color:var(--mut);border-bottom:1px solid var(--line);padding-bottom:5px;white-space:nowrap}
+a.wf-row{color:var(--fg);text-decoration:none}a.wf-row:hover{color:var(--orange)}
+.wf-left{transform:perspective(1000px) rotateY(38deg);transform-origin:center}
+.wf-right{transform:perspective(1000px) rotateY(-38deg);transform-origin:center}
+/* the central monitor: centred and sized to the wings' inner-edge span (the 20%/80% taper),
+   so its top and bottom sit flush with the waist of the bowtie; content scrolls inside */
+.viewscreen{min-width:0;align-self:center;height:60vh;overflow:auto;border:1px solid var(--orange);background:linear-gradient(180deg,rgba(255,106,0,.05),transparent 45%);padding:16px 18px;box-shadow:0 0 34px rgba(255,106,0,.12),inset 0 0 44px rgba(0,0,0,.55)}
 .hexmark{font-size:40px;color:var(--orange);text-align:center;opacity:.55;text-shadow:0 0 18px rgba(255,106,0,.5)}
 .cnav{display:grid;gap:6px}
 .cnav a{color:var(--fg);border:1px solid var(--line);padding:8px 10px;font-size:12px;letter-spacing:2px}
@@ -1260,5 +1384,48 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .node.hit{border-color:var(--orange);color:var(--orange)}
 .node.hit .p{color:var(--orange)}
 .count{font-size:11px;color:var(--mut);letter-spacing:1px}
+/* THREE-ROLE SWAPPABLE COCKPIT (run view): input | execution | output. Arrows swap a wing
+   into the centre to focus it; the two side wings recede toward the centre in perspective. */
+.cockpit3{display:grid;grid-template-columns:1fr 46vw 1fr;gap:18px;align-items:center;min-height:calc(100vh - 96px)}
+.slot{min-width:0}
+.slot-center{align-self:center;height:66vh;overflow:auto;border:1px solid var(--orange);background:linear-gradient(180deg,rgba(255,106,0,.05),transparent 45%);padding:16px 18px;box-shadow:0 0 34px rgba(255,106,0,.12),inset 0 0 44px rgba(0,0,0,.55)}
+.slot-left,.slot-right{height:calc(100vh - 96px);background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.55);overflow:hidden;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.slot-left{clip-path:polygon(0 0,100% 17%,100% 83%,0 100%)}
+.slot-right{clip-path:polygon(0 17%,100% 0,100% 100%,0 83%)}
+.slot-left .role{transform:perspective(1100px) rotateY(34deg);width:82%}
+.slot-right .role{transform:perspective(1100px) rotateY(-34deg);width:82%}
+.slot-center .role{width:100%}
+.role{display:grid;gap:11px;align-content:start}
+.rolehdr{font-size:13px;letter-spacing:3px;color:var(--orange);text-transform:uppercase;border-bottom:1px solid var(--line);padding-bottom:6px}
+.slot-center .rolehdr{font-size:15px}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:13px;letter-spacing:1px;border-bottom:1px solid var(--line);padding-bottom:5px;text-transform:uppercase}
+.kv span{color:var(--mut)} .kv b{color:var(--amber);font-weight:700;text-align:right}
+.kv b.brk{word-break:break-all;font-weight:400;color:var(--fg);text-align:left}
+.ev{font-size:12px;color:var(--mut);border-bottom:1px solid var(--line);padding:4px 0;white-space:pre-wrap;word-break:break-word}
+.ev .ft{color:var(--orange);font-size:10px;letter-spacing:1px;text-transform:uppercase}
+.evlog{display:grid;gap:2px}
+/* bottom dock: swap arrows + site nav */
+.dock{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;margin-top:10px;border-top:1px solid rgba(255,106,0,.3);padding-top:10px}
+.swap{background:transparent;color:var(--orange);border:1px solid var(--orange);font-size:18px;padding:6px 18px;letter-spacing:0}
+.swap:hover{background:var(--orange);color:#0a0a0a}
+.dockmid{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
+.dtitle{font-size:16px;letter-spacing:3px;text-transform:uppercase;color:var(--fg)}
+.docknav{font-size:12px;letter-spacing:2px;color:var(--mut)}
+.docknav a{color:var(--amber)}
+@media(max-width:860px){.cockpit3{grid-template-columns:1fr;min-height:auto}.slot-left,.slot-right{height:auto;clip-path:none}.slot-left .role,.slot-right .role{transform:none;width:auto}.slot-center{height:auto}}
+/* config header strip + live lenses + rising decision overlay */
+.hudbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;border:1px solid rgba(255,106,0,.3);padding:8px 14px;margin-bottom:10px;background:linear-gradient(90deg,rgba(255,106,0,.05),transparent)}
+.hudbar .dtitle{font-size:15px;letter-spacing:3px;text-transform:uppercase}
+.hudbar .hudcfg{color:var(--mut);font-size:12px;letter-spacing:1px}
+.hudbar .hudphase{margin-left:auto;color:var(--orange);font-size:12px;letter-spacing:2px}
+.slot-center{position:relative}
+.slot-center .log,.slot-center .evlog{max-height:none}
+.lens .rolehdr .count{color:var(--mut);font-size:11px}
+.decision{position:absolute;inset:0;z-index:5;background:linear-gradient(180deg,rgba(24,12,3,.97),rgba(10,6,2,.98));border:1px solid var(--amber);padding:16px 18px;overflow:auto;display:grid;gap:12px;align-content:start;box-shadow:inset 0 0 40px rgba(255,171,0,.12),0 0 40px rgba(255,171,0,.2)}
+.decision[hidden]{display:none}
+.decision.rise{animation:rise .35s ease-out}
+@keyframes rise{from{transform:translateY(26px);opacity:0}to{transform:translateY(0);opacity:1}}
+.cockpit3.decided .slot-left,.cockpit3.decided .slot-right{opacity:.3;filter:blur(1px)}
+.reset{font-size:11px;letter-spacing:2px;padding:5px 14px}
 </style>
 `
