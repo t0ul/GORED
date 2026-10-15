@@ -326,4 +326,17 @@ button:active{transform:translateY(1px)}
 @keyframes rise{from{transform:translateY(26px);opacity:0}to{transform:translateY(0);opacity:1}}
 .cockpit3.decided .slot-left,.cockpit3.decided .slot-right{opacity:.3;filter:blur(1px)}
 .reset{font-size:11px;letter-spacing:2px;padding:5px 14px}
+/* Studio CRUD buttons: plain rectangles (not hexagons) — labels read clean at card size.
+   Override the global button clip-path/glow; a green SAVE, a compact clipboard-icon copy. */
+.crudrow{flex-wrap:wrap;align-items:center;gap:8px}
+button.crud{clip-path:none;filter:none;border-radius:2px;background:rgba(255,120,0,.12);color:var(--amber);border:1px solid var(--line);padding:6px 16px;font-size:11px;letter-spacing:2px}
+button.crud:hover{background:rgba(255,170,20,.26);border-color:var(--amber);color:var(--amber)}
+button.crud:disabled{opacity:.4;cursor:not-allowed;background:rgba(255,120,0,.06)}
+button.crud.save{background:rgba(139,212,80,.16);color:var(--green);border-color:rgba(139,212,80,.5)}
+button.crud.save:hover:not(:disabled){background:var(--green);color:#0a0a0a}
+button.crud.ico{padding:6px 9px;display:inline-flex;align-items:center;justify-content:center}
+button.crud.ico svg{width:14px;height:14px;display:block}
+button.crud.ico.ok{border-color:var(--green);color:var(--green);background:rgba(139,212,80,.16)}
+.skillcard textarea[readonly]{opacity:.72;cursor:default;border-style:dashed}
+.skillcard.editing textarea{opacity:1;border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
 {{- end}}
