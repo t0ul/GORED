@@ -1047,39 +1047,24 @@ var traceTmpl = template.Must(template.New("trace").Funcs(funcs).Parse(baseCSS +
 // trapezoidal and angled toward the central viewscreen. Every page opens with shellTop, emits
 // its own <main class="viewscreen">…</main> plus a right <aside class="sidepanel">…</aside>,
 // and closes with shellBottom, so the whole cockpit stays one coherent frame.
-const shellTop = `<div class="topbar">
-  <div class="logo">⬡</div>
-  <div class="brandblock"><span class="brand">EVA</span><span class="sub">GORED // NERV TACTICAL OPS</span></div>
-  <div class="sysline"><span class="sys ok">EGRESS ◈ CONTAINED</span><span class="sys ok">ORACLE ◈ REAL-BYTES</span></div>
-</div>
-<div class="stripe"></div>
-<div class="cockpit">
+const shellTop = `<div class="cockpit">
   <aside class="console"><div class="cwrap tilt-l">
-    <div class="hexmark">⬡</div>
-    <nav class="cnav">
-      <a href="/">◤ COCKPIT</a>
-      <a href="/studio">◤ STUDIO</a>
-    </nav>
-    <div class="readout">
-      <div class="ro"><span>UNIT</span><b>EVA-01</b></div>
-      <div class="ro"><span>MODE</span><b>SORTIE</b></div>
-      <div class="ro"><span>LINK</span><b class="grn">NOMINAL</b></div>
-    </div>
+    <div class="brand">EVA</div>
+    <div class="ro"><span>UNIT</span><b>EVA-01</b></div>
+    <nav class="cnav"><a href="/">COCKPIT</a><a href="/studio">STUDIO</a></nav>
+    <div class="ro"><span>LINK</span><b class="grn">NOMINAL</b></div>
   </div></aside>`
 
-const shellBottom = `</div><div class="stripe bottom"></div><p class="foot">⬡ GORED EVANGELION UNIT · ORACLE ON REAL BYTES · EGRESS CONTAINED</p>`
+const shellBottom = `</div>`
 
-// sideHUD is the default right panel for pages without their own: a flavor status readout so
+// sideHUD is the default right panel for pages without their own: a compact status readout so
 // every screen fills all three columns.
 const sideHUD = `<aside class="sidepanel"><div class="cwrap tilt-r">
   <div class="panel-tag">SYSTEM</div>
-  <div class="reticle">⊕</div>
-  <div class="readout">
-    <div class="ro"><span>A.T. FIELD</span><b class="grn">ACTIVE</b></div>
-    <div class="ro"><span>HARMONICS</span><b>STABLE</b></div>
-    <div class="ro"><span>MAGI</span><b class="grn">3 / 3</b></div>
-    <div class="ro"><span>CONTAINMENT</span><b class="grn">SEALED</b></div>
-  </div>
+  <div class="ro"><span>A.T. FIELD</span><b class="grn">ACTIVE</b></div>
+  <div class="ro"><span>MAGI</span><b class="grn">3 / 3</b></div>
+  <div class="ro"><span>EGRESS</span><b class="grn">SEALED</b></div>
+  <div class="ro"><span>ORACLE</span><b class="grn">REAL</b></div>
 </div></aside>`
 
 const baseCSS = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVA · GORED</title>
@@ -1121,13 +1106,16 @@ h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);paddin
    converging to a short inner edge at the central viewscreen. The slant is fixed-angle: the
    top edge drops tan(15deg)*width, so console(200w)=54px and sidepanel(240w)=64px, and the
    content is counter-rotated by the same 15deg so the words run PARALLEL to the top edge. */
-.cockpit{display:grid;grid-template-columns:200px minmax(0,1fr) 240px;gap:16px;align-items:start}
-.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.45);position:sticky;top:14px;min-height:560px;display:flex;align-items:center;justify-content:center;padding:18px 14px;overflow:hidden}
-.console{clip-path:polygon(0 0, 100% 54px, 100% calc(100% - 54px), 0 100%)}
-.sidepanel{clip-path:polygon(0 64px, 100% 0, 100% 100%, 0 calc(100% - 64px))}
-/* the content block, counter-rotated to sit parallel to the wing's slanted edges */
-.cwrap{display:grid;gap:11px;width:150px}
-.tilt-l{transform:rotate(15deg)} .tilt-r{transform:rotate(-15deg)}
+.cockpit{display:grid;grid-template-columns:230px minmax(0,1fr) 230px;gap:18px;align-items:start}
+.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.5);position:sticky;top:14px;min-height:440px;display:flex;align-items:center;justify-content:center;padding:14px;overflow:hidden}
+/* fixed 12deg slant: top edge drops tan(12)*230 = 49px, so the content's rotate(12deg) is parallel to it */
+.console{clip-path:polygon(0 0, 100% 49px, 100% calc(100% - 49px), 0 100%)}
+.sidepanel{clip-path:polygon(0 49px, 100% 0, 100% 100%, 0 calc(100% - 49px))}
+/* the content block, rotated to run parallel to the wing's slanted top edge; kept compact so the rotated box fits inside the trapezoid */
+.cwrap{display:grid;gap:9px;width:165px;justify-items:stretch}
+.tilt-l{transform:rotate(12deg)} .tilt-r{transform:rotate(-12deg)}
+.cwrap .brand{font-size:30px;letter-spacing:5px;text-align:center}
+.cwrap .cnav a{text-align:center}
 /* central viewscreen reads as the main screen between the wings */
 .viewscreen{min-width:0;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,106,0,.03),transparent 40%);padding:16px 18px}
 .hexmark{font-size:40px;color:var(--orange);text-align:center;opacity:.55;text-shadow:0 0 18px rgba(255,106,0,.5)}
@@ -1255,17 +1243,17 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .rank{color:var(--orange);font-weight:700}
 /* target "Angel" viz */
 .angel{display:grid;gap:10px}
-.angel .core{position:relative;height:120px;display:flex;align-items:center;justify-content:center}
-.angel .ring{position:absolute;inset:0;margin:auto;width:108px;height:108px;border:1px solid var(--line);border-radius:50%}
-.angel .ring.r2{width:74px;height:74px;border-color:rgba(255,106,0,.3)}
-.angel .ring.r3{width:40px;height:40px;border-color:rgba(255,106,0,.5)}
+.angel .core{position:relative;height:88px;display:flex;align-items:center;justify-content:center}
+.angel .ring{position:absolute;inset:0;margin:auto;width:84px;height:84px;border:1px solid var(--line);border-radius:50%}
+.angel .ring.r2{width:56px;height:56px;border-color:rgba(255,106,0,.3)}
+.angel .ring.r3{width:30px;height:30px;border-color:rgba(255,106,0,.5)}
 .angel .pat{font-size:12px;letter-spacing:2px;color:var(--green);z-index:1;text-align:center}
 .angel.breached .ring{border-color:rgba(255,42,42,.4);animation:pulse 1.4s infinite}
 .angel.breached .pat{color:var(--red)}
 .angel .cross{position:absolute;inset:0;background:
   linear-gradient(var(--line),var(--line)) center/1px 100% no-repeat,
   linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat;opacity:.4}
-.nodes{display:grid;gap:3px;max-height:260px;overflow:auto;font-size:11px}
+.nodes{display:grid;gap:3px;max-height:110px;overflow:hidden;font-size:11px}
 .node{display:flex;gap:6px;align-items:center;border:1px solid var(--line);padding:4px 7px;color:var(--mut);background:#05060a}
 .node .m{color:var(--amber);font-size:10px;min-width:30px}
 .node .p{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
