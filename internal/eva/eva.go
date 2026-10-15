@@ -39,6 +39,7 @@ type run struct {
 	Stage    string
 	Base     string
 	Model    string
+	Models   string // researcher-matrix model set (CSV); empty = single-model run on Model
 	Trials   int
 	Autonomy string // "piloted" | "assisted" | "autonomous"
 	Status   string // "running" | "waiting" | "done" | "error" | "aborted"
@@ -55,6 +56,19 @@ type run struct {
 	Pending *pending
 	cp      *pilotCheckpoint
 	slot    int // the concurrency bay / port offset this run holds
+}
+
+// IsMatrix reports whether this is a researcher-matrix sortie (several models on one stage).
+func (r *run) IsMatrix() bool { return r.Models != "" }
+
+// ModelLabel is the model(s) to show for this run: the matrix set when it is a matrix sortie,
+// otherwise the single model. Centralizing it keeps the data columns honest (Model holds a
+// single model, Models the set) while every render reads one label.
+func (r *run) ModelLabel() string {
+	if r.Models != "" {
+		return "matrix: " + r.Models
+	}
+	return r.Model
 }
 
 // pending is a checkpoint surfaced to the pilot: the phase about to run, the ranked
@@ -191,7 +205,7 @@ func (s *Server) persist(rn *run) {
 
 func toEVARun(rn *run) store.EVARun {
 	return store.EVARun{
-		ID: rn.ID, Stage: rn.Stage, Base: rn.Base, Model: rn.Model, Trials: rn.Trials,
+		ID: rn.ID, Stage: rn.Stage, Base: rn.Base, Model: rn.Model, Models: rn.Models, Trials: rn.Trials,
 		Autonomy: rn.Autonomy, Status: rn.Status, Err: rn.Err, Started: rn.Started,
 		Elapsed: rn.Elapsed, Trace: rn.Trace, Prompt: rn.Prompt, Sums: rn.Sums,
 	}
@@ -199,7 +213,7 @@ func toEVARun(rn *run) store.EVARun {
 
 func fromEVARun(er store.EVARun) *run {
 	return &run{
-		ID: er.ID, Stage: er.Stage, Base: er.Base, Model: er.Model, Trials: er.Trials,
+		ID: er.ID, Stage: er.Stage, Base: er.Base, Model: er.Model, Models: er.Models, Trials: er.Trials,
 		Autonomy: er.Autonomy, Status: er.Status, Err: er.Err, Started: er.Started,
 		Elapsed: er.Elapsed, Trace: er.Trace, Prompt: er.Prompt, Sums: er.Sums,
 	}
@@ -275,6 +289,16 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 	if v := r.FormValue("bridge"); v != "" {
 		f.Bridge = v
 	}
+	// Researcher matrix mode: a comma-separated model list runs one contender per model on the
+	// chosen stage — bench boots each named GGUF and the leaderboard compares them. A matrix is
+	// a research sweep, not an interactive session, so it is always autonomous: a single pilot
+	// checkpoint cannot sensibly gate several models at once. Trials stay configurable. When the
+	// field is empty the behavior is unchanged — a single model from the "model" field.
+	matrixModels := normalizeModelsCSV(r.FormValue("models"))
+	if matrixModels != "" {
+		f.Models = matrixModels
+		autonomy = "autonomous"
+	}
 	// A piloted or assisted run is one interactive session: force a single trial so the
 	// checkpoint fires once per phase, not once per trial.
 	f.Trials = 1
@@ -306,7 +330,11 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
 	f.Trace = filepath.Join(s.traces, "gored-eva-"+id+"-trace.jsonl")
-	rn := &run{ID: id, Stage: stage, Base: f.Base, Model: f.Model, Trials: f.Trials,
+	model := f.Model
+	if matrixModels != "" {
+		model = "" // matrix sortie: the model set lives in Models, not a single Model
+	}
+	rn := &run{ID: id, Stage: stage, Base: f.Base, Model: model, Models: matrixModels, Trials: f.Trials,
 		Autonomy: autonomy, Status: "running", Started: time.Now(), Trace: f.Trace, Prompt: promptOverride, slot: slot}
 	s.runs[id] = rn
 	s.order = append([]string{id}, s.order...)
@@ -463,7 +491,7 @@ func (s *Server) runLeaderboard(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	meta := report.LeaderboardMeta{Title: "EVA · " + rn.Stage, Target: rn.Base, Trials: rn.Trials, Note: rn.Model + " [" + rn.Autonomy + "]"}
+	meta := report.LeaderboardMeta{Title: "EVA · " + rn.Stage, Target: rn.Base, Trials: rn.Trials, Note: rn.ModelLabel() + " [" + rn.Autonomy + "]"}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(report.RenderLeaderboardHTML(meta, rn.Sums))
 }
@@ -646,6 +674,18 @@ func captured(sums []core.ContenderSummary) bool {
 	return false
 }
 
+// normalizeModelsCSV cleans the matrix "models" form field: trim each entry, drop empties,
+// rejoin with ", ". Empty in → empty out, which the launch handler reads as a single-model run.
+func normalizeModelsCSV(s string) string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, ", ")
+}
+
 // aborted reports whether every trial ended because the pilot aborted at a checkpoint.
 func aborted(results []core.SweepResult) bool {
 	if len(results) == 0 {
@@ -679,6 +719,8 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + n
   </label>
   <label>TARGET BASE URL <input name="base" value="http://127.0.0.1:8088"></label>
   <label>MODEL (GGUF) <input name="model" value="qwen2.5-3b-instruct.gguf"></label>
+  <label>MODEL MATRIX · RESEARCHER MODE <input name="models" placeholder="qwen2.5-0.5b-instruct.gguf, qwen2.5-1.5b-instruct.gguf"></label>
+  <p class="hint">Leave blank for a single-model run. A comma-separated list runs one contender per model on this stage and compares them on the leaderboard — always autonomous (no pilot gate across models).</p>
   <label>BRIG BRIDGE <input name="bridge" value="127.0.0.1:5050"></label>
   <label>SYNC PROMPT · SKILL INSTRUCTION <textarea name="skill" id="skill" rows="4">{{.FirstInstr}}</textarea></label>
   <fieldset class="dial">
@@ -687,7 +729,7 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + n
     <label class="radio"><input type="radio" name="autonomy" value="assisted"> <b>ASSISTED</b><span>acts on its own after a beat unless you intervene</span></label>
     <label class="radio"><input type="radio" name="autonomy" value="autonomous"> <b>BERSERK</b><span>no gate — runs free, the headless/CI loop</span></label>
   </fieldset>
-  <label>TRIALS (BERSERK ONLY) <input name="trials" type="number" value="1" min="1"></label>
+  <label>TRIALS (BERSERK / MATRIX) <input name="trials" type="number" value="1" min="1"></label>
   <label class="chk"><input type="checkbox" name="ensure" value="1" checked> auto-launch vulnapp</label>
   <button {{if .Busy}}disabled{{end}}>{{if .Busy}}⬡ EVA IN FLIGHT…{{else}}⬡ LAUNCH{{end}}</button>
 </form>
@@ -695,7 +737,7 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + n
 {{if .Recent}}
 <form method="get" action="/compare">
 <ul class="runs">{{range .Recent}}
-  <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span> <span class="badge {{.Status}}">{{.Status}}</span></li>
+  <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span>{{if .IsMatrix}} <span class="badge matrix">matrix</span>{{end}} <span class="badge {{.Status}}">{{.Status}}</span></li>
 {{end}}</ul>
 <button class="ghost">⬡ COMPARE SELECTED</button>
 </form>
@@ -715,7 +757,7 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
 ` + nervHeadMini + `
 <p><a href="/">← cockpit</a></p>
 <h1 class="runhdr">{{.Stage}} <span class="badge {{.Status}}">{{.Status}}</span></h1>
-<p class="sub">vs {{.Base}} · model {{.Model}} · dial <b class="dim">{{.Autonomy}}</b> · {{.Trials}} trial(s){{if .Prompt}} · <span class="dim">custom prompt</span>{{end}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</p>
+<p class="sub">vs {{.Base}} · {{if .IsMatrix}}matrix <b class="dim">{{.Models}}</b>{{else}}model {{.Model}}{{end}} · dial <b class="dim">{{.Autonomy}}</b> · {{.Trials}} trial(s){{if .Prompt}} · <span class="dim">custom prompt</span>{{end}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</p>
 {{if eq .Status "running"}}<p class="muted scan">⬡ booting the model and running the loop… live telemetry below.</p>{{end}}
 
 {{if .Pending}}
@@ -826,10 +868,10 @@ var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseC
 <p class="nav"><a href="/leaderboard?{{range .Runs}}id={{.ID}}&amp;{{end}}">⬡ OPEN AS RESEARCH LEADERBOARD</a></p>
 <table><thead><tr><th>run</th><th>stage</th><th>model</th><th>dial</th><th>status</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
 {{range .Runs}}{{if .Sums}}{{$c := index .Sums 0}}<tr>
-  <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.Model}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+  <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
   <td>{{pct $c.CaptureRate}}</td><td>{{$c.Captured}}/{{$c.Trials}}</td><td>{{printf "%.1f" $c.MeanToolCall}}</td><td>{{printf "%.0f" $c.MeanTokens}}</td>
 </tr>{{else}}<tr>
-  <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.Model}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+  <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
   <td colspan="4" class="muted">no summary</td>
 </tr>{{end}}{{end}}
 </tbody></table>
@@ -896,6 +938,7 @@ label.chk{grid-auto-flow:column;justify-content:start;align-items:center;gap:9px
 input,select,textarea{background:#05060a;color:var(--fg);border:1px solid var(--line);border-radius:0;padding:9px 10px;font:inherit;width:100%}
 textarea{resize:vertical;line-height:1.4}
 input:focus,select:focus,textarea:focus{outline:0;border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
+.hint{color:var(--mut);font-size:11px;letter-spacing:.3px;text-transform:none;margin:-4px 0 2px;line-height:1.4}
 button{background:var(--orange);color:#0a0a0a;border:0;border-radius:0;padding:11px 16px;font:inherit;font-weight:700;letter-spacing:2px;text-transform:uppercase;cursor:pointer}
 button:hover{background:var(--amber)}button:disabled{opacity:.45;cursor:not-allowed}
 button.danger{background:transparent;color:var(--red);border:1px solid var(--red)}
@@ -917,6 +960,7 @@ button.danger:hover{background:var(--red);color:#0a0a0a}
 .badge.done{color:var(--green);border-color:var(--green)}
 .badge.aborted{color:var(--mut)}
 .badge.error{color:var(--red);border-color:var(--red)}
+.badge.matrix{color:#58a6ff;border-color:#58a6ff}
 .scan{position:relative}
 /* moves */
 .moves{display:grid;gap:6px}
