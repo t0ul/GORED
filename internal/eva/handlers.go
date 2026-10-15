@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-func (s *Server) home(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	recent := make([]*run, 0, len(s.order))
 	for _, id := range s.order {
@@ -27,25 +27,66 @@ func (s *Server) home(w http.ResponseWriter, _ *http.Request) {
 	busy := len(s.slots) == 0 // no free bay
 
 	// Stage cards from the library, so the cockpit always matches the real stages. The
-	// instruction map pre-fills the editable prompt knob per stage.
+	// instruction map pre-fills the editable prompt knob per stage, registry-aware: an
+	// authored skill in the store overrides the in-code default (see effectiveInstruction).
 	type stageView struct{ Name, Goal string }
 	var sv []stageView
 	instr := map[string]string{}
 	for name, st := range appsweep.Stages() {
 		sv = append(sv, stageView{Name: name, Goal: st.Goal})
-		instr[name] = st.Skill.Instruction
+		instr[name] = s.effectiveInstruction(name)
 	}
 	sort.Slice(sv, func(i, j int) bool { return sv[i].Name < sv[j].Name })
 	ib, _ := json.Marshal(instr)
-	first := ""
-	if len(sv) > 0 {
-		first = instr[sv[0].Name]
+
+	// Prefill the form from query params, so presets and the Studio ARM deep-links can hand a
+	// ready loadout (?stage=…&base=…&model=…). Empty params fall back to the defaults.
+	q := r.URL.Query()
+	pick := func(key, dflt string) string {
+		if v := q.Get(key); v != "" {
+			return v
+		}
+		return dflt
+	}
+	selStage := q.Get("stage")
+	if selStage == "" && len(sv) > 0 {
+		selStage = sv[0].Name
+	}
+	skillText := q.Get("skill")
+	if skillText == "" {
+		skillText = instr[selStage]
 	}
 
 	render(w, homeTmpl, map[string]any{
 		"Stages": sv, "Recent": recent, "Busy": busy,
-		"StageInstr": template.JS(ib), "FirstInstr": first,
+		"StageInstr":   template.JS(ib),
+		"Models":       listModels(),
+		"SelStage":     selStage,
+		"SkillText":    skillText,
+		"Ensure":       q.Get("ensure") != "0",
+		"Base":         pick("base", "http://127.0.0.1:8088"),
+		"Model":        pick("model", "qwen2.5-3b-instruct.gguf"),
+		"MatrixModels": q.Get("models"),
+		"Bridge":       pick("bridge", "127.0.0.1:5050"),
+		"Trials":       pick("trials", "1"),
+		"Autonomy":     pick("autonomy", "piloted"),
 	})
+}
+
+// preflight is a light reachability check for the TARGET light: a short-timeout GET of the
+// configured base. It makes no judgement — just whether something answered.
+func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {
+	base := r.URL.Query().Get("base")
+	ok := false
+	if base != "" {
+		cl := &http.Client{Timeout: 2 * time.Second}
+		if resp, err := cl.Get(base); err == nil {
+			resp.Body.Close()
+			ok = true
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":%v}`, ok)
 }
 
 func (s *Server) launch(w http.ResponseWriter, r *http.Request) {

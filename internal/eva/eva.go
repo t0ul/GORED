@@ -84,6 +84,25 @@ func (s *Server) persist(rn *run) {
 	_ = s.store.SaveEVARun(toEVARun(rn))
 }
 
+// effectiveInstruction is the skill instruction a run of this stage will actually use: the
+// store's authored version if present (the registry drives the stage), otherwise the stage's
+// in-code default. This is the wiring the skills-table comment calls out — authoring in Studio
+// changes what runs, resolved here at the orchestration layer over appsweep.WithSkillInstruction.
+func (s *Server) effectiveInstruction(stage string) string {
+	st, ok := appsweep.Stages()[stage]
+	if !ok {
+		return ""
+	}
+	def := st.Skill.Instruction
+	if s.store == nil {
+		return def
+	}
+	if row, found, _ := s.store.GetSkill(st.Skill.Name); found && row.Instruction != "" {
+		return row.Instruction
+	}
+	return def
+}
+
 // Handler wires the routes (Go 1.22+ pattern mux).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -98,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /run/{id}/trace", s.traceView)
 	mux.HandleFunc("GET /run/{id}/leaderboard", s.runLeaderboard)
 	mux.HandleFunc("GET /leaderboard", s.leaderboard)
+	mux.HandleFunc("GET /preflight", s.preflight)
 	return mux
 }
 
