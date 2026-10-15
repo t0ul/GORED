@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,8 +125,8 @@ type Sweep struct {
 // caller can do more with them.
 func (s *Sweep) Run(ctx context.Context) ([]core.SweepResult, error) {
 	f := s.Flags
-	reg := loadRegistry(f.Registry, f.Model)
 	models := splitCSV(f.Models)
+	reg := loadRegistry(f.Registry, f.Model, models)
 	if len(models) == 0 {
 		models = []string{reg.Names()[0]}
 	}
@@ -244,7 +245,14 @@ func (f *Flags) Bounds() core.Bounds {
 
 // --- registry/model helpers (shared, previously copy-pasted per sweep) ---
 
-func loadRegistry(path, def string) *core.ModelRegistry {
+// loadRegistry resolves the model catalog. With an explicit -registry file it reads that;
+// otherwise it synthesizes one from the GGUF filenames named on the command line. The default
+// -model is always present (keyed by its stripped name, as before). When a model matrix is
+// requested (matrix non-empty, e.g. from -models or the EVA cockpit), each matrix model is
+// added as its own local spec keyed by its exact filename, so every named GGUF resolves and
+// boots without a separate registry JSON — the gored-matrix "filename == model name"
+// convention. With no matrix this returns the single default spec unchanged.
+func loadRegistry(path, def string, matrix []string) *core.ModelRegistry {
 	if path != "" {
 		reg, err := core.LoadRegistry(path)
 		if err != nil {
@@ -252,7 +260,34 @@ func loadRegistry(path, def string) *core.ModelRegistry {
 		}
 		return reg
 	}
-	return core.NewModelRegistry([]core.ModelSpec{{Name: strings.TrimSuffix(filepath.Base(def), ".gguf"), GGUF: def, ParamsB: 3}})
+	specs := []core.ModelSpec{{Name: strings.TrimSuffix(filepath.Base(def), ".gguf"), GGUF: def, ParamsB: 3}}
+	for _, m := range matrix {
+		specs = append(specs, core.ModelSpec{Name: m, GGUF: m, ParamsB: paramsFromName(m, 3)})
+	}
+	return core.NewModelRegistry(specs)
+}
+
+// paramsFromName best-effort reads a model's declared size in billions from a GGUF filename
+// such as "qwen2.5-1.5b-instruct.gguf" (-> 1.5), so a matrix leaderboard labels each cell with
+// its real footprint rather than a shared default. It returns fallback when no "<number>b"
+// token is present. Footprint is a display/iso-budget label only; it never affects capture.
+func paramsFromName(file string, fallback float64) float64 {
+	s := strings.ToLower(file)
+	for i := 0; i < len(s); i++ {
+		if s[i] != 'b' {
+			continue
+		}
+		j := i
+		for j > 0 && (s[j-1] == '.' || (s[j-1] >= '0' && s[j-1] <= '9')) {
+			j--
+		}
+		if j < i {
+			if v, err := strconv.ParseFloat(s[j:i], 64); err == nil && v > 0 {
+				return v
+			}
+		}
+	}
+	return fallback
 }
 
 func specFile(s core.ModelSpec, fb string) string {

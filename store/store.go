@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS eva_runs (
   elapsed   TEXT,
   trace     TEXT,
   prompt    TEXT,
-  sums_json TEXT
+  sums_json TEXT,
+  models    TEXT
 );
 CREATE TABLE IF NOT EXISTS skills (
   name        TEXT PRIMARY KEY,
@@ -82,6 +83,10 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: schema: %w", err)
 	}
+	// Forward-compat: add columns introduced after the baseline to a pre-existing DB. The
+	// baseline above already carries them for a fresh DB, so a "duplicate column" error here
+	// just means this DB is already current; it is the expected no-op and is ignored.
+	_, _ = db.Exec(`ALTER TABLE eva_runs ADD COLUMN models TEXT`)
 	return &Store{db: db}, nil
 }
 

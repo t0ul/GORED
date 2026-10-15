@@ -17,6 +17,7 @@ type EVARun struct {
 	Stage    string
 	Base     string
 	Model    string
+	Models   string // CSV of models for a researcher-matrix sortie; empty for a single-model run
 	Trials   int
 	Autonomy string
 	Status   string
@@ -33,13 +34,13 @@ type EVARun struct {
 func (s *Store) SaveEVARun(r EVARun) error {
 	sums, _ := json.Marshal(r.Sums)
 	_, err := s.db.Exec(
-		`INSERT INTO eva_runs (id, stage, base, model, trials, autonomy, status, err, started, elapsed, trace, prompt, sums_json)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO eva_runs (id, stage, base, model, models, trials, autonomy, status, err, started, elapsed, trace, prompt, sums_json)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
-		   stage=excluded.stage, base=excluded.base, model=excluded.model, trials=excluded.trials,
+		   stage=excluded.stage, base=excluded.base, model=excluded.model, models=excluded.models, trials=excluded.trials,
 		   autonomy=excluded.autonomy, status=excluded.status, err=excluded.err, started=excluded.started,
 		   elapsed=excluded.elapsed, trace=excluded.trace, prompt=excluded.prompt, sums_json=excluded.sums_json`,
-		r.ID, r.Stage, r.Base, r.Model, r.Trials, r.Autonomy, r.Status, r.Err,
+		r.ID, r.Stage, r.Base, r.Model, r.Models, r.Trials, r.Autonomy, r.Status, r.Err,
 		r.Started.UTC().Format(time.RFC3339Nano), r.Elapsed, r.Trace, r.Prompt, string(sums),
 	)
 	return err
@@ -48,7 +49,7 @@ func (s *Store) SaveEVARun(r EVARun) error {
 // ListEVARuns returns the cockpit runs, most recent first.
 func (s *Store) ListEVARuns() ([]EVARun, error) {
 	rows, err := s.db.Query(
-		`SELECT id, stage, base, model, trials, autonomy, status, err, started, elapsed, trace, prompt, sums_json
+		`SELECT id, stage, base, model, models, trials, autonomy, status, err, started, elapsed, trace, prompt, sums_json
 		 FROM eva_runs ORDER BY started DESC`)
 	if err != nil {
 		return nil, err
@@ -68,7 +69,7 @@ func (s *Store) ListEVARuns() ([]EVARun, error) {
 // GetEVARun reads one cockpit run; ok is false when none exists.
 func (s *Store) GetEVARun(id string) (EVARun, bool, error) {
 	row := s.db.QueryRow(
-		`SELECT id, stage, base, model, trials, autonomy, status, err, started, elapsed, trace, prompt, sums_json
+		`SELECT id, stage, base, model, models, trials, autonomy, status, err, started, elapsed, trace, prompt, sums_json
 		 FROM eva_runs WHERE id=?`, id)
 	r, err := scanEVARun(row)
 	if err == sql.ErrNoRows {
@@ -88,10 +89,12 @@ type scanRow interface {
 func scanEVARun(sc scanRow) (EVARun, error) {
 	var r EVARun
 	var started, sums string
-	if err := sc.Scan(&r.ID, &r.Stage, &r.Base, &r.Model, &r.Trials, &r.Autonomy, &r.Status,
+	var models sql.NullString // NULL for rows written before the models column existed
+	if err := sc.Scan(&r.ID, &r.Stage, &r.Base, &r.Model, &models, &r.Trials, &r.Autonomy, &r.Status,
 		&r.Err, &started, &r.Elapsed, &r.Trace, &r.Prompt, &sums); err != nil {
 		return r, err
 	}
+	r.Models = models.String
 	r.Started, _ = time.Parse(time.RFC3339Nano, started)
 	if sums != "" {
 		_ = json.Unmarshal([]byte(sums), &r.Sums)
