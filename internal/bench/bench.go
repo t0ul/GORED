@@ -36,6 +36,7 @@ type Flags struct {
 	Trials   int
 	MaxSteps int
 	MaxOut   int
+	MaxStall int // consecutive unproductive steps before stopping a run; 0 = disabled (CI/benchmark default)
 	BasePort int
 	Bridge   string
 	Base     string
@@ -240,7 +241,7 @@ func (s *Sweep) Run(ctx context.Context) ([]core.SweepResult, error) {
 
 // Bounds builds the per-trial bounds from the flags.
 func (f *Flags) Bounds() core.Bounds {
-	return core.Bounds{MaxSteps: f.MaxSteps, Wall: f.Wall, MaxOutTokens: f.MaxOut}
+	return core.Bounds{MaxSteps: f.MaxSteps, Wall: f.Wall, MaxOutTokens: f.MaxOut, MaxStall: f.MaxStall}
 }
 
 // --- registry/model helpers (shared, previously copy-pasted per sweep) ---
