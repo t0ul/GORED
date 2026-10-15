@@ -7,14 +7,14 @@
   <span class="hudphase" id="hudphase">PHASE —</span>
 </div>
 <div class="hazard"></div>
-<div class="cockpit3 immersive">
+<div class="cockpit3 immersive{{if .Pending}} decided{{end}}">
   <div class="slot slot-left" id="slot-left" onclick="manualSwap('left')"></div>
   <div class="slot slot-center" id="slot-center">
-    <div class="decision" id="decision" hidden>
-      <div class="card-tag warn">⚠ PILOT DECISION — PHASE <span id="dphase"></span></div>
+    <div class="decision" id="decision"{{if not .Pending}} hidden{{end}}>
+      <div class="card-tag warn">⚠ PILOT DECISION — PHASE <span id="dphase">{{if .Pending}}{{.Pending.Phase}}{{end}}</span></div>
       <p class="muted">Pick the moves to spend tokens on, add a constraint, proceed. The oracle confirms on real bytes — you pick the move, not the verdict.</p>
       <p class="muted" style="font-size:11px;margin:0">drag to reorder — the loop spends on the first checked move first</p>
-      <div class="moves" id="dmoves"></div>
+      <div class="moves" id="dmoves">{{if .Pending}}{{range $i, $m := .Pending.Proposals}}<label class="move" draggable="true"><input type="checkbox" name="move" value="{{$i}}"><span class="mv-tool">{{$m.Tool}}</span><span class="mv-path">{{with $m.Path}}{{.}}{{else}}—{{end}}</span><span class="mv-surface s-{{$m.Surface}}">{{$m.Surface}}</span><span class="mv-src src-{{$m.Source}}">{{$m.Source}}</span><span class="mv-why">{{$m.Why}}</span></label>{{end}}{{end}}</div>
       <label>CONSTRAINT / HINT <input id="dhint" placeholder="e.g. focus /greeting, try the reflected param"></label>
       <div class="chips" id="vetochips">
         <span class="chip act" onclick="veto('stay on the json-api surface')">json-api only</span>
@@ -24,6 +24,7 @@
       </div>
       <div class="btnrow"><button type="button" class="go" onclick="submitDecision('proceed')">PROCEED</button><button type="button" class="danger" onclick="submitDecision('abort')">ABORT</button></div>
     </div>
+    {{if and (or (eq .Status "running") (eq .Status "waiting")) (not .Events) (not .Pending)}}<div class="bootstate" id="bootstate"><div class="bootmark">⬡</div><div class="boottext">EVA SYNC</div><div class="bootsub">booting model · establishing telemetry…</div></div>{{end}}
   </div>
   <div class="slot slot-right" id="slot-right" onclick="manualSwap('right')"></div>
 </div>
@@ -120,6 +121,8 @@
   [].forEach.call(mapnodes.children, function(n){ seenPath[(n.children[0].textContent+' '+n.children[1].textContent)]=n; });
 
   var decision=el('decision'), cockpit=document.querySelector('.cockpit3');
+  // boot/loading state: a launching run shows "EVA SYNC" until the first telemetry lands.
+  function clearBoot(){ var bs=el('bootstate'); if(bs) bs.remove(); }
   // veto chips append a constraint to the gate hint; drag reorders the moves (submit reads DOM order)
   window.veto=function(t){ var d=el('dhint'); if(d) d.value=(d.value? d.value+'; ':'')+t; };
   window.sendDirective=function(){ var i=el('directive'); if(!i) return; var h=(i.value||'').trim(); if(!h) return; fetch('/run/'+RUN_ID+'/directive',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'hint='+encodeURIComponent(h)}); var dh=el('dhint'); if(dh && decision && !decision.hidden){ dh.value=(dh.value? dh.value+'; ':'')+h; } i.value=''; i.placeholder='queued — lands at next gate'; };
@@ -154,9 +157,10 @@
     var es=new EventSource('/run/'+RUN_ID+'/events');
     es.onmessage=function(e){
       var r; try{ r=JSON.parse(e.data); }catch(_){ return; }
+      clearBoot();
       if(r._eva==='status'){ var b=document.querySelector('.hudbar .badge'); if(b){ b.textContent=r.status; b.className='badge '+r.status; } return; }
       if(r._eva==='done'){ es.close(); location.reload(); return; }
-      if(r._eva==='pending'){ raiseDecision(r.phase, r.proposals); return; }
+      if(r._eva==='pending'){ if(decision.hidden) raiseDecision(r.phase, r.proposals); return; }
       if(r._eva==='resume'){ lowerDecision(); return; }
       var span=r.span||'', ev=r.event||'', f=r.fields||{};
       var detail=f.tool||f.via||f.phase||f.hint||f.value||f.result||f.error||f.reply||'';
