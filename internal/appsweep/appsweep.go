@@ -62,6 +62,7 @@ func Stages() map[string]Stage {
 		"plan":       planStage(),
 		"exploit":    exploitStage(),
 		"apiexploit": apiExploitStage(),
+		"llmattack":  llmAttackStage(),
 	}
 }
 

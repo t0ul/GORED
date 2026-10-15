@@ -66,7 +66,7 @@ func (m Manifest) Validate() error {
 
 func validClass(c VulnClass) bool {
 	switch c {
-	case ClassIDOR, ClassSSRF, ClassAuthBypass, ClassInjection:
+	case ClassIDOR, ClassSSRF, ClassAuthBypass, ClassInjection, ClassPromptInjection:
 		return true
 	}
 	return false
