@@ -52,7 +52,15 @@ func NewServer(traceDir string, st *store.Store, maxConc int) *Server {
 	s := &Server{runs: map[string]*run{}, traces: traceDir, store: st, slots: slots}
 	s.loadFromStore()
 	if st != nil {
-		_ = st.SeedSkills(core.Catalog()) // first step of the Studio migration: skills as data
+		// Seed the registry with the catalog AND each stage's own skill, so every prompt a run
+		// can use is authorable data (INSERT OR IGNORE keeps any prior edit). This is what lets
+		// Studio authoring actually drive the stages via effectiveInstruction.
+		_ = st.SeedSkills(core.Catalog())
+		var stageSkills []core.Skill
+		for _, stg := range appsweep.Stages() {
+			stageSkills = append(stageSkills, stg.Skill)
+		}
+		_ = st.SeedSkills(stageSkills)
 	}
 	return s
 }
@@ -114,6 +122,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /run/{id}/abort", s.abort)
 	mux.HandleFunc("GET /compare", s.compare)
 	mux.HandleFunc("GET /studio", s.studio)
+	mux.HandleFunc("POST /studio/skill", s.saveSkill)
 	mux.HandleFunc("GET /run/{id}/trace", s.traceView)
 	mux.HandleFunc("GET /run/{id}/leaderboard", s.runLeaderboard)
 	mux.HandleFunc("GET /leaderboard", s.leaderboard)
@@ -142,8 +151,14 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 		s.mu.Unlock()
 		opts = append(opts, appsweep.WithCheckpoint(cp))
 	}
-	if rn.Prompt != "" {
-		opts = append(opts, appsweep.WithSkillInstruction(rn.Prompt))
+	// The run uses the per-run override if set, else the registry's instruction for this stage
+	// (an authored skill in the store, else the in-code default) — the registry drives the stage.
+	inst := rn.Prompt
+	if inst == "" {
+		inst = s.effectiveInstruction(stage)
+	}
+	if inst != "" {
+		opts = append(opts, appsweep.WithSkillInstruction(inst))
 	}
 
 	results, err := appsweep.Run(ctx, f, stage, opts...)

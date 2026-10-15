@@ -136,7 +136,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 	// Prompt knob: a per-run skill-instruction override. Empty, or unchanged from the
 	// stage default, means use the stage's own instruction.
 	promptOverride := ""
-	if v := strings.TrimSpace(r.FormValue("skill")); v != "" && v != strings.TrimSpace(appsweep.Stages()[stage].Skill.Instruction) {
+	if v := strings.TrimSpace(r.FormValue("skill")); v != "" && v != strings.TrimSpace(s.effectiveInstruction(stage)) {
 		promptOverride = v
 	}
 
@@ -204,7 +204,7 @@ func (s *Server) compare(w http.ResponseWriter, r *http.Request) {
 // plan is data-first, no edit button over hardcoded Go. This page is the migration milestone.
 func (s *Server) studio(w http.ResponseWriter, _ *http.Request) {
 	type stageInfo struct {
-		Name, Instruction string
+		Name, Skill, Goal string
 		Tools             []string
 	}
 	toolSet := map[string]bool{}
@@ -217,7 +217,7 @@ func (s *Server) studio(w http.ResponseWriter, _ *http.Request) {
 		for _, n := range names {
 			toolSet[n] = true
 		}
-		stages = append(stages, stageInfo{Name: name, Instruction: st.Skill.Instruction, Tools: names})
+		stages = append(stages, stageInfo{Name: name, Skill: st.Skill.Name, Goal: st.Goal, Tools: names})
 	}
 	sort.Slice(stages, func(i, j int) bool { return stages[i].Name < stages[j].Name })
 	var tools []string
@@ -232,6 +232,28 @@ func (s *Server) studio(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	render(w, studioTmpl, map[string]any{"Tools": tools, "Skills": skills, "Stages": stages})
+}
+
+// saveSkill writes an edited skill instruction into the registry. Because the stages read
+// their instruction from the registry (effectiveInstruction), an edit here changes what any
+// run of a stage that uses this skill will actually do.
+func (s *Server) saveSkill(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "no registry (run with a -store)", http.StatusServiceUnavailable)
+		return
+	}
+	_ = r.ParseForm()
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		http.Error(w, "skill name required", http.StatusBadRequest)
+		return
+	}
+	temp := core.SkillTemp(r.FormValue("temp"))
+	if temp == "" {
+		temp = core.SkillCold
+	}
+	_ = s.store.UpsertSkill(core.Skill{Name: name, Temp: temp, Instruction: r.FormValue("instruction")})
+	http.Redirect(w, r, "/studio", http.StatusSeeOther)
 }
 
 // traceView serves the full, self-contained gledger trace viewer for a run: the replayable

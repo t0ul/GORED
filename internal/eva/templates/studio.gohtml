@@ -1,7 +1,7 @@
 {{define "content" -}}
 <div class="hudbar">
   <span class="dtitle">STUDIO <span class="badge done">FACTORY</span></span>
-  <span class="hudcfg">tools · skills · prompts <span class="dim">(read-only until the registry drives the stages)</span></span>
+  <span class="hudcfg">tools · skills · stages <span class="dim">· author the registry — edits drive the stages</span></span>
   <span class="hudphase">{{len .Stages}} STAGES</span>
 </div>
 <div class="hazard"></div>
@@ -14,25 +14,28 @@
         <div class="ro">SKILLS <b>{{len .Skills}}</b></div>
         <div class="ro">STAGES <b>{{len .Stages}}</b></div>
       </div>
-      <p class="hint" style="margin-top:12px">The factory surfaces — the tools an agent can call, the skills (prompts) that steer it, and the per-stage playbooks. Authoring lands once the registry drives the stages.</p>
+      <p class="hint" style="margin-top:12px">Edit a skill and SAVE: the stages read their instruction from this registry, so the change drives the next run of any stage that uses it. Tools stay code-defined — the inventory is read-only. ARM a stage to launch it.</p>
     </section>
   </div>
   <div class="slot slot-center" id="slot-center">
     <section class="role lens">
       <div class="rolehdr">◉ TOOLS · <span class="count">{{len .Tools}}</span></div>
       <div class="chips">{{range .Tools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">none</span>{{end}}</div>
-      <div class="rolehdr" style="margin-top:18px">◉ SKILLS</div>
+      <div class="rolehdr" style="margin-top:18px">◉ SKILLS · <span class="count">{{len .Skills}}</span> <span class="dim" style="font-size:11px">editable</span></div>
       {{if .Skills}}{{range .Skills}}
-      <div class="card frame skillcard">
+      <form method="post" action="/studio/skill" class="card frame skillcard">
         <div class="card-tag">{{.Name}} <span class="temp temp-{{.Temp}}">{{.Temp}}</span> {{if .BuiltIn}}<span class="src-router">built-in</span>{{else}}<span class="src-model">authored</span>{{end}}</div>
-        <pre class="repro">{{.Instruction}}</pre>
-      </div>
+        <input type="hidden" name="name" value="{{.Name}}">
+        <input type="hidden" name="temp" value="{{.Temp}}">
+        <textarea name="instruction" rows="4">{{.Instruction}}</textarea>
+        <div class="btnrow"><button class="reset">SAVE</button><button type="button" class="ghost" onclick="copySkill(this)">COPY</button></div>
+      </form>
       {{end}}{{else}}<p class="muted">no skills registry (run with -store to seed the catalog)</p>{{end}}
-      <div class="rolehdr" style="margin-top:18px">◉ PROMPTS · PER STAGE</div>
+      <div class="rolehdr" style="margin-top:18px">◉ STAGES · <span class="count">{{len .Stages}}</span></div>
       {{range .Stages}}
       <div class="card frame skillcard">
-        <div class="card-tag">{{.Name}} <span class="dim">tools: {{range .Tools}}{{.}} {{end}}</span></div>
-        <pre class="repro">{{.Instruction}}</pre>
+        <div class="card-tag">{{.Name}} <span class="dim">skill: {{.Skill}} · tools: {{range .Tools}}{{.}} {{end}}</span></div>
+        <div class="btnrow"><a class="chip act" href="/?stage={{.Name}}">ARM</a></div>
       </div>
       {{end}}
     </section>
@@ -51,4 +54,7 @@
   <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav></div>
   <span></span>
 </div>
+<script>
+window.copySkill=function(btn){ var t=btn.closest('form').querySelector('textarea'); if(!t) return; (navigator.clipboard&&navigator.clipboard.writeText(t.value)); var o=btn.textContent; btn.textContent='COPIED'; setTimeout(function(){btn.textContent=o;}, 900); };
+</script>
 {{- end}}
