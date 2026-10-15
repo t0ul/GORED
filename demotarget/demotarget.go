@@ -24,6 +24,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -216,6 +217,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/memos/{id}", s.handleGetMemo)
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
+	s.mux.HandleFunc("GET /search", s.handleSearch)
 	s.mux.HandleFunc("GET /api/profile", s.handleGetProfile)
 	s.mux.HandleFunc("PUT /api/profile", s.handleUpdateProfile)
 	s.mux.HandleFunc("POST /api/token", s.handleIssueToken)
@@ -425,6 +427,20 @@ func matchVal(v any, actual string) bool {
 }
 
 func isOperator(v any) bool { _, ok := v.(map[string]any); return ok }
+
+// handleSearch is the reflected cross-site scripting surface (CWE-79). The vulnerable build writes
+// the q query parameter straight into the HTML response UNESCAPED, so a payload in q executes in the
+// browser; the hardened build HTML-escapes it, neutralizing the reflection. There is no planted flag
+// — a real browser executing the payload is the oracle (what the dom_xss probe confirms).
+func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if s.hardened {
+		q = html.EscapeString(q)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, `<!doctype html><html><body><h1>Results</h1><p>You searched for: %s</p></body></html>`, q)
+}
 
 // handleGetProfile returns the caller's own account record. It is correctly scoped to the
 // caller, so it is a clean read-back for the mass-assignment probe.

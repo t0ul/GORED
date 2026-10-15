@@ -85,6 +85,20 @@ func ProofFromNoSQLi(f NoSQLiFinding, app string) (core.Proof, bool) {
 	return p, true
 }
 
+// ProofFromDOMXSS normalizes a browser-confirmed XSS finding. The payload executed in a real
+// headless browser (the nonce was read back), so it is an executed cross-site scripting — exploitable,
+// certain — carrying the executing URL+payload as the repro.
+func ProofFromDOMXSS(f DOMXSSFinding, app string) (core.Proof, bool) {
+	if !f.Flagged() {
+		return core.Proof{}, false
+	}
+	locus, kind := core.NormLocus(f.URL)
+	p := core.Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
+		Source: "gored-domxss", Evidence: f.Evidence, Rung: core.LadderExploitable, Exploitable: true,
+		Repro: fmt.Sprintf("load %s in a browser — the injected payload (%s) executes", f.URL, f.Payload)}
+	return p, true
+}
+
 // ProofFromMassAssign normalizes a mass-assignment finding. Certain means the probe wrote
 // a privileged field and read it back changed — an executed privilege escalation, so
 // exploitable; high (reflected only) is triggerable.
