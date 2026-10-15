@@ -56,7 +56,7 @@
     <section class="role lens">
       <div class="rolehdr">◥ CAMPAIGN LOG</div>
       {{if .Campaigns}}<ul class="runs">{{range .Campaigns}}
-        <li><a href="/campaign/{{.ID}}">{{.Name}}</a> <span class="dim">{{.Model}}</span> <span class="badge {{.Status}}">{{.Status}}</span>{{if .Cur}} <span class="dim">· {{.Cur}}</span>{{end}} <span class="dim">{{.NumRuns}} runs</span></li>
+        <li><a href="/campaign/{{.ID}}">{{.Name}}</a> <span class="dim">{{.Model}}</span> <span class="badge {{.Status}}">{{.Status}}</span>{{if .Cur}} <span class="dim">· {{.Cur}}</span>{{end}} <span class="dim">{{.NumRuns}} runs</span> <a href="/campaign/{{.ID}}/report" class="dim">report →</a></li>
       {{end}}</ul>{{else}}<p class="muted">no campaigns yet</p>{{end}}
     </section>
   </div>

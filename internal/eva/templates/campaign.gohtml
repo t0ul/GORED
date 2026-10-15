@@ -39,7 +39,7 @@
     <div class="dockctl">
       {{if eq .Status "running"}}<form method="post" action="/campaign/{{.ID}}/abort"><button class="rect danger">ABORT CAMPAIGN</button></form>{{end}}
     </div>
-    <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/campaigns">CAMPAIGN</a> · <a href="/leaderboard">LEADERBOARD</a></nav>
+    <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/campaigns">CAMPAIGN</a> · <a href="/campaign/{{.ID}}/report">REPORT</a> · <a href="/leaderboard">LEADERBOARD</a></nav>
   </div>
   <span></span>
 </div>

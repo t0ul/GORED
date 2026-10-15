@@ -1,0 +1,68 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">MORNING REPORT <span class="badge {{.Status}}">{{.Status}}</span></span>
+  <span class="hudcfg">{{.Name}} · {{.Model}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</span>
+  <span class="hudphase">{{len .Targets}} TARGETS</span>
+</div>
+<div class="hazard"></div>
+<div class="report">
+  <section class="role lens" style="margin-bottom:16px">
+    <div class="rolehdr">◉ OVERVIEW</div>
+    <div class="readout rptgrid">
+      <div class="ro">TARGETS <b>{{len .Targets}}</b></div>
+      <div class="ro">CAPTURES <b class="{{if .TotalCaptures}}yel{{end}}">{{.TotalCaptures}}</b></div>
+      <div class="ro">FINDINGS <b>{{.TotalFinds}}</b></div>
+      <div class="ro">PATHS TOUCHED <b>{{.TotalPaths}}</b></div>
+    </div>
+    <p class="hint" style="margin-top:10px">What the campaign tried, what it found, per target. Coverage and evidence are read from each sortie's trace — an honest account of what actually ran. Blind mode: findings stand on their own evidence (nothing planted).</p>
+  </section>
+
+  {{range .Targets}}
+  <section class="role lens rpttarget">
+    <div class="rolehdr">◆ {{.Name}} <span class="dim">{{.Base}}</span>
+      {{if .Captures}}<span class="verdict-bar hit" style="display:inline-block;margin-left:10px">● {{.Captures}} CAPTURED</span>{{else}}<span class="verdict-bar miss" style="display:inline-block;margin-left:10px">○ no capture</span>{{end}}
+    </div>
+    <div class="readout rptgrid">
+      <div class="ro">STAGES <b>{{range .Stages}}{{.}} {{end}}</b></div>
+      <div class="ro">PATHS <b>{{.PathCount}}</b></div>
+      <div class="ro">FINDINGS <b>{{.FindCount}}</b></div>
+      <div class="ro">SORTIES <b>{{len .Children}}</b></div>
+    </div>
+
+    {{range .Children}}
+    <div class="card frame rptchild">
+      <div class="card-tag">{{.Stage}} <span class="badge {{.Status}}">{{.Status}}</span>{{if .Captured}} <span class="badge cap">CAPTURED</span>{{end}}
+        <span class="dim">· {{.ToolCalls}} tool calls · {{len .Paths}} paths</span>
+        <span class="rptlinks"><a href="/run/{{.ID}}">sortie</a> · <a href="/run/{{.ID}}/trace">trace</a>{{if .HasSums}} · <a href="/run/{{.ID}}/leaderboard">leaderboard</a>{{end}}</span>
+      </div>
+      {{if .Tools}}<div class="chips">{{range .Tools}}<span class="chip">{{.}}</span>{{end}}</div>{{end}}
+      {{if .Paths}}<div class="panel-tag" style="margin-top:8px">DISCOVERED SURFACE</div>
+      <div class="tblwrap"><table><thead><tr><th>method</th><th>path</th><th>last response</th></tr></thead><tbody>
+        {{range .Paths}}<tr><td class="c">{{.Method}}</td><td>{{.Path}}</td><td class="dim">{{trunc .Last 120}}</td></tr>{{end}}
+      </tbody></table></div>{{end}}
+      {{if .Findings}}<div class="panel-tag" style="margin-top:8px">FINDINGS</div>
+      <div class="evlog">{{range .Findings}}<div class="ev"><span class="ft">{{.Type}}</span> {{trunc .Value 200}}</div>{{end}}</div>{{end}}
+      {{if .Repro}}<div class="panel-tag" style="margin-top:8px">REPRO</div><pre class="repro">{{.Repro}}</pre>{{end}}
+      {{if and (not .Paths) (not .Findings)}}<p class="muted">no surface or findings recorded for this sortie.</p>{{end}}
+    </div>
+    {{end}}
+  </section>
+  {{else}}
+  <p class="muted">no sorties yet — the report fills as the campaign runs.</p>
+  {{end}}
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/campaigns">CAMPAIGN</a> · <a href="/campaign/{{.ID}}">LIVE</a> · <a href="/leaderboard">LEADERBOARD</a></nav></div>
+  <span></span>
+</div>
+<style>
+.report{max-width:960px;margin:0 auto;padding:0 4px}
+.rptgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.rpttarget{margin:14px 0}
+.rptchild{margin:10px 0}
+.rptlinks{float:right;font-size:11px;letter-spacing:1px}
+.rptlinks a{color:var(--amber)}
+@media(max-width:720px){.rptgrid{grid-template-columns:1fr 1fr}}
+</style>
+{{- end}}
