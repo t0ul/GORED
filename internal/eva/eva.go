@@ -1463,7 +1463,7 @@ button.swap{padding:11px 18px}
 .board .ft{color:var(--orange);font-size:10px;letter-spacing:1px;text-transform:uppercase}
 /* verdict */
 .verdict-bar{margin:18px 0;padding:14px 16px;font-weight:700;letter-spacing:3px;text-transform:uppercase;border:1px solid}
-.verdict-bar.hit{color:var(--orange);border-color:var(--orange);background:rgba(255,106,0,.08);text-shadow:0 0 12px rgba(255,106,0,.5)}
+.verdict-bar.hit{color:var(--yellow);border-color:var(--yellow);background:rgba(255,210,26,.1);text-shadow:0 0 14px rgba(255,210,26,.6)}
 .verdict-bar.miss{color:var(--mut);border-color:var(--line)}
 /* table */
 table{width:100%;border-collapse:collapse;margin:14px 0}
@@ -1474,7 +1474,7 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 /* live telemetry log */
 .log{max-height:360px;overflow:auto;font-size:12px;line-height:1.5;background:#0c0703;border:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:2px}
 .logln{color:var(--mut);white-space:pre-wrap;word-break:break-word}
-.logln.hit{color:var(--orange);font-weight:700}
+.logln.hit{color:var(--yellow);font-weight:700}
 .logln.warn{color:var(--amber)}
 .log:empty::before{content:"⬡ awaiting telemetry…";color:var(--mut)}
 .repro{background:#0c0703;border:1px solid var(--line);padding:10px;overflow:auto;color:var(--green);font-size:12px;white-space:pre-wrap;word-break:break-word}
@@ -1511,9 +1511,10 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .lb th,.lb td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px}
 .lb th{color:var(--orange);letter-spacing:1.5px;text-transform:uppercase;font-size:11px}
 .lb tr.top td{color:var(--fg)}
+.lb tr.top .rank{color:var(--yellow);text-shadow:0 0 10px rgba(255,210,26,.5)}
 .capcell{min-width:150px}
 .capbar{height:12px;background:#0c0703;border:1px solid var(--line);position:relative;overflow:hidden}
-.capbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--orange))}
+.capbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--yellow))}
 .capbar>span{position:absolute;right:4px;top:-1px;font-size:10px;color:var(--fg)}
 .rank{color:var(--orange);font-weight:700}
 /* target "Angel" viz */
@@ -1523,8 +1524,8 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .angel .ring.r2{width:56px;height:56px;border-color:rgba(255,106,0,.3)}
 .angel .ring.r3{width:30px;height:30px;border-color:rgba(255,106,0,.5)}
 .angel .pat{font-size:12px;letter-spacing:2px;color:var(--green);z-index:1;text-align:center}
-.angel.breached .ring{border-color:rgba(255,42,42,.4);animation:pulse 1.4s infinite}
-.angel.breached .pat{color:var(--red)}
+.angel.breached .ring{border-color:rgba(255,210,26,.6);animation:pulse 1.4s infinite}
+.angel.breached .pat{color:var(--yellow);text-shadow:0 0 12px rgba(255,210,26,.6)}
 .angel .cross{position:absolute;inset:0;background:
   linear-gradient(var(--line),var(--line)) center/1px 100% no-repeat,
   linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat;opacity:.4}
@@ -1581,7 +1582,7 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .hudbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;border:1px solid rgba(255,106,0,.3);padding:8px 14px;margin-bottom:10px;background:linear-gradient(90deg,rgba(255,106,0,.05),transparent)}
 .hudbar .dtitle{font-size:15px;letter-spacing:3px;text-transform:uppercase}
 .hudbar .hudcfg{color:var(--mut);font-size:12px;letter-spacing:1px}
-.hudbar .hudphase{margin-left:auto;color:var(--orange);font-size:12px;letter-spacing:2px}
+.hudbar .hudphase{margin-left:auto;color:var(--yellow);font-size:12px;letter-spacing:2px;text-shadow:0 0 10px rgba(255,210,26,.45)}
 .slot-center{position:relative}
 .slot-center .log,.slot-center .evlog{max-height:none}
 .lens .rolehdr .count{color:var(--mut);font-size:11px}
