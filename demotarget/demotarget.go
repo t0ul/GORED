@@ -96,6 +96,7 @@ type Server struct {
 	mu        sync.Mutex         // guards memos and profiles (written by the POST/PUT handlers)
 	memos     map[string]note    // the differential-oracle surface: owned records, no planted flag
 	profiles  map[string]profile // the mass-assignment surface: each identity's own account record
+	users     map[string]string  // the NoSQL-injection surface: username -> password for POST /api/login
 	internalK string             // per-process secret header the fetch proxy injects
 	jwtSecret string             // HS256 signing secret: weak/in-source (vuln) or strong/per-process (hardened)
 	hardened  bool               // when true, the controls are wired and neither flag is reachable
@@ -125,6 +126,13 @@ var demoFlags = []core.FlagSpec{
 		Where:      "GET /api/fetch?url= proxies to loopback without an intended-host allowlist; GET /internal/flag holds the flag behind a header only the proxy sets",
 		Detect:     "oracle records capture when /internal/flag is served through the proxy",
 	},
+	{
+		ID:         "nosqli-login",
+		Class:      core.ClassInjection,
+		Difficulty: core.DiffMedium,
+		Where:      "POST /api/login builds its query from the JSON body without neutralizing operators, so {\"username\":{\"$ne\":null},\"password\":{\"$ne\":null}} authenticates and discloses the flag",
+		Detect:     "oracle records capture when the flag is served on an operator-injection bypass",
+	},
 }
 
 // New builds the demo target with a fresh oracle (new unforgeable flags). With no
@@ -140,6 +148,7 @@ func New(opts ...Option) (*Server, error) {
 		notes:     map[string]note{},
 		memos:     map[string]note{},
 		profiles:  map[string]profile{},
+		users:     map[string]string{"alice": "correct-horse-battery", "admin": "s3cr3t-admin-" + mint()[:8]},
 		internalK: mint(),
 	}
 	for _, opt := range opts {
@@ -206,6 +215,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/memos/mine", s.handleMyMemos)
 	s.mux.HandleFunc("GET /api/memos/{id}", s.handleGetMemo)
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
+	s.mux.HandleFunc("POST /api/login", s.handleLogin)
 	s.mux.HandleFunc("GET /api/profile", s.handleGetProfile)
 	s.mux.HandleFunc("PUT /api/profile", s.handleUpdateProfile)
 	s.mux.HandleFunc("POST /api/token", s.handleIssueToken)
@@ -346,6 +356,75 @@ func (s *Server) handleCreateMemo(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	writeJSON(w, http.StatusCreated, m)
 }
+
+// handleLogin is the NoSQL-injection surface. The vulnerable build checks credentials against a
+// naive query built from the JSON body without neutralizing operator objects, so an object value
+// ($ne/$gt/$regex) matches any user/password — an operator-injection auth bypass that discloses
+// the flag. The hardened build requires scalar strings, closing it.
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	var in map[string]any
+	if err := json.Unmarshal(body, &in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+		return
+	}
+	u, p := in["username"], in["password"]
+	if s.hardened {
+		// The control: credentials must be scalar strings; operator objects are rejected.
+		us, uok := u.(string)
+		ps, pok := p.(string)
+		if !uok || !pok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password must be strings"})
+			return
+		}
+		if us != "" && s.users[us] == ps {
+			writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "user": us})
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	// The bug: a string must match exactly, but an operator object matches ANY value.
+	user, ok := s.naiveAuth(u, p)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	resp := map[string]any{"authenticated": true, "user": user}
+	// A match that used an operator object is the injection bypass: disclose the flag, the way
+	// the other planted vulns do when their control is defeated.
+	if isOperator(u) || isOperator(p) {
+		if flag, ok := s.oracle.Secret("nosqli-login"); ok {
+			resp["flag"] = flag
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// naiveAuth simulates an auth query built from the request body: an operator object matches any.
+func (s *Server) naiveAuth(u, p any) (string, bool) {
+	for name, pass := range s.users {
+		if matchVal(u, name) && matchVal(p, pass) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// matchVal is the naive comparison: a string must equal the stored value; an operator object
+// (a Mongo-style {"$ne":null}) matches anything — the un-neutralized operator that is the bug.
+func matchVal(v any, actual string) bool {
+	switch t := v.(type) {
+	case string:
+		return t == actual
+	case map[string]any:
+		return len(t) > 0
+	default:
+		return false
+	}
+}
+
+func isOperator(v any) bool { _, ok := v.(map[string]any); return ok }
 
 // handleGetProfile returns the caller's own account record. It is correctly scoped to the
 // caller, so it is a clean read-back for the mass-assignment probe.

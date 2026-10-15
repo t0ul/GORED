@@ -71,6 +71,20 @@ func ProofFromNuclei(f tools.NucleiFinding, app string) (core.Proof, bool) {
 	return p, true
 }
 
+// ProofFromNoSQLi normalizes a NoSQL-injection finding. A confirmed bypass is an executed
+// authentication bypass on real bytes — exploitable, certain — so it carries the operator
+// payload as the repro.
+func ProofFromNoSQLi(f NoSQLiFinding, app string) (core.Proof, bool) {
+	if !f.Flagged() {
+		return core.Proof{}, false
+	}
+	locus, kind := core.NormLocus(f.Path)
+	p := core.Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
+		Source: "gored-nosqli", Evidence: f.Evidence, Rung: core.LadderExploitable, Exploitable: true,
+		Repro: fmt.Sprintf("POST %s with a JSON body injecting operators (%s) — authenticates where wrong credentials do not", f.Path, f.Vector)}
+	return p, true
+}
+
 // ProofFromMassAssign normalizes a mass-assignment finding. Certain means the probe wrote
 // a privileged field and read it back changed — an executed privilege escalation, so
 // exploitable; high (reflected only) is triggerable.

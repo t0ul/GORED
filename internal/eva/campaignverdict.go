@@ -20,6 +20,7 @@ var sentinelProof = []struct{ sentinel, cwe, kind string }{
 	{"MASSASSIGN-CONFIRMED", "CWE-915", "mass assignment (client set a privileged field)"},
 	{"JWT-FORGE-CONFIRMED", "CWE-347", "JWT forgery (a forged token was accepted)"},
 	{"BOLA-CONFIRMED", "CWE-639", "broken object-level authorization"},
+	{"NOSQLI-CONFIRMED", "CWE-943", "NoSQL injection (operator-injection auth bypass)"},
 }
 
 // campaignProofs builds core.Proofs from the campaign's child-run traces: every probe-tool
