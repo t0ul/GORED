@@ -98,7 +98,9 @@ CREATE TABLE IF NOT EXISTS campaigns (
   elapsed TEXT,
   run_ids TEXT,
   cur     TEXT,
-  note    TEXT
+  note    TEXT,
+  loop    INTEGER,
+  pass    INTEGER
 );
 CREATE TABLE IF NOT EXISTS project_surface (
   target TEXT NOT NULL,
@@ -135,6 +137,8 @@ func Open(path string) (*Store, error) {
 	// just means this DB is already current; it is the expected no-op and is ignored.
 	_, _ = db.Exec(`ALTER TABLE eva_runs ADD COLUMN models TEXT`)
 	_, _ = db.Exec(`ALTER TABLE targets ADD COLUMN spec TEXT`)
+	_, _ = db.Exec(`ALTER TABLE campaigns ADD COLUMN loop INTEGER`)
+	_, _ = db.Exec(`ALTER TABLE campaigns ADD COLUMN pass INTEGER`)
 	return &Store{db: db}, nil
 }
 

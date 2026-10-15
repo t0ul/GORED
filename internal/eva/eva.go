@@ -161,6 +161,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /campaign/{id}/status", s.campaignStatus)
 	mux.HandleFunc("GET /campaign/{id}/report", s.campaignReportHandler)
 	mux.HandleFunc("GET /campaign/{id}/pentest", s.campaignPentest)
+	mux.HandleFunc("GET /campaign/{id}/report.md", s.campaignReportMD)
+	mux.HandleFunc("GET /campaign/{id}/surface.csv", s.campaignSurfaceCSV)
 	mux.HandleFunc("POST /campaign/{id}/abort", s.campaignAbortHandler)
 	mux.HandleFunc("GET /campaigns.json", s.campaignsJSON)
 	mux.HandleFunc("POST /targets", s.targetSave)

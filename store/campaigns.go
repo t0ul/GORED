@@ -20,18 +20,25 @@ type Campaign struct {
 	RunIDs  string // CSV of child run ids (eva_runs.id)
 	Cur     string // the current "target · stage" in flight, for live status
 	Note    string
+	Loop    bool   // keep re-running the targets in passes until aborted (the non-stop overnight mode)
+	Pass    int    // how many passes the loop has started
 }
 
 // SaveCampaign upserts a campaign. Called on launch and on each state change.
 func (s *Store) SaveCampaign(c Campaign) error {
+	loop := 0
+	if c.Loop {
+		loop = 1
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO campaigns (id, name, targets, model, status, started, elapsed, run_ids, cur, note)
-		 VALUES (?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO campaigns (id, name, targets, model, status, started, elapsed, run_ids, cur, note, loop, pass)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(id) DO UPDATE SET
 		   name=excluded.name, targets=excluded.targets, model=excluded.model, status=excluded.status,
-		   started=excluded.started, elapsed=excluded.elapsed, run_ids=excluded.run_ids, cur=excluded.cur, note=excluded.note`,
+		   started=excluded.started, elapsed=excluded.elapsed, run_ids=excluded.run_ids, cur=excluded.cur,
+		   note=excluded.note, loop=excluded.loop, pass=excluded.pass`,
 		c.ID, c.Name, c.Targets, c.Model, c.Status, c.Started.UTC().Format(time.RFC3339Nano),
-		c.Elapsed, c.RunIDs, c.Cur, c.Note,
+		c.Elapsed, c.RunIDs, c.Cur, c.Note, loop, c.Pass,
 	)
 	return err
 }
@@ -39,7 +46,7 @@ func (s *Store) SaveCampaign(c Campaign) error {
 // ListCampaigns returns campaigns, most recent first.
 func (s *Store) ListCampaigns() ([]Campaign, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, targets, model, status, started, elapsed, run_ids, cur, note
+		`SELECT id, name, targets, model, status, started, elapsed, run_ids, cur, note, loop, pass
 		 FROM campaigns ORDER BY started DESC`)
 	if err != nil {
 		return nil, err
@@ -59,7 +66,7 @@ func (s *Store) ListCampaigns() ([]Campaign, error) {
 // GetCampaign reads one campaign; ok is false when none exists.
 func (s *Store) GetCampaign(id string) (Campaign, bool, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, targets, model, status, started, elapsed, run_ids, cur, note
+		`SELECT id, name, targets, model, status, started, elapsed, run_ids, cur, note, loop, pass
 		 FROM campaigns WHERE id=?`, id)
 	c, err := scanCampaign(row)
 	if err == sql.ErrNoRows {
@@ -74,10 +81,13 @@ func (s *Store) GetCampaign(id string) (Campaign, bool, error) {
 func scanCampaign(sc scanRow) (Campaign, error) {
 	var c Campaign
 	var started string
+	var loop, pass sql.NullInt64 // NULL for rows written before these columns existed
 	if err := sc.Scan(&c.ID, &c.Name, &c.Targets, &c.Model, &c.Status, &started, &c.Elapsed,
-		&c.RunIDs, &c.Cur, &c.Note); err != nil {
+		&c.RunIDs, &c.Cur, &c.Note, &loop, &pass); err != nil {
 		return c, err
 	}
 	c.Started, _ = time.Parse(time.RFC3339Nano, started)
+	c.Loop = loop.Int64 != 0
+	c.Pass = int(pass.Int64)
 	return c, nil
 }

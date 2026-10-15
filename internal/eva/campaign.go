@@ -31,7 +31,9 @@ type campaign struct {
 	Started time.Time
 	Elapsed string
 	RunIDs  []string // child run ids, in launch order
-	Cur     string   // the "target · stage" in flight, for live status
+	Cur     string   // the "pass · target · stage" in flight, for live status
+	Loop    bool     // keep re-running the targets in passes until aborted (non-stop overnight)
+	Pass    int      // how many passes the loop has started
 	cancel  context.CancelFunc
 }
 
@@ -39,7 +41,7 @@ func toCampaign(c *campaign) store.Campaign {
 	return store.Campaign{
 		ID: c.ID, Name: c.Name, Targets: strings.Join(c.Targets, ","), Model: c.Model,
 		Status: c.Status, Started: c.Started, Elapsed: c.Elapsed,
-		RunIDs: strings.Join(c.RunIDs, ","), Cur: c.Cur,
+		RunIDs: strings.Join(c.RunIDs, ","), Cur: c.Cur, Loop: c.Loop, Pass: c.Pass,
 	}
 }
 
@@ -47,7 +49,7 @@ func fromCampaign(sc store.Campaign) *campaign {
 	return &campaign{
 		ID: sc.ID, Name: sc.Name, Targets: splitCSV(sc.Targets), Model: sc.Model,
 		Status: sc.Status, Started: sc.Started, Elapsed: sc.Elapsed,
-		RunIDs: splitCSV(sc.RunIDs), Cur: sc.Cur,
+		RunIDs: splitCSV(sc.RunIDs), Cur: sc.Cur, Loop: sc.Loop, Pass: sc.Pass,
 	}
 }
 
@@ -110,6 +112,17 @@ func defaultTargets() []store.Target {
 			Stages: "apiexploit", Ensure: false,
 			LoginPath: "/api/auth/login", LoginType: "json", UserField: "email", PassField: "password",
 			Notes: "local RiskRancher on :8080 (run it in a scratch cwd, fresh DB). Fill PrivCreds/LowCreds (email:password) to enable the authenticated surface.",
+		},
+		{
+			Name: "emaildrop", Base: "http://127.0.0.1:4000", Transport: "direct",
+			Stages: "apiexploit,llmattack", Ensure: false,
+			LoginPath: "/api/auth/login", LoginType: "json", UserField: "email", PassField: "password",
+			Notes: "the product (t0ul/emaildrop), first-class target. Gateway :4000. Fill creds + confirm the login recipe; llmattack hits its LLM surface. The whole exercise is for this app.",
+		},
+		{
+			Name: "krabber", Base: "http://127.0.0.1:8090", Transport: "direct",
+			Stages: "apiexploit", Ensure: false,
+			Notes: "krabber API (/api/v1/molts, bearer-key) — runs on an Amazon Linux VM. Set Base to the VM address and add a PRIV HEADER 'Authorization: Bearer <key>'.",
 		},
 	}
 }
@@ -305,9 +318,9 @@ func targetStages(t store.Target) []string {
 }
 
 // startCampaign registers a campaign and launches its scheduler goroutine.
-func (s *Server) startCampaign(name, model string, targets []string) *campaign {
+func (s *Server) startCampaign(name, model string, targets []string, loop bool) *campaign {
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
-	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now()}
+	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop}
 	s.mu.Lock()
 	s.campaigns[id] = c
 	s.corder = append([]string{id}, s.corder...)
@@ -329,28 +342,47 @@ func (s *Server) runCampaign(c *campaign) {
 	defer cancel()
 
 	start := time.Now()
-	for _, tname := range c.Targets {
-		tg, ok, _ := s.store.GetTarget(tname)
-		if !ok {
-			continue
+	// The outer loop is the non-stop overnight mode: when Loop is set, walk the targets again
+	// and again (each pass re-seeds from the accumulated project memory, so later passes build
+	// on earlier ones) until aborted; otherwise one pass.
+	for {
+		s.mu.Lock()
+		c.Pass++
+		s.mu.Unlock()
+		s.persistCampaign(c)
+		for _, tname := range c.Targets {
+			tg, ok, _ := s.store.GetTarget(tname)
+			if !ok {
+				continue
+			}
+			for _, stage := range targetStages(tg) {
+				select {
+				case <-ctx.Done():
+					goto done
+				default:
+				}
+				// Claim the shared bay (blocking): one model boots at a time, and interactive
+				// sorties compete for the same token, so a campaign yields the lab politely.
+				var slot int
+				select {
+				case slot = <-s.slots:
+				case <-ctx.Done():
+					goto done
+				}
+				rn := s.launchCampaignRun(c, tg, stage, slot)
+				s.execute(rn, rn.flags, stage) // synchronous: runs to terminal, releases the bay
+				s.recordProjectMemory(tg.Name, rn) // accumulate surface + findings for later passes
+			}
 		}
-		for _, stage := range targetStages(tg) {
-			select {
-			case <-ctx.Done():
-				goto done
-			default:
-			}
-			// Claim the shared bay (blocking): one model boots at a time, and interactive
-			// sorties compete for the same token, so a campaign yields the lab politely.
-			var slot int
-			select {
-			case slot = <-s.slots:
-			case <-ctx.Done():
-				goto done
-			}
-			rn := s.launchCampaignRun(c, tg, stage, slot)
-			s.execute(rn, rn.flags, stage) // synchronous: runs to terminal, releases the bay
-			s.recordProjectMemory(tg.Name, rn) // accumulate surface + findings for later passes
+		if !c.Loop {
+			break
+		}
+		// A brief pause between passes: paces the loop (so a fast-failing model does not
+		// tight-spin) and gives an abort a clean window; respects cancellation.
+		select {
+		case <-ctx.Done():
+			goto done
+		case <-time.After(3 * time.Second):
 		}
 	}
 done:
@@ -386,7 +418,7 @@ func (s *Server) launchCampaignRun(c *campaign, tg store.Target, stage string, s
 	s.runs[id] = rn
 	s.order = append([]string{id}, s.order...)
 	c.RunIDs = append(c.RunIDs, id)
-	c.Cur = tg.Name + " · " + stage
+	c.Cur = fmt.Sprintf("pass %d · %s · %s", c.Pass, tg.Name, stage)
 	s.mu.Unlock()
 	s.persist(rn)
 	s.persistCampaign(c)
