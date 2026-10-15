@@ -1432,7 +1432,7 @@ button.swap{padding:11px 18px}
 .radio b{color:var(--amber);letter-spacing:2px}
 .radio span{color:var(--mut);font-size:12px}
 /* runs list */
-.runs{list-style:none;padding:0}.runs li{padding:9px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.runs{list-style:none;padding:0;max-height:42vh;overflow-y:auto}.runs li{padding:9px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .runs a{color:var(--fg)}
 /* badges */
 .badge{font-size:11px;padding:2px 9px;border:1px solid var(--line);letter-spacing:2px;text-transform:uppercase}
@@ -1550,8 +1550,8 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .slot-center .role{width:100%}
 /* config-view wings behave exactly like the run view's wings: the base perspective recede alone,
    so every div — the title and each body line — slants on the receding plane. No title-specific
-   transforms, no anchoring hacks. Only difference from the run view: the centre box scrolls. */
-.cockpit3:not(.immersive) .slot-left .role,.cockpit3:not(.immersive) .slot-right .role{max-height:84vh;overflow:auto}
+   transforms, no anchoring hacks. A long wing list (the sortie log) scrolls inside its own fixed
+   box (like the run view's FEED log) so the title stays put and nothing overflows the trapezoid. */
 .cockpit3:not(.immersive) .slot-center{height:72vh;animation:none}
 .cockpit3:not(.immersive) .slot-left,.cockpit3:not(.immersive) .slot-right{cursor:default}
 /* big wing titles anchored at the top of the receding plane (the wide outer end) */
