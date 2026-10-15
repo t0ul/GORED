@@ -22,7 +22,7 @@
         <span class="chip act" onclick="veto('read-only — no writes')">read-only</span>
         <span class="chip act" onclick="veto('one tool call, then re-plan')">single shot</span>
       </div>
-      <div class="btnrow"><button type="button" onclick="submitDecision('proceed')">PROCEED</button><button type="button" class="danger" onclick="submitDecision('abort')">ABORT</button></div>
+      <div class="btnrow"><button type="button" class="go" onclick="submitDecision('proceed')">PROCEED</button><button type="button" class="danger" onclick="submitDecision('abort')">ABORT</button></div>
     </div>
   </div>
   <div class="slot slot-right" id="slot-right" onclick="manualSwap('right')"></div>
@@ -34,7 +34,7 @@
     <div class="dockctl">
       <button class="rect" onclick="resetFocus()">RESET</button>
       <button class="rect" id="focusbtn" onclick="toggleLock()">AUTO</button>
-      {{if or (eq .Status "running") (eq .Status "waiting")}}<input class="directivein" id="directive" placeholder="nudge the agent…" onkeydown="if(event.key==='Enter'){event.preventDefault();sendDirective();}"><button class="rect" onclick="sendDirective()">SEND</button><button form="abortform" class="rect danger">ABORT</button>{{else}}<button form="rerunform" class="rect">RE-RUN</button>{{end}}
+      {{if or (eq .Status "running") (eq .Status "waiting")}}<input class="directivein" id="directive" placeholder="nudge the agent…" onkeydown="if(event.key==='Enter'){event.preventDefault();sendDirective();}"><button class="rect sync" onclick="sendDirective()">SEND</button><button form="abortform" class="rect danger">ABORT</button>{{else}}<button form="rerunform" class="rect go">RE-RUN</button>{{end}}
     </div>
     <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/studio">STUDIO</a> · <a href="/run/{{.ID}}/trace">TRACE</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">LEADERBOARD</a>{{end}}</nav>
     <div class="keyhint">keys: &lt; &gt; swap · r reset · l lock</div>

@@ -32,7 +32,7 @@
           <button type="button" class="rect" onclick="editSkill(this)">EDIT</button>
           <button class="rect save" disabled>SAVE</button>
           <button type="button" class="rect ico" title="copy instruction" aria-label="copy instruction" onclick="copySkill(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button>
-          {{if .Changed}}<button type="button" class="rect" onclick="revertSkill(this)">REVERT</button>{{end}}{{if .Stage}}<button type="button" class="rect" onclick="dryRun(this)">DRY-RUN</button>{{end}}
+          {{if .Changed}}<button type="button" class="rect danger" onclick="revertSkill(this)">REVERT</button>{{end}}{{if .Stage}}<button type="button" class="rect" onclick="dryRun(this)">DRY-RUN</button>{{end}}
         </div>
       </form>
       {{end}}{{else}}<p class="muted">no skills registry (run with -store to seed the catalog)</p>{{end}}
