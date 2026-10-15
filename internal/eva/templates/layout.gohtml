@@ -4,4 +4,34 @@
 {{template "css" .}}
 </style>
 {{template "content" .}}
+<div id="cmdk" hidden><div class="cmdk-box"><input id="cmdk-input" placeholder="jump to a run or action…  (⌘K / Ctrl-K · Esc to close)" autocomplete="off"><div id="cmdk-list"></div></div></div>
+<div id="toasts"></div>
+<script>
+(function(){
+  var overlay=document.getElementById('cmdk'), input=document.getElementById('cmdk-input'), list=document.getElementById('cmdk-list');
+  var actions=[
+    {t:'Launch · API IDOR', u:'/?stage=apiexploit'},
+    {t:'Launch · XSS sweep', u:'/?stage=exploit'},
+    {t:'Launch · LLM jailbreak', u:'/?stage=llmattack'},
+    {t:'Launch · Full plan', u:'/?stage=plan'},
+    {t:'Open · Cockpit', u:'/'},
+    {t:'Open · Leaderboard', u:'/leaderboard'},
+    {t:'Open · Studio', u:'/studio'}
+  ];
+  var runs=[];
+  function loadRuns(){ fetch('/runs.json').then(function(r){return r.json();}).then(function(j){ runs=(j||[]).map(function(x){ return {t:'Run · '+x.stage+' · '+x.id+(x.captured?' ✦':'')+' ['+x.status+']', u:'/run/'+x.id}; }); render(input.value); }).catch(function(){}); }
+  function render(q){ q=(q||'').toLowerCase(); var hits=actions.concat(runs).filter(function(i){ return i.t.toLowerCase().indexOf(q)>=0; }).slice(0,14); list.innerHTML=''; hits.forEach(function(h,idx){ var a=document.createElement('a'); a.className='cmdk-item'+(idx===0?' on':''); a.href=h.u; a.textContent=h.t; list.appendChild(a); }); }
+  function open(){ overlay.hidden=false; input.value=''; render(''); input.focus(); loadRuns(); }
+  function close(){ overlay.hidden=true; }
+  document.addEventListener('keydown', function(e){ if((e.metaKey||e.ctrlKey)&&(e.key==='k'||e.key==='K')){ e.preventDefault(); overlay.hidden?open():close(); } else if(e.key==='Escape' && !overlay.hidden){ close(); } });
+  input.addEventListener('input', function(){ render(input.value); });
+  input.addEventListener('keydown', function(e){ if(e.key==='Enter'){ var top=list.querySelector('.cmdk-item'); if(top) location.href=top.getAttribute('href'); } });
+  overlay.addEventListener('click', function(e){ if(e.target===overlay) close(); });
+  // capture toasts: poll and announce newly-captured sorties from any page
+  var known=null, tbox=document.getElementById('toasts');
+  function toast(msg){ var d=document.createElement('div'); d.className='toast'; d.textContent=msg; tbox.appendChild(d); setTimeout(function(){ d.classList.add('out'); setTimeout(function(){ d.remove(); },400); }, 4500); }
+  function poll(){ fetch('/runs.json').then(function(r){return r.json();}).then(function(j){ var caps={}; (j||[]).forEach(function(x){ if(x.captured) caps[x.id]=x.stage; }); if(known!==null){ Object.keys(caps).forEach(function(id){ if(!known[id]) toast('CAPTURED · '+caps[id]+' · '+id); }); } known=caps; }).catch(function(){}); }
+  poll(); setInterval(poll, 6000);
+})();
+</script>
 {{- end}}

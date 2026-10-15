@@ -210,6 +210,19 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .lb tr.pinned td{background:rgba(255,210,26,.1);color:var(--yellow)}
 .difftbl tr.diverge td{background:rgba(255,210,26,.1);color:var(--yellow)}
 .difftbl td:nth-child(2),.difftbl td:nth-child(3){font-size:11px}
+/* global: command palette (cmd-K) + capture toasts */
+#cmdk{position:fixed;inset:0;z-index:50;background:rgba(5,3,1,.72);display:flex;align-items:flex-start;justify-content:center;padding-top:13vh}
+#cmdk[hidden]{display:none}
+.cmdk-box{width:min(560px,92vw);background:#0f0a05;border:1px solid var(--orange);box-shadow:0 0 56px rgba(255,120,0,.3)}
+#cmdk-input{width:100%;border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--fg);padding:13px 15px;font:inherit;letter-spacing:.5px}
+#cmdk-input:focus{outline:0}
+#cmdk-list{max-height:50vh;overflow:auto}
+.cmdk-item{display:block;padding:9px 15px;color:var(--fg);text-decoration:none;border-bottom:1px solid rgba(255,120,0,.1);font-size:13px;letter-spacing:.3px}
+.cmdk-item:hover,.cmdk-item.on{background:rgba(255,120,0,.12);color:var(--yellow)}
+#toasts{position:fixed;right:16px;bottom:16px;z-index:60;display:flex;flex-direction:column;gap:8px}
+.toast{background:#0f0a05;border:1px solid var(--yellow);color:var(--yellow);padding:10px 14px;font-size:12px;letter-spacing:1px;box-shadow:0 0 24px rgba(255,210,26,.3);animation:toastin .3s}
+.toast.out{opacity:0;transition:opacity .4s}
+@keyframes toastin{from{transform:translateY(10px);opacity:0}to{transform:translateY(0);opacity:1}}
 .capcell{min-width:150px}
 .capbar{height:12px;background:#0c0703;border:1px solid var(--line);position:relative;overflow:hidden}
 .capbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--yellow))}

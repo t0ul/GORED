@@ -73,6 +73,28 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// runsJSON is the registry as data: the run list for the command palette and the capture-toast
+// poller (which raise ambient UI from any page).
+func (s *Server) runsJSON(w http.ResponseWriter, _ *http.Request) {
+	type row struct {
+		ID       string `json:"id"`
+		Stage    string `json:"stage"`
+		Status   string `json:"status"`
+		Base     string `json:"base"`
+		Captured bool   `json:"captured"`
+	}
+	s.mu.Lock()
+	out := make([]row, 0, len(s.order))
+	for _, id := range s.order {
+		if rn := s.runs[id]; rn != nil {
+			out = append(out, row{ID: rn.ID, Stage: rn.Stage, Status: rn.Status, Base: rn.Base, Captured: captured(rn.Sums)})
+		}
+	}
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
 // preflight is a light reachability check for the TARGET light: a short-timeout GET of the
 // configured base. It makes no judgement — just whether something answered.
 func (s *Server) preflight(w http.ResponseWriter, r *http.Request) {

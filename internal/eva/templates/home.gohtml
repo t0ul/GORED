@@ -55,8 +55,9 @@
     <section class="role lens">
       <div class="rolehdr">◥ SORTIE LOG</div>
       {{if .Recent}}
+      <input class="directivein" id="sortiesearch" style="width:100%;margin-bottom:8px" placeholder="filter sorties…" oninput="filterSorties(this.value)">
       <form method="get" action="/compare">
-        <ul class="runs">{{range .Recent}}
+        <ul class="runs" id="sortielist">{{range .Recent}}
           <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span>{{if .IsMatrix}} <span class="badge matrix">matrix</span>{{end}} <span class="badge {{.Status}}">{{.Status}}</span>{{if captured .Sums}} <span class="badge cap">CAPTURED</span>{{end}}</li>
         {{end}}</ul>
         <div class="btnrow"><button class="ghost">COMPARE</button><button class="ghost" formaction="/leaderboard">PROMOTE</button></div>
@@ -79,6 +80,9 @@
 
   // quick-launch preset: arm a stage (fills the prompt via the change handler)
   window.preset = function(stage){ if(!sel) return; sel.value = stage; sel.dispatchEvent(new Event('change')); };
+
+  // searchable sortie log
+  window.filterSorties = function(q){ q=(q||'').toLowerCase(); var ul=document.getElementById('sortielist'); if(!ul) return; [].forEach.call(ul.children, function(li){ li.style.display = li.textContent.toLowerCase().indexOf(q)>=0 ? '' : 'none'; }); };
 
   // model chips: set the single model, or append to the matrix when MATRIX mode is on
   var mtxMode = false;

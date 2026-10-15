@@ -147,6 +147,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /run/{id}/leaderboard", s.runLeaderboard)
 	mux.HandleFunc("GET /leaderboard", s.leaderboard)
 	mux.HandleFunc("GET /preflight", s.preflight)
+	mux.HandleFunc("GET /runs.json", s.runsJSON)
 	return mux
 }
 
