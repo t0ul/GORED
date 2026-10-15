@@ -60,7 +60,7 @@
         <ul class="runs" id="sortielist">{{range .Recent}}
           <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span>{{if .IsMatrix}} <span class="badge matrix">matrix</span>{{end}} <span class="badge {{.Status}}">{{.Status}}</span>{{if captured .Sums}} <span class="badge cap">CAPTURED</span>{{end}}</li>
         {{end}}</ul>
-        <div class="btnrow"><button class="ghost">COMPARE</button><button class="ghost" formaction="/leaderboard">PROMOTE</button></div>
+        <div class="btnrow rectrow"><button class="rect">COMPARE</button><button class="rect" formaction="/leaderboard">PROMOTE</button></div>
       </form>
       {{else}}<p class="muted">no sorties yet</p>{{end}}
     </section>

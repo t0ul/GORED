@@ -28,11 +28,11 @@
         <input type="hidden" name="name" value="{{.Name}}">
         <input type="hidden" name="temp" value="{{.Temp}}">
         <textarea name="instruction" rows="4" readonly>{{.Instruction}}</textarea>
-        <div class="btnrow crudrow">
-          <button type="button" class="crud" onclick="editSkill(this)">EDIT</button>
-          <button class="crud save" disabled>SAVE</button>
-          <button type="button" class="crud ico" title="copy instruction" aria-label="copy instruction" onclick="copySkill(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button>
-          {{if .Changed}}<button type="button" class="crud" onclick="revertSkill(this)">REVERT</button>{{end}}{{if .Stage}}<button type="button" class="crud" onclick="dryRun(this)">DRY-RUN</button>{{end}}
+        <div class="btnrow rectrow">
+          <button type="button" class="rect" onclick="editSkill(this)">EDIT</button>
+          <button class="rect save" disabled>SAVE</button>
+          <button type="button" class="rect ico" title="copy instruction" aria-label="copy instruction" onclick="copySkill(this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="1.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button>
+          {{if .Changed}}<button type="button" class="rect" onclick="revertSkill(this)">REVERT</button>{{end}}{{if .Stage}}<button type="button" class="rect" onclick="dryRun(this)">DRY-RUN</button>{{end}}
         </div>
       </form>
       {{end}}{{else}}<p class="muted">no skills registry (run with -store to seed the catalog)</p>{{end}}
@@ -60,7 +60,7 @@
   <span></span>
 </div>
 <script>
-window.editSkill=function(btn){ var f=btn.closest('form'); var t=f.querySelector('textarea'); if(!t) return; t.readOnly=false; f.classList.add('editing'); var s=f.querySelector('.crud.save'); if(s) s.disabled=false; t.focus(); var v=t.value; t.value=''; t.value=v; };
+window.editSkill=function(btn){ var f=btn.closest('form'); var t=f.querySelector('textarea'); if(!t) return; t.readOnly=false; f.classList.add('editing'); var s=f.querySelector('.rect.save'); if(s) s.disabled=false; t.focus(); var v=t.value; t.value=''; t.value=v; };
 window.copySkill=function(btn){ var t=btn.closest('form').querySelector('textarea'); if(!t) return; (navigator.clipboard&&navigator.clipboard.writeText(t.value)); btn.classList.add('ok'); btn.title='copied'; setTimeout(function(){btn.classList.remove('ok'); btn.title='copy instruction';}, 1000); };
 window.revertSkill=function(btn){ var name=btn.closest('form').querySelector('input[name=name]').value; var ff=document.createElement('form'); ff.method='post'; ff.action='/studio/revert'; var i=document.createElement('input'); i.type='hidden'; i.name='name'; i.value=name; ff.appendChild(i); document.body.appendChild(ff); ff.submit(); };
 window.dryRun=function(btn){ var f=btn.closest('form'); var stage=f.getAttribute('data-stage'); if(!stage) return; var skill=f.querySelector('textarea[name=instruction]').value;

@@ -27,12 +27,12 @@
         <span class="fchip" data-span="checkpoint" onclick="tfilter('checkpoint',this)">GATE</span>
       </span></div>
       <div class="player">
-        <button onclick="tstep(-1)">◀ STEP</button>
-        <button onclick="tplay()" id="playbtn">PLAY</button>
-        <button onclick="tstep(1)">STEP ▶</button>
-        <button class="ghost" onclick="tspeed(this)" id="speedbtn">1×</button>
-        <button class="ghost" onclick="tjump()">CAPTURE</button>
-        <button class="ghost" onclick="treset()">RESET</button>
+        <button class="rect" onclick="tstep(-1)">◀ STEP</button>
+        <button class="rect" onclick="tplay()" id="playbtn">PLAY</button>
+        <button class="rect" onclick="tstep(1)">STEP ▶</button>
+        <button class="rect" onclick="tspeed(this)" id="speedbtn">1×</button>
+        <button class="rect" onclick="tjump()">CAPTURE</button>
+        <button class="rect" onclick="treset()">RESET</button>
       </div>
       <div class="tl" id="tl">
       {{range .Events}}<div class="tlev seen {{.Cls}}" data-span="{{.Span}}"><span class="sp">[{{.Span}}] {{.Event}}</span>{{if .Detail}}<div class="tx">{{.Detail}}</div>{{end}}</div>{{end}}
