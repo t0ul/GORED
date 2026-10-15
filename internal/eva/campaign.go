@@ -3,6 +3,9 @@ package eva
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/t0ul/GORED/internal/appsweep"
 	"github.com/t0ul/GORED/internal/bench"
+	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/store"
 )
 
@@ -128,6 +132,9 @@ func (s *Server) seedTargets() {
 func (s *Server) campaignInstruction(t store.Target, stage string) string {
 	base := s.effectiveInstruction(stage)
 	var pre []string
+	if sp := specPreamble(t); sp != "" {
+		pre = append(pre, sp)
+	}
 	if sp := s.surfacePreamble(t.Name); sp != "" {
 		pre = append(pre, sp)
 	}
@@ -168,6 +175,50 @@ func authPreamble(t store.Target) string {
 	default:
 		return ""
 	}
+	return b.String()
+}
+
+// specPreamble is the API SPEC block for a target: the routes declared in its OpenAPI/Swagger
+// spec (file path or http URL), parsed with core.PathsFromOpenAPI so the model attacks the
+// declared surface instead of guessing. "" when the target has no spec or it cannot be read.
+func specPreamble(t store.Target) string {
+	if t.Spec == "" {
+		return ""
+	}
+	var data []byte
+	var err error
+	if strings.HasPrefix(t.Spec, "http://") || strings.HasPrefix(t.Spec, "https://") {
+		resp, e := http.Get(t.Spec)
+		if e != nil {
+			return ""
+		}
+		defer resp.Body.Close()
+		data, err = io.ReadAll(resp.Body)
+	} else {
+		data, err = os.ReadFile(t.Spec)
+	}
+	if err != nil {
+		return ""
+	}
+	paths, err := core.PathsFromOpenAPI(data)
+	if err != nil || len(paths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("API SPEC (declared routes — attack these, including id-parameter swaps for IDOR/BOLA and privileged fields for mass assignment):\n")
+	n := 0
+	for _, p := range paths {
+		for _, m := range p.Methods {
+			fmt.Fprintf(&b, "- %s %s\n", m, p.Path)
+			if n++; n >= 50 {
+				break
+			}
+		}
+		if n >= 50 {
+			break
+		}
+	}
+	b.WriteString("Prefer these declared paths over guessing.")
 	return b.String()
 }
 

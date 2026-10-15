@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS targets (
   low_creds   TEXT,
   priv_header TEXT,
   low_header  TEXT,
+  spec        TEXT,
   notes       TEXT
 );
 CREATE TABLE IF NOT EXISTS campaigns (
@@ -133,6 +134,7 @@ func Open(path string) (*Store, error) {
 	// baseline above already carries them for a fresh DB, so a "duplicate column" error here
 	// just means this DB is already current; it is the expected no-op and is ignored.
 	_, _ = db.Exec(`ALTER TABLE eva_runs ADD COLUMN models TEXT`)
+	_, _ = db.Exec(`ALTER TABLE targets ADD COLUMN spec TEXT`)
 	return &Store{db: db}, nil
 }
 
