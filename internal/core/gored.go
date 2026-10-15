@@ -21,10 +21,11 @@ import "time"
 type VulnClass string
 
 const (
-	ClassIDOR       VulnClass = "idor"
-	ClassSSRF       VulnClass = "ssrf"
-	ClassAuthBypass VulnClass = "auth-bypass"
-	ClassInjection  VulnClass = "injection"
+	ClassIDOR            VulnClass = "idor"
+	ClassSSRF            VulnClass = "ssrf"
+	ClassAuthBypass      VulnClass = "auth-bypass"
+	ClassInjection       VulnClass = "injection"
+	ClassPromptInjection VulnClass = "prompt-injection" // the app's LLM surface: injection / system-prompt leak
 )
 
 // Difficulty is a coarse tier used to bucket the leaderboard.
