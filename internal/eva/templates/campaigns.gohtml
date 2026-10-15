@@ -1,0 +1,69 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">CAMPAIGN <span class="badge done">OVERNIGHT · BLIND</span></span>
+  <span class="hudcfg">point the EVA at your own apps · walk away · read the morning report</span>
+  <span class="hudphase">{{len .Targets}} TARGETS</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ TARGETS</div>
+      {{if .Targets}}<ul class="runs" id="targetlist">{{range .Targets}}
+        <li><b>{{.Name}}</b> <span class="dim">{{.Base}}</span>
+          <span class="badge {{if or .PrivCreds .LowCreds}}done{{else if or .PrivHeader .LowHeader}}done{{else}}aborted{{end}}">{{if or .PrivCreds .LowCreds}}creds{{else if or .PrivHeader .LowHeader}}header{{else}}no-auth{{end}}</span>
+          <span class="dim">[{{.Stages}}]</span>
+          <form method="post" action="/targets/delete" style="display:inline"><input type="hidden" name="name" value="{{.Name}}"><button class="rect danger">✕</button></form>
+        </li>
+      {{end}}</ul>{{else}}<p class="muted">no targets</p>{{end}}
+      <details style="margin-top:12px"><summary class="panel-tag">+ ADD / EDIT TARGET</summary>
+      <form method="post" action="/targets" class="tgtform">
+        <label>NAME <input name="name" placeholder="riskrancher"></label>
+        <label>BASE URL <input name="base" placeholder="http://127.0.0.1:8080"></label>
+        <label>STAGES <input name="stages" placeholder="recon, apiexploit, llmattack"></label>
+        <label class="chk"><input type="checkbox" name="ensure" value="1"> auto-launch bundled app (demotarget)</label>
+        <label>LOGIN PATH <input name="login_path" placeholder="/api/auth/login"></label>
+        <label>LOGIN TYPE <input name="login_type" placeholder="json | form"></label>
+        <label>USER FIELD <input name="user_field" placeholder="email"></label>
+        <label>PASS FIELD <input name="pass_field" placeholder="password"></label>
+        <label>PRIV CREDS <input name="priv_creds" placeholder="admin@app:password"></label>
+        <label>LOW CREDS <input name="low_creds" placeholder="alice@app:password"></label>
+        <label>PRIV HEADER <input name="priv_header" placeholder="X-Session: admin"></label>
+        <label>LOW HEADER <input name="low_header" placeholder="X-Session: alice"></label>
+        <label>NOTES <input name="notes"></label>
+        <div class="btnrow rectrow"><button class="rect go">SAVE TARGET</button></div>
+      </form>
+      <p class="hint">Secrets are stored plaintext in the local DB (lab use). A target with creds or a header gets an AUTHENTICATION preamble injected so the model logs in and wields two identities.</p>
+      </details>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ LAUNCH CAMPAIGN</div>
+      <form method="post" action="/campaign" id="campaignform">
+        <label>NAME <input name="name" value="nightly"></label>
+        <label>MODEL (GGUF) <input name="model" id="modelinput" value="{{.Model}}"></label>
+        {{if .Models}}<div class="chips modelchips">{{range .Models}}<span class="chip act" onclick="document.getElementById('modelinput').value='{{.}}'">{{.}}</span>{{end}}</div>{{end}}
+        <div class="panel-tag" style="margin-top:12px">TARGETS TO SWEEP</div>
+        {{if .Targets}}<div class="tgtpicks">{{range .Targets}}
+          <label class="chk"><input type="checkbox" name="target" value="{{.Name}}" checked> <b>{{.Name}}</b> <span class="dim">{{.Base}}</span></label>
+        {{end}}</div>{{else}}<p class="muted">add a target first</p>{{end}}
+        <p class="hint">Each selected target runs its stages autonomously (no gate), one model at a time, in order. Containment is per target; writes stay self-scoped. Walk away.</p>
+      </form>
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ CAMPAIGN LOG</div>
+      {{if .Campaigns}}<ul class="runs">{{range .Campaigns}}
+        <li><a href="/campaign/{{.ID}}">{{.Name}}</a> <span class="dim">{{.Model}}</span> <span class="badge {{.Status}}">{{.Status}}</span>{{if .Cur}} <span class="dim">· {{.Cur}}</span>{{end}} <span class="dim">{{.NumRuns}} runs</span></li>
+      {{end}}</ul>{{else}}<p class="muted">no campaigns yet</p>{{end}}
+    </section>
+  </div>
+</div>
+<div class="dock homedock">
+  <span></span>
+  <button form="campaignform" {{if .Busy}}disabled{{end}}>{{if .Busy}}BAY OCCUPIED…{{else}}LAUNCH CAMPAIGN{{end}}</button>
+  <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/campaigns">CAMPAIGN</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav>
+</div>
+{{- end}}

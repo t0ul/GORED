@@ -62,4 +62,6 @@ var (
 	leaderboardTmpl = page("leaderboard")
 	traceTmpl       = page("trace")
 	difftraceTmpl   = page("difftrace")
+	campaignsTmpl   = page("campaigns")
+	campaignTmpl    = page("campaign")
 )

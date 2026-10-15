@@ -25,12 +25,14 @@ import (
 const portStep = 20
 
 type Server struct {
-	mu     sync.Mutex
-	runs   map[string]*run
-	order  []string     // run ids, most recent first
-	slots  chan int     // one token per concurrency bay; the token is the port offset
-	traces string       // directory for per-run trace files
-	store  *store.Store // durable run registry; nil = memory-only
+	mu        sync.Mutex
+	runs      map[string]*run
+	order     []string             // run ids, most recent first
+	campaigns map[string]*campaign // overnight blind campaigns
+	corder    []string             // campaign ids, most recent first
+	slots     chan int             // one token per concurrency bay; the token is the port offset
+	traces    string               // directory for per-run trace files
+	store     *store.Store         // durable run registry; nil = memory-only
 }
 
 // NewServer builds the cockpit. maxConc is how many runs may be in flight at once (default
@@ -49,8 +51,9 @@ func NewServer(traceDir string, st *store.Store, maxConc int) *Server {
 	for i := 0; i < maxConc; i++ {
 		slots <- i
 	}
-	s := &Server{runs: map[string]*run{}, traces: traceDir, store: st, slots: slots}
+	s := &Server{runs: map[string]*run{}, campaigns: map[string]*campaign{}, traces: traceDir, store: st, slots: slots}
 	s.loadFromStore()
+	s.loadCampaigns()
 	if st != nil {
 		// Seed the registry with the catalog AND each stage's own skill, so every prompt a run
 		// can use is authorable data (INSERT OR IGNORE keeps any prior edit). This is what lets
@@ -61,6 +64,9 @@ func NewServer(traceDir string, st *store.Store, maxConc int) *Server {
 			stageSkills = append(stageSkills, stg.Skill)
 		}
 		_ = st.SeedSkills(stageSkills)
+		// Seed the default target set (demotarget + a RiskRancher shell) so the campaign console
+		// has something to point at out of the box; INSERT OR IGNORE keeps operator edits.
+		s.seedTargets()
 	}
 	return s
 }
@@ -148,6 +154,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /leaderboard", s.leaderboard)
 	mux.HandleFunc("GET /preflight", s.preflight)
 	mux.HandleFunc("GET /runs.json", s.runsJSON)
+	// Overnight blind campaign: the console, launch, live status, and the target registry.
+	mux.HandleFunc("GET /campaigns", s.campaignsPage)
+	mux.HandleFunc("POST /campaign", s.campaignCreate)
+	mux.HandleFunc("GET /campaign/{id}", s.campaignPage)
+	mux.HandleFunc("GET /campaign/{id}/status", s.campaignStatus)
+	mux.HandleFunc("POST /campaign/{id}/abort", s.campaignAbortHandler)
+	mux.HandleFunc("GET /campaigns.json", s.campaignsJSON)
+	mux.HandleFunc("POST /targets", s.targetSave)
+	mux.HandleFunc("POST /targets/delete", s.targetDelete)
 	return mux
 }
 

@@ -71,6 +71,34 @@ CREATE TABLE IF NOT EXISTS skills (
   instruction TEXT,
   builtin     INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS targets (
+  name        TEXT PRIMARY KEY,
+  base        TEXT,
+  transport   TEXT,
+  stages      TEXT,
+  ensure_app  INTEGER,
+  login_path  TEXT,
+  login_type  TEXT,
+  user_field  TEXT,
+  pass_field  TEXT,
+  priv_creds  TEXT,
+  low_creds   TEXT,
+  priv_header TEXT,
+  low_header  TEXT,
+  notes       TEXT
+);
+CREATE TABLE IF NOT EXISTS campaigns (
+  id      TEXT PRIMARY KEY,
+  name    TEXT,
+  targets TEXT,
+  model   TEXT,
+  status  TEXT,
+  started TEXT,
+  elapsed TEXT,
+  run_ids TEXT,
+  cur     TEXT,
+  note    TEXT
+);
 `
 
 // Open opens (creating if needed) a run store at path.
