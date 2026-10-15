@@ -1117,12 +1117,16 @@ h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);paddin
   opacity:.8;border-top:1px solid #000;border-bottom:1px solid #000}
 .stripe.bottom{margin:24px 0 10px;opacity:.5}
 .foot{color:var(--mut);font-size:11px;letter-spacing:1px;text-align:center;text-transform:uppercase}
-/* three-column cockpit: nav console | viewscreen | side panel, side consoles angled inward */
-.cockpit{display:grid;grid-template-columns:184px minmax(0,1fr) 258px;gap:14px;align-items:start}
-.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid var(--line);padding:14px 13px;position:sticky;top:12px;display:grid;gap:12px;align-content:start}
-.console{clip-path:polygon(0 0, 100% 16px, 100% calc(100% - 16px), 0 100%)}
-.sidepanel{clip-path:polygon(0 16px, 100% 0, 100% 100%, 0 calc(100% - 16px))}
-.viewscreen{min-width:0}
+/* three-column cockpit: the side consoles are bowtie trapezoids — tall on the outer edge,
+   converging to a short inner edge that meets the central viewscreen, slanted top and bottom. */
+.cockpit{display:grid;grid-template-columns:196px minmax(0,1fr) 256px;gap:16px;align-items:start}
+.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.40);position:sticky;top:14px;display:grid;gap:12px;align-content:center;min-height:380px;padding:34px 18px}
+/* left console: outer (left) edge full height, inner (right) edge short -> points right, at centre */
+.console{clip-path:polygon(0 0, 100% 16%, 100% 84%, 0 100%)}
+/* right panel mirrors it: outer (right) full, inner (left) short -> points left, at centre */
+.sidepanel{clip-path:polygon(0 16%, 100% 0, 100% 100%, 0 84%)}
+/* central viewscreen reads as the main screen between the wings */
+.viewscreen{min-width:0;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,106,0,.03),transparent 40%);padding:16px 18px}
 .hexmark{font-size:40px;color:var(--orange);text-align:center;opacity:.55;text-shadow:0 0 18px rgba(255,106,0,.5)}
 .cnav{display:grid;gap:6px}
 .cnav a{color:var(--fg);border:1px solid var(--line);padding:8px 10px;font-size:12px;letter-spacing:2px}
