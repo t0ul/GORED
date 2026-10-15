@@ -144,10 +144,12 @@ type runView struct {
 	Breached bool         // a capture landed — the Angel's pattern goes red
 }
 
-// targetNode is one discovered request on the target surface (the MAP lens).
+// targetNode is one discovered request on the target surface (the MAP lens). Last is the most
+// recent tool_result bytes for that path, so clicking the node on the map can show what it returned.
 type targetNode struct {
 	Method string
 	Path   string
+	Last   string
 }
 
 // traceEvt is one trace record themed for the EVA timeline.

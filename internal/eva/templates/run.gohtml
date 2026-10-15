@@ -47,8 +47,13 @@
   </section>
   <section class="role lens" data-lens="map" id="lens-map">
     <div class="rolehdr">◉ MAP · <span class="count" id="mapcount">{{len .Targets}} paths</span></div>
-    <div class="angel{{if .Breached}} breached{{end}}" id="angel"><div class="core"><div class="cross"></div><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="pat" id="angelpat">{{if .Breached}}● BREACH{{else}}◎ LOCKED{{end}}</div></div></div>
-    <div class="nodes" id="mapnodes">{{range .Targets}}<div class="node"><span class="m">{{.Method}}</span><span class="p">{{.Path}}</span></div>{{end}}</div>
+    <div class="angel{{if .Breached}} breached{{end}}" id="angel">
+      <div class="phasering" id="phasering"></div>
+      <div class="core"><div class="cross"></div><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="pat" id="angelpat">{{if .Breached}}● BREACH{{else}}◎ LOCKED{{end}}</div></div>
+      <div class="ripple" id="ripple"></div>
+    </div>
+    <div class="nodes" id="mapnodes">{{range .Targets}}<div class="node" data-last="{{.Last}}" onclick="nodeInfo(this)"><span class="m">{{.Method}}</span><span class="p">{{.Path}}</span></div>{{end}}</div>
+    <div class="nodeinfo" id="nodeinfo" hidden></div>
   </section>
   <section class="role lens" data-lens="findings" id="lens-findings">
     <div class="rolehdr">◆ FINDINGS · <span class="count" id="findcount">{{len .Findings}}</span></div>
@@ -90,16 +95,22 @@
   });
 
   var feed=el('feed'), mapnodes=el('mapnodes'), findlist=el('findlist'), seenPath={};
-  var toolN=0, tokN=0;
+  var toolN=0, tokN=0, lastNodeEl=null;
   function updateGauges(){ var g=el('gauges'); if(g) g.textContent='TOOLS '+toolN+' · '+tokN+' TOK'; }
   var feedHidden={};
   window.feedFilter=function(span,chip){ if(feedHidden[span]){delete feedHidden[span];chip.classList.remove('off');}else{feedHidden[span]=1;chip.classList.add('off');} [].forEach.call(feed.querySelectorAll('.logln'), function(l){ l.style.display = feedHidden[l.getAttribute('data-span')]?'none':''; }); };
   function feedLine(span,ev,detail,cls){ var d=document.createElement('div'); d.className='logln '+(cls||''); d.setAttribute('data-span',span); if(feedHidden[span]) d.style.display='none'; d.textContent='['+span+'] '+ev+(detail?'  '+detail:''); feed.appendChild(d); feed.scrollTop=feed.scrollHeight; }
   function pathOf(u){ var i=(''+u).indexOf('://'); if(i>=0){ var j=(''+u).indexOf('/',i+3); return j>=0?(''+u).slice(j):''; } return ''+u; }
-  function addNode(method,p){ if(!p||p[0]!=='/') return; if(p.length>80)p=p.slice(0,80)+'…'; var k=method+' '+p; if(seenPath[k])return; seenPath[k]=1; var d=document.createElement('div'); d.className='node'; var ms=document.createElement('span'); ms.className='m'; ms.textContent=method; var ps=document.createElement('span'); ps.className='p'; ps.textContent=p; d.appendChild(ms); d.appendChild(ps); mapnodes.appendChild(d); el('mapcount').textContent=mapnodes.children.length+' paths'; }
+  function addNode(method,p){ if(!p||p[0]!=='/') return null; if(p.length>80)p=p.slice(0,80)+'…'; var k=method+' '+p; if(seenPath[k]) return seenPath[k]; var d=document.createElement('div'); d.className='node'; d.setAttribute('onclick','nodeInfo(this)'); var ms=document.createElement('span'); ms.className='m'; ms.textContent=method; var ps=document.createElement('span'); ps.className='p'; ps.textContent=p; d.appendChild(ms); d.appendChild(ps); mapnodes.appendChild(d); seenPath[k]=d; el('mapcount').textContent=mapnodes.children.length+' paths'; return d; }
   function addFinding(type,val){ var d=document.createElement('div'); d.className='ev'; var ft=document.createElement('span'); ft.className='ft'; ft.textContent=type; d.appendChild(ft); d.appendChild(document.createTextNode(' '+(val.length>200?val.slice(0,200)+'…':val))); findlist.appendChild(d); el('findcount').textContent=findlist.children.length; }
-  function setBreach(){ var a=el('angel'); if(a) a.classList.add('breached'); var p=el('angelpat'); if(p) p.textContent='● BREACH'; }
-  [].forEach.call(mapnodes.children, function(n){ seenPath[(n.children[0].textContent+' '+n.children[1].textContent)]=1; });
+  function setBreach(){ var a=el('angel'); if(a){ a.classList.add('breached'); a.classList.remove('ping'); void a.offsetWidth; a.classList.add('ping'); } var p=el('angelpat'); if(p) p.textContent='● BREACH'; }
+  // the map node inspector: show a node's last response
+  window.nodeInfo=function(n){ var box=el('nodeinfo'); if(!box) return; var last=n.getAttribute('data-last')||''; [].forEach.call(mapnodes.children,function(c){c.classList.remove('sel');}); n.classList.add('sel'); box.hidden=false; box.textContent = n.querySelector('.m').textContent+' '+n.querySelector('.p').textContent+'  ⟶  '+(last||'(no response captured yet)'); };
+  // Angel reactions, driven by real events
+  function pingAngel(){ var a=el('angel'); if(!a) return; a.classList.remove('ping'); void a.offsetWidth; a.classList.add('ping'); }
+  function rippleAngel(){ var r=el('ripple'); if(!r) return; r.classList.remove('go'); void r.offsetWidth; r.classList.add('go'); }
+  var phasesSeen=0; function ringFill(frac){ var r=el('phasering'); if(r) r.style.setProperty('--p', Math.max(0,Math.min(1,frac))); }
+  [].forEach.call(mapnodes.children, function(n){ seenPath[(n.children[0].textContent+' '+n.children[1].textContent)]=n; });
 
   var decision=el('decision'), cockpit=document.querySelector('.cockpit3');
   function raiseDecision(phase, proposals){
@@ -141,14 +152,16 @@
       if(span==='tool'&&ev==='tool_call') toolN++;
       if(span==='model'&&ev==='model_call') tokN += (parseInt(f.tokens_out,10)||0);
       updateGauges();
-      if(span==='tool'&&ev==='tool_call'&&f.args){ var m=(f.args.method||'GET').toString().toUpperCase(); addNode(m, f.args.path||pathOf(f.args.url||'')); }
+      if(ev.indexOf('denied')>=0||ev.indexOf('egress')>=0) rippleAngel();
+      if(span==='tool'&&ev==='tool_call'&&f.args){ var m=(f.args.method||'GET').toString().toUpperCase(); lastNodeEl=addNode(m, f.args.path||pathOf(f.args.url||'')); pingAngel(); }
+      if(span==='tool'&&ev==='tool_result'&&lastNodeEl){ var rr=(f.result!==undefined?(''+f.result):(detail||'')); lastNodeEl.setAttribute('data-last', rr.length>300?rr.slice(0,300)+'…':rr); }
       if(span==='board'&&ev==='finding'&&f.value){ var ty=(f.type||'')+'' , v=(''+f.value); if(ty==='flag-candidate'||ty==='vuln-candidate'||ty==='scanner'||v.indexOf('GORED{')>=0||v.indexOf('CONFIRMED')>=0||v.indexOf('VERIFIED')>=0) addFinding(ty||'finding', v); }
-      if(ev.indexOf('capture')>=0){ setBreach(); addFinding('capture', detail); focus('lens-findings'); }
-      if(span==='phase'&&ev==='phase_advance'){ lastPhase=((f.to||'')+''); el('hudphase').textContent='PHASE '+lastPhase.toUpperCase(); focus(lensForPhase(lastPhase)); }
+      if(ev.indexOf('capture')>=0){ setBreach(); addFinding('capture', detail); ringFill(1); focus('lens-findings'); }
+      if(span==='phase'&&ev==='phase_advance'){ lastPhase=((f.to||'')+''); el('hudphase').textContent='PHASE '+lastPhase.toUpperCase(); phasesSeen++; ringFill(phasesSeen/4); focus(lensForPhase(lastPhase)); }
     };
     focus('lens-map');
   } else {
-    setCenter('lens-findings'); el('hudphase').textContent='PHASE COMPLETE';
+    setCenter('lens-findings'); el('hudphase').textContent='PHASE COMPLETE'; ringFill(1);
   }
 })();
 </script>

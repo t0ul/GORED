@@ -15,7 +15,8 @@ func parseRunTrace(path string) (events []traceEvt, findings []core.Finding, tar
 	if err != nil {
 		return
 	}
-	seen := map[string]bool{}
+	seen := map[string]int{} // tool key -> index in targets
+	lastKey := ""
 	for _, rec := range recs {
 		ev := traceEvt{Span: rec.Span, Event: rec.Event, Detail: eventDetail(rec.Fields)}
 		switch {
@@ -53,10 +54,22 @@ func parseRunTrace(path string) (events []traceEvt, findings []core.Finding, tar
 					if len(p) > 80 {
 						p = p[:80] + "…"
 					}
-					if k := method + " " + p; !seen[k] {
-						seen[k] = true
+					k := method + " " + p
+					if _, ok := seen[k]; !ok {
+						seen[k] = len(targets)
 						targets = append(targets, targetNode{Method: method, Path: p})
 					}
+					lastKey = k
+				}
+			}
+		}
+		if rec.Span == "tool" && rec.Event == "tool_result" && lastKey != "" {
+			if idx, ok := seen[lastKey]; ok {
+				if res := asStr(rec.Fields["result"]); res != "" {
+					if len(res) > 300 {
+						res = res[:300] + "…"
+					}
+					targets[idx].Last = res
 				}
 			}
 		}

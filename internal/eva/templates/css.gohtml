@@ -220,6 +220,17 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .angel .pat{font-size:12px;letter-spacing:2px;color:var(--green);z-index:1;text-align:center}
 .angel.breached .ring{border-color:rgba(255,210,26,.6);animation:pulse 1.4s infinite}
 .angel.breached .pat{color:var(--yellow);text-shadow:0 0 12px rgba(255,210,26,.6)}
+.angel{position:relative}
+.angel .phasering{position:absolute;inset:0;margin:auto;width:98px;height:98px;border-radius:50%;background:conic-gradient(var(--yellow) calc(var(--p,0)*360deg), rgba(255,120,0,.14) 0);-webkit-mask:radial-gradient(farthest-side,transparent 70%,#000 72%);mask:radial-gradient(farthest-side,transparent 70%,#000 72%);opacity:.85;pointer-events:none}
+.angel.ping .core{animation:angelshake .3s}
+@keyframes angelshake{0%,100%{transform:translate(0,0)}25%{transform:translate(-2px,1px)}50%{transform:translate(2px,-1px)}75%{transform:translate(-1px,-1px)}}
+.angel .ripple{position:absolute;inset:0;margin:auto;width:40px;height:40px;border:2px solid var(--green);border-radius:50%;opacity:0;pointer-events:none}
+.angel .ripple.go{animation:ripplewave 1s ease-out}
+@keyframes ripplewave{0%{opacity:.8;transform:scale(.4)}100%{opacity:0;transform:scale(3)}}
+.node{cursor:pointer}
+.node.sel{border-color:var(--yellow);color:var(--yellow)}
+.nodeinfo{margin-top:8px;font-size:11px;color:var(--fg);background:rgba(255,120,0,.05);border:1px solid rgba(255,120,0,.22);padding:8px;white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:auto}
+.nodeinfo[hidden]{display:none}
 .angel .cross{position:absolute;inset:0;background:
   linear-gradient(var(--line),var(--line)) center/1px 100% no-repeat,
   linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat;opacity:.4}
