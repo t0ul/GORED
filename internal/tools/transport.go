@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -128,8 +129,29 @@ func (d DirectTransport) Fetch(ctx context.Context, rawurl string) (string, erro
 	return string(data), nil
 }
 
-func (DirectTransport) Detonate(_ context.Context, _ string, _ []string) (string, error) {
-	return "", fmt.Errorf("direct transport cannot detonate a scanner: scanner detonation runs only in the Brig's contained chamber")
+// Detonate runs a scanner binary on the host against the target. The Brig path contains a
+// scanner in a no-NIC chamber; this direct path is the authorized-real-app model: the Gate has
+// already authorized the target against the egress allowlist before calling here, and the caller
+// builds a single-target argv with the scanner's own phone-home disabled (e.g. nuclei
+// -no-interactsh -duc), so the scanner's only network path is the authorized target. It is for
+// pentesting apps the operator owns and is authorized to test, reached over the direct transport.
+func (DirectTransport) Detonate(ctx context.Context, _ string, argv []string) (string, error) {
+	if len(argv) == 0 {
+		return "", fmt.Errorf("direct detonate: empty argv")
+	}
+	cctx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		cctx, cancel = context.WithTimeout(ctx, 120*time.Second)
+		defer cancel()
+	}
+	out, err := exec.CommandContext(cctx, argv[0], argv[1:]...).CombinedOutput()
+	// A scanner often exits non-zero merely because it reported findings; keep whatever output
+	// it produced and let the caller parse it. Only a true failure with no output is an error.
+	if err != nil && len(out) == 0 {
+		return "", fmt.Errorf("direct detonate %s: %w", argv[0], err)
+	}
+	return string(out), nil
 }
 
 // Request performs an arbitrary HTTP request over net/http and returns the status code and
