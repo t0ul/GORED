@@ -1,0 +1,70 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">{{.Name}} <span class="badge {{.Status}}" id="cstatus">{{.Status}}</span></span>
+  <span class="hudcfg">{{.Model}} · {{.Targets}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</span>
+  <span class="hudphase" id="ccur">{{if .Cur}}{{.Cur}}{{else}}—{{end}}</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ CAMPAIGN</div>
+      <div class="readout">
+        <div class="ro">STATUS <b class="{{if eq .Status "running"}}grn{{end}}" id="ro-status">{{.Status}}</b></div>
+        <div class="ro">IN FLIGHT <b id="ro-cur">{{if .Cur}}{{.Cur}}{{else}}—{{end}}</b></div>
+        <div class="ro">SORTIES <b id="ro-runs">{{.NumRuns}}</b></div>
+        <div class="ro">CAPTURES <b class="{{if .Captures}}yel{{end}}" id="ro-caps">{{.Captures}}</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px">Each target runs its stages autonomously, one at a time. The morning report (coverage + captures + repro) lands here — M2.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ SORTIES · <span class="count" id="runcount">{{len .Children}}</span></div>
+      {{if .Children}}<ul class="runs" id="childlist">{{range .Children}}
+        <li><a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="badge {{.Status}}">{{.Status}}</span>{{if .Captured}} <span class="badge cap">CAPTURED</span>{{end}}</li>
+      {{end}}</ul>{{else}}<p class="muted" id="childlist">booting the first sortie…</p>{{end}}
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ TARGETS</div>
+      <div class="readout">{{range .Children}}<div class="ro">{{.Stage}} <b>{{.Base}}</b></div>{{end}}</div>
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid">
+    <div class="dockctl">
+      {{if eq .Status "running"}}<form method="post" action="/campaign/{{.ID}}/abort"><button class="rect danger">ABORT CAMPAIGN</button></form>{{end}}
+    </div>
+    <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/campaigns">CAMPAIGN</a> · <a href="/campaign/{{.ID}}/report">REPORT</a> · <a href="/leaderboard">LEADERBOARD</a></nav>
+  </div>
+  <span></span>
+</div>
+<script>
+(function(){
+  var ID={{.ID}}, STATUS="{{.Status}}";
+  if(STATUS!=="running") return;
+  function badge(el,status){ if(!el) return; el.className='badge '+status; el.textContent=status; }
+  function poll(){
+    fetch('/campaign/'+ID+'/status').then(function(r){return r.json();}).then(function(c){
+      badge(document.getElementById('cstatus'), c.Status);
+      document.getElementById('ccur').textContent = c.Cur || '—';
+      document.getElementById('ro-status').textContent = c.Status;
+      document.getElementById('ro-cur').textContent = c.Cur || '—';
+      document.getElementById('ro-runs').textContent = c.NumRuns;
+      document.getElementById('ro-caps').textContent = c.Captures;
+      var ul=document.getElementById('childlist');
+      if(ul && c.Children){ var h=''; c.Children.forEach(function(ch){
+        h+='<li><a href="/run/'+ch.ID+'">'+ch.Stage+' <span class="vs">vs</span> '+ch.Base+'</a> <span class="badge '+ch.Status+'">'+ch.Status+'</span>'+(ch.Captured?' <span class="badge cap">CAPTURED</span>':'')+'</li>';
+      }); if(ul.tagName==='UL'){ ul.innerHTML=h; } else { var nl=document.createElement('ul'); nl.className='runs'; nl.id='childlist'; nl.innerHTML=h; ul.replaceWith(nl); } }
+      var rc=document.getElementById('runcount'); if(rc) rc.textContent=(c.Children||[]).length;
+      if(c.Status!=='running'){ setTimeout(function(){location.reload();}, 800); }
+    }).catch(function(){});
+  }
+  setInterval(poll, 3000); poll();
+})();
+</script>
+{{- end}}

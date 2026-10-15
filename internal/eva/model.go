@@ -2,6 +2,7 @@ package eva
 
 import (
 	"context"
+	"github.com/t0ul/GORED/internal/bench"
 	"github.com/t0ul/GORED/internal/core"
 	"github.com/t0ul/GORED/store"
 	"sort"
@@ -36,6 +37,8 @@ type run struct {
 	cancel     context.CancelFunc // cancels the run's context for a hard ABORT; nil until execute runs
 	queuedHint string             // a mid-run directive, merged into the next checkpoint's hint
 	slot       int                // the concurrency bay / port offset this run holds
+	campaignID string             // the campaign that scheduled this run, empty for an interactive sortie
+	flags      *bench.Flags       // the run's bench flags, carried so a campaign can execute it after building
 }
 
 // mergeHints joins two non-empty directive hints, so a mid-run directive rides alongside the
