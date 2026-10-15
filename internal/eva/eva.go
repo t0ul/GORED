@@ -428,10 +428,12 @@ func parseRunTrace(path string) (events []traceEvt, findings []core.Finding, tar
 	for _, rec := range recs {
 		ev := traceEvt{Span: rec.Span, Event: rec.Event, Detail: eventDetail(rec.Fields)}
 		switch {
-		case strings.Contains(rec.Event, "capture"):
+		case strings.Contains(rec.Event, "capture"), strings.Contains(rec.Event, "breach"):
 			ev.Cls = "hit"
 			breached = true
-		case strings.Contains(rec.Event, "error"), strings.Contains(rec.Event, "denied"), strings.Contains(rec.Event, "breach"):
+		case strings.Contains(rec.Event, "denied"), strings.Contains(rec.Event, "egress"):
+			ev.Cls = "contain"
+		case strings.Contains(rec.Event, "error"):
 			ev.Cls = "warn"
 		}
 		events = append(events, ev)
@@ -546,9 +548,11 @@ func (s *Server) traceView(w http.ResponseWriter, r *http.Request) {
 	for _, rec := range recs {
 		ev := traceEvt{Span: rec.Span, Event: rec.Event, Detail: eventDetail(rec.Fields)}
 		switch {
-		case strings.Contains(rec.Event, "capture"):
+		case strings.Contains(rec.Event, "capture"), strings.Contains(rec.Event, "breach"):
 			ev.Cls = "hit"
-		case strings.Contains(rec.Event, "error"), strings.Contains(rec.Event, "denied"), strings.Contains(rec.Event, "breach"):
+		case strings.Contains(rec.Event, "denied"), strings.Contains(rec.Event, "egress"):
+			ev.Cls = "contain"
+		case strings.Contains(rec.Event, "error"):
 			ev.Cls = "warn"
 		}
 		evs = append(evs, ev)
@@ -1100,7 +1104,7 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
       var detail=f.tool||f.via||f.phase||f.hint||f.value||f.result||f.error||f.reply||'';
       if(typeof detail!=='string') detail=JSON.stringify(detail);
       if(detail.length>140) detail=detail.slice(0,140)+'…';
-      var cls= ev.indexOf('capture')>=0?'hit':((ev.indexOf('error')>=0||ev.indexOf('denied')>=0||ev.indexOf('breach')>=0)?'warn':'');
+      var cls= (ev.indexOf('capture')>=0||ev.indexOf('breach')>=0)?'hit':((ev.indexOf('denied')>=0||ev.indexOf('egress')>=0)?'contain':(ev.indexOf('error')>=0?'warn':''));
       feedLine(span,ev,detail,cls);
       if(span==='tool'&&ev==='tool_call'&&f.args){ var m=(f.args.method||'GET').toString().toUpperCase(); addNode(m, f.args.path||pathOf(f.args.url||'')); }
       if(span==='board'&&ev==='finding'&&f.value){ var ty=(f.type||'')+'' , v=(''+f.value); if(ty==='flag-candidate'||ty==='vuln-candidate'||ty==='scanner'||v.indexOf('GORED{')>=0||v.indexOf('CONFIRMED')>=0||v.indexOf('VERIFIED')>=0) addFinding(ty||'finding', v); }
@@ -1436,7 +1440,8 @@ button.swap{padding:11px 18px}
 .runs a{color:var(--fg)}
 /* badges */
 .badge{font-size:11px;padding:2px 9px;border:1px solid var(--line);letter-spacing:2px;text-transform:uppercase}
-.badge.running{color:var(--green);border-color:var(--green)}
+.badge.running{color:var(--green);border-color:var(--green);animation:livepulse 1.6s infinite}
+@keyframes livepulse{0%,100%{box-shadow:0 0 0 rgba(134,214,51,0)}50%{box-shadow:0 0 12px rgba(134,214,51,.5)}}
 .badge.waiting{color:var(--amber);border-color:var(--amber);animation:pulse 1.6s infinite}
 .badge.done{color:var(--green);border-color:var(--green)}
 .badge.aborted{color:var(--mut)}
@@ -1476,6 +1481,7 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .logln{color:var(--mut);white-space:pre-wrap;word-break:break-word}
 .logln.hit{color:var(--yellow);font-weight:700}
 .logln.warn{color:var(--amber)}
+.logln.contain{color:var(--green)}
 .log:empty::before{content:"⬡ awaiting telemetry…";color:var(--mut)}
 .repro{background:#0c0703;border:1px solid var(--line);padding:10px;overflow:auto;color:var(--green);font-size:12px;white-space:pre-wrap;word-break:break-word}
 .ghost{background:transparent;color:var(--orange);border:1px solid var(--orange);margin-top:10px}
@@ -1497,7 +1503,8 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .tlev.seen{opacity:1}
 .tlev.active{border-left-color:var(--orange);background:rgba(255,106,0,.08)}
 .tlev .sp{color:var(--amber);letter-spacing:1px}
-.tlev.hit{border-left-color:var(--orange)}.tlev.hit .sp{color:var(--orange)}
+.tlev.hit{border-left-color:var(--yellow)}.tlev.hit .sp{color:var(--yellow)}
+.tlev.contain{border-left-color:var(--green)}.tlev.contain .sp{color:var(--green)}
 .tlev.warn .sp{color:var(--red)}
 .tlev .tx{color:var(--fg);white-space:pre-wrap;word-break:break-word}
 .player{display:flex;gap:8px;align-items:center;margin:10px 0}
