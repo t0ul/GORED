@@ -3,6 +3,7 @@
 <div class="hudbar">
   <span class="dtitle">{{.Stage}} <span class="badge {{.Status}}">{{.Status}}</span></span>
   <span class="hudcfg">{{.Base}} · {{.ModelLabel}} · {{.Autonomy}}{{if .Prompt}} · custom prompt{{end}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</span>
+  <span class="gauges" id="gauges"></span>
   <span class="hudphase" id="hudphase">PHASE —</span>
 </div>
 <div class="hazard"></div>
@@ -29,6 +30,7 @@
       {{if or (eq .Status "running") (eq .Status "waiting")}}<button form="abortform" class="danger">ABORT</button>{{else}}<button form="rerunform" class="reset">RE-RUN</button>{{end}}
     </div>
     <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/studio">STUDIO</a> · <a href="/run/{{.ID}}/trace">TRACE</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">LEADERBOARD</a>{{end}}</nav>
+    <div class="keyhint">keys: &lt; &gt; swap · r reset · l lock</div>
   </div>
   <button class="swap" onclick="manualSwap('right')" title="focus right ( &gt; )">▶</button>
 </div>
@@ -83,9 +85,13 @@
     if(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
     if(e.key==='<'||e.key===',') manualSwap('left');
     else if(e.key==='>'||e.key==='.') manualSwap('right');
+    else if(e.key==='r'||e.key==='R') resetFocus();
+    else if(e.key==='l'||e.key==='L') toggleLock();
   });
 
   var feed=el('feed'), mapnodes=el('mapnodes'), findlist=el('findlist'), seenPath={};
+  var toolN=0, tokN=0;
+  function updateGauges(){ var g=el('gauges'); if(g) g.textContent='TOOLS '+toolN+' · '+tokN+' TOK'; }
   var feedHidden={};
   window.feedFilter=function(span,chip){ if(feedHidden[span]){delete feedHidden[span];chip.classList.remove('off');}else{feedHidden[span]=1;chip.classList.add('off');} [].forEach.call(feed.querySelectorAll('.logln'), function(l){ l.style.display = feedHidden[l.getAttribute('data-span')]?'none':''; }); };
   function feedLine(span,ev,detail,cls){ var d=document.createElement('div'); d.className='logln '+(cls||''); d.setAttribute('data-span',span); if(feedHidden[span]) d.style.display='none'; d.textContent='['+span+'] '+ev+(detail?'  '+detail:''); feed.appendChild(d); feed.scrollTop=feed.scrollHeight; }
@@ -132,6 +138,9 @@
       if(detail.length>140) detail=detail.slice(0,140)+'…';
       var cls= (ev.indexOf('capture')>=0||ev.indexOf('breach')>=0)?'hit':((ev.indexOf('denied')>=0||ev.indexOf('egress')>=0)?'contain':(ev.indexOf('error')>=0?'warn':''));
       feedLine(span,ev,detail,cls);
+      if(span==='tool'&&ev==='tool_call') toolN++;
+      if(span==='model'&&ev==='model_call') tokN += (parseInt(f.tokens_out,10)||0);
+      updateGauges();
       if(span==='tool'&&ev==='tool_call'&&f.args){ var m=(f.args.method||'GET').toString().toUpperCase(); addNode(m, f.args.path||pathOf(f.args.url||'')); }
       if(span==='board'&&ev==='finding'&&f.value){ var ty=(f.type||'')+'' , v=(''+f.value); if(ty==='flag-candidate'||ty==='vuln-candidate'||ty==='scanner'||v.indexOf('GORED{')>=0||v.indexOf('CONFIRMED')>=0||v.indexOf('VERIFIED')>=0) addFinding(ty||'finding', v); }
       if(ev.indexOf('capture')>=0){ setBreach(); addFinding('capture', detail); focus('lens-findings'); }
