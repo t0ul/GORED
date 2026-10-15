@@ -1541,8 +1541,8 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .slot{min-width:0}
 .slot-center{align-self:center;height:66vh;overflow:auto;border:1px solid rgba(255,138,0,.85);background:var(--scan),var(--hex),radial-gradient(135% 105% at 50% -5%,rgba(255,150,12,.22),rgba(255,105,0,.08) 44%,rgba(10,6,2,.9) 100%);padding:16px 18px;box-shadow:0 0 64px rgba(255,120,0,.28),0 0 140px rgba(255,80,0,.12),inset 0 0 80px rgba(255,150,30,.08);animation:breathe 3.4s ease-in-out infinite}
 .slot-left,.slot-right{height:calc(100vh - 96px);background:var(--scan),var(--hex),radial-gradient(125% 85% at 50% 50%,rgba(255,142,12,.18),rgba(255,100,0,.06) 46%,rgba(9,5,2,.92) 100%);overflow:hidden;display:flex;align-items:center;justify-content:center;cursor:pointer;filter:drop-shadow(0 0 1.5px rgba(255,165,45,.95)) drop-shadow(0 0 20px rgba(255,120,0,.3))}
-.slot-left{clip-path:polygon(0 0,100% 7%,100% 93%,0 100%)}
-.slot-right{clip-path:polygon(0 7%,100% 0,100% 100%,0 93%)}
+.slot-left{clip-path:polygon(0 0,100% 17%,100% 83%,0 100%)}
+.slot-right{clip-path:polygon(0 17%,100% 0,100% 100%,0 83%)}
 /* wing content lies on a plane receding toward the central horizon: the words slant parallel
    to the converging trapezoid edges (every view, not just the immersive run) */
 .slot-left .role,.slot-right .role{width:82%;transform:perspective(1100px) rotateY(34deg);transform-origin:center}
@@ -1553,8 +1553,7 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
    transforms, no anchoring hacks. A long wing list (the sortie log) scrolls inside its own fixed
    box (like the run view's FEED log) so the title stays put and nothing overflows the trapezoid. */
 .cockpit3:not(.immersive) .slot-center{height:72vh;animation:none}
-.cockpit3:not(.immersive) .slot-left,.cockpit3:not(.immersive) .slot-right{cursor:default;align-items:flex-start}
-.cockpit3:not(.immersive) .slot-left .role,.cockpit3:not(.immersive) .slot-right .role{padding-top:3vh}
+.cockpit3:not(.immersive) .slot-left,.cockpit3:not(.immersive) .slot-right{cursor:default}
 /* big wing titles anchored at the top of the receding plane (the wide outer end) */
 .slot-left .rolehdr,.slot-right .rolehdr{font-size:20px;letter-spacing:4px;padding-bottom:9px}
 .role{display:grid;gap:11px;align-content:start}
