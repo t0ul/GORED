@@ -65,4 +65,5 @@ var (
 	campaignsTmpl      = page("campaigns")
 	campaignTmpl       = page("campaign")
 	campaignReportTmpl = page("campaign_report")
+	projectTmpl        = page("project")
 )

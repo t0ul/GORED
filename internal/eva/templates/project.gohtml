@@ -1,0 +1,31 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">PROJECT MEMORY <span class="badge done">{{.Target.Name}}</span></span>
+  <span class="hudcfg">{{.Target.Base}} · accumulated across every pass</span>
+  <span class="hudphase">{{len .Surface}} PATHS · {{len .Findings}} FINDINGS</span>
+</div>
+<div class="hazard"></div>
+<div class="report">
+  <section class="role lens" style="margin-bottom:16px">
+    <div class="rolehdr">◉ DISCOVERED SURFACE · <span class="count">{{len .Surface}}</span></div>
+    {{if .Surface}}<div class="tblwrap"><table><thead><tr><th>method</th><th>path</th><th>last response</th></tr></thead><tbody>
+      {{range .Surface}}<tr><td class="c">{{.Method}}</td><td>{{.Path}}</td><td class="dim">{{trunc .Last 140}}</td></tr>{{end}}
+    </tbody></table></div>
+    <p class="hint" style="margin-top:8px">Later passes seed from this surface — the model starts here instead of re-enumerating.</p>
+    {{else}}<p class="muted">no surface discovered yet — run a campaign against this target.</p>{{end}}
+  </section>
+  <section class="role lens">
+    <div class="rolehdr">◆ FINDINGS · <span class="count">{{len .Findings}}</span></div>
+    {{if .Findings}}<div class="evlog">{{range .Findings}}<div class="ev"><span class="ft">{{.Type}}</span> {{trunc .Value 220}} <a href="/run/{{.RunID}}" class="dim">·sortie</a></div>{{end}}</div>
+    {{else}}<p class="muted">no findings recorded yet (observations are not kept — only substantive findings).</p>{{end}}
+  </section>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/campaigns">CAMPAIGN</a> · <a href="/leaderboard">LEADERBOARD</a></nav></div>
+  <span></span>
+</div>
+<style>
+.report{max-width:960px;margin:0 auto;padding:0 4px}
+</style>
+{{- end}}

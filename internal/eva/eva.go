@@ -164,6 +164,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /campaigns.json", s.campaignsJSON)
 	mux.HandleFunc("POST /targets", s.targetSave)
 	mux.HandleFunc("POST /targets/delete", s.targetDelete)
+	mux.HandleFunc("GET /target/{name}/project", s.projectPage)
 	return mux
 }
 
