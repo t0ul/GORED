@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/t0ul/GORED/internal/core"
+	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/internal/report"
+	"github.com/t0ul/GORED/internal/tools"
 	"github.com/t0ul/GORED/internal/validate"
 	gledger "github.com/t0ul/gledger"
 )
@@ -40,6 +42,10 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 		if rn := s.runs[rid]; rn != nil {
 			runs = append(runs, rr{rn.Trace, rn.Base})
 		}
+	}
+	nuc := map[string][]tools.NucleiFinding{} // snapshot the breadth findings under the lock
+	for base, fs := range c.nuclei {
+		nuc[base] = fs
 	}
 	s.mu.Unlock()
 
@@ -94,6 +100,19 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 						Evidence: clip(asStr(rec.Fields["value"]), 240), Repro: repro, Source: "gored-eva-campaign",
 					})
 				}
+			}
+		}
+	}
+	// Pool the nuclei breadth findings (web-hygiene / misconfig / exposure / CVE) alongside the
+	// model-loop depth proofs, so the one pentest report covers both halves.
+	for base, fs := range nuc {
+		app := baseName[base]
+		if app == "" {
+			app = base
+		}
+		for _, f := range fs {
+			if p, ok := probes.ProofFromNuclei(f, app); ok {
+				proofs = append(proofs, p)
 			}
 		}
 	}

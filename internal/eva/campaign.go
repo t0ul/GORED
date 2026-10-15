@@ -15,6 +15,7 @@ import (
 	"github.com/t0ul/GORED/internal/appsweep"
 	"github.com/t0ul/GORED/internal/bench"
 	"github.com/t0ul/GORED/internal/core"
+	"github.com/t0ul/GORED/internal/tools"
 	"github.com/t0ul/GORED/store"
 )
 
@@ -35,6 +36,7 @@ type campaign struct {
 	Loop    bool     // keep re-running the targets in passes until aborted (non-stop overnight)
 	Pass    int      // how many passes the loop has started
 	cancel  context.CancelFunc
+	nuclei  map[string][]tools.NucleiFinding // target base -> latest nuclei breadth findings (in-memory)
 }
 
 func toCampaign(c *campaign) store.Campaign {
@@ -50,6 +52,7 @@ func fromCampaign(sc store.Campaign) *campaign {
 		ID: sc.ID, Name: sc.Name, Targets: splitCSV(sc.Targets), Model: sc.Model,
 		Status: sc.Status, Started: sc.Started, Elapsed: sc.Elapsed,
 		RunIDs: splitCSV(sc.RunIDs), Cur: sc.Cur, Loop: sc.Loop, Pass: sc.Pass,
+		nuclei: map[string][]tools.NucleiFinding{},
 	}
 }
 
@@ -276,6 +279,33 @@ func (s *Server) recordProjectMemory(target string, rn *run) {
 	}
 }
 
+// runTargetNuclei runs a contained nuclei breadth scan against the target and caches the findings
+// on the campaign (in-memory) for the pentest report. Best-effort: a missing nuclei binary or
+// templates yields no findings, so a campaign still runs without it. The scan is single-target,
+// gated by the egress allowlist, with nuclei's phone-home off (see NucleiScanTool).
+func (s *Server) runTargetNuclei(ctx context.Context, c *campaign, tg store.Target) {
+	gate := tools.NewGate(tools.DirectTransport{}, tools.NewEgress(hostPort(tg.Base)), nil)
+	fs, err := tools.NucleiScanTool{Gate: gate, Base: tg.Base}.Scan(ctx, tg.Base)
+	if err != nil || len(fs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if c.nuclei == nil {
+		c.nuclei = map[string][]tools.NucleiFinding{}
+	}
+	c.nuclei[tg.Base] = fs
+	s.mu.Unlock()
+}
+
+// hostPort extracts host:port from a base URL for the egress allowlist (target-only).
+func hostPort(base string) string {
+	h := strings.TrimPrefix(strings.TrimPrefix(base, "http://"), "https://")
+	if i := strings.IndexByte(h, '/'); i >= 0 {
+		h = h[:i]
+	}
+	return h
+}
+
 // loginBody renders a creds "user:password" into the login request body + content type per the
 // target's login recipe (json or form, with the configured field names).
 func loginBody(t store.Target, creds string) (body, contentType string) {
@@ -320,7 +350,7 @@ func targetStages(t store.Target) []string {
 // startCampaign registers a campaign and launches its scheduler goroutine.
 func (s *Server) startCampaign(name, model string, targets []string, loop bool) *campaign {
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
-	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop}
+	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop, nuclei: map[string][]tools.NucleiFinding{}}
 	s.mu.Lock()
 	s.campaigns[id] = c
 	s.corder = append([]string{id}, s.corder...)
@@ -373,6 +403,10 @@ func (s *Server) runCampaign(c *campaign) {
 				s.execute(rn, rn.flags, stage) // synchronous: runs to terminal, releases the bay
 				s.recordProjectMemory(tg.Name, rn) // accumulate surface + findings for later passes
 			}
+			// Breadth scan once per target per pass: nuclei covers the web-hygiene / misconfig /
+			// exposure / CVE classes the model-loop depth probes do not (headers, host-header,
+			// error leak, dir listing). Contained + gated; results feed the pentest report.
+			s.runTargetNuclei(ctx, c, tg)
 		}
 		if !c.Loop {
 			break
