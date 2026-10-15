@@ -24,6 +24,7 @@ import (
 	"github.com/t0ul/GORED/internal/appsweep"
 	"github.com/t0ul/GORED/internal/bench"
 	"github.com/t0ul/GORED/internal/core"
+	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/store"
 	gledger "github.com/t0ul/gledger"
 )
@@ -214,6 +215,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /run/{id}/decide", s.decide)
 	mux.HandleFunc("GET /compare", s.compare)
 	mux.HandleFunc("GET /studio", s.studio)
+	mux.HandleFunc("GET /run/{id}/trace", s.traceView)
+	mux.HandleFunc("GET /run/{id}/leaderboard", s.runLeaderboard)
+	mux.HandleFunc("GET /leaderboard", s.leaderboard)
 	return mux
 }
 
@@ -421,6 +425,66 @@ func (s *Server) studio(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	render(w, studioTmpl, map[string]any{"Tools": tools, "Skills": skills, "Stages": stages})
+}
+
+// traceView serves the full, self-contained gledger trace viewer for a run: the replayable
+// blackboard + capture playback (hash-chain verified), the research view the live log only
+// previews. This is one of the research surfaces the MVP cockpit was missing.
+func (s *Server) traceView(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	rn := s.runs[r.PathValue("id")]
+	s.mu.Unlock()
+	if rn == nil {
+		http.NotFound(w, r)
+		return
+	}
+	recs, err := gledger.Read(rn.Trace)
+	if err != nil {
+		http.Error(w, "trace unavailable: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	ok, _ := gledger.VerifyFile(rn.Trace)
+	html, err := gledger.RenderHTML("GORED trace "+rn.ID, recs, ok)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(html)
+}
+
+// runLeaderboard serves the full research leaderboard HTML for one run (capture-rate bar,
+// cap-per-Mtoken, recall/precision) — the real renderer, not EVA's compact table.
+func (s *Server) runLeaderboard(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	rn := s.runs[r.PathValue("id")]
+	s.mu.Unlock()
+	if rn == nil {
+		http.NotFound(w, r)
+		return
+	}
+	meta := report.LeaderboardMeta{Title: "EVA · " + rn.Stage, Target: rn.Base, Trials: rn.Trials, Note: rn.Model + " [" + rn.Autonomy + "]"}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(report.RenderLeaderboardHTML(meta, rn.Sums))
+}
+
+// leaderboard serves a combined research leaderboard across selected runs (?id=a&id=b), the
+// A/B research view over the real renderer.
+func (s *Server) leaderboard(w http.ResponseWriter, r *http.Request) {
+	ids := r.URL.Query()["id"]
+	s.mu.Lock()
+	var sums []core.ContenderSummary
+	var target string
+	for _, id := range ids {
+		if rn := s.runs[id]; rn != nil {
+			sums = append(sums, rn.Sums...)
+			target = rn.Base
+		}
+	}
+	s.mu.Unlock()
+	meta := report.LeaderboardMeta{Title: "EVA · compare", Target: target, Note: "selected sorties"}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(report.RenderLeaderboardHTML(meta, sums))
 }
 
 // traceTriage reads a run's trace and returns its blackboard findings and the capture repro
@@ -704,6 +768,7 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
   <ul>{{range .Findings}}<li><span class="ft">{{.Type}}</span> {{trunc .Value 200}}</li>{{end}}</ul>
 </details>
 {{end}}
+{{if ne .Status "running"}}<p class="nav"><a href="/run/{{.ID}}/trace">⬡ FULL TRACE VIEWER</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">⬡ LEADERBOARD</a>{{end}}</p>{{end}}
 {{if or (eq .Status "running") (eq .Status "waiting")}}
 <div class="card frame"><div class="card-tag">LIVE TELEMETRY</div><div id="log" class="log"></div></div>
 <script>
@@ -758,6 +823,7 @@ var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseC
 <p><a href="/">← cockpit</a></p>
 <h1 class="runhdr">COMPARE</h1>
 {{if .Runs}}
+<p class="nav"><a href="/leaderboard?{{range .Runs}}id={{.ID}}&amp;{{end}}">⬡ OPEN AS RESEARCH LEADERBOARD</a></p>
 <table><thead><tr><th>run</th><th>stage</th><th>model</th><th>dial</th><th>status</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
 {{range .Runs}}{{if .Sums}}{{$c := index .Sums 0}}<tr>
   <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.Model}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
