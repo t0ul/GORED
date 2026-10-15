@@ -216,6 +216,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/memos/{id}", s.handleGetMemo)
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
+	s.mux.HandleFunc("POST /graphql", s.handleGraphQL)
 	s.mux.HandleFunc("GET /api/profile", s.handleGetProfile)
 	s.mux.HandleFunc("PUT /api/profile", s.handleUpdateProfile)
 	s.mux.HandleFunc("POST /api/token", s.handleIssueToken)
@@ -425,6 +426,48 @@ func matchVal(v any, actual string) bool {
 }
 
 func isOperator(v any) bool { _, ok := v.(map[string]any); return ok }
+
+// graphqlSchema is the canned introspection response for the demo GraphQL endpoint: a query that
+// takes an id (note(id:ID) — the IDOR/BAC candidate the probe looks for), a list query, and a
+// mutation. It is the schema an attacker learns when introspection is left enabled.
+const graphqlSchema = `{"data":{"__schema":{` +
+	`"queryType":{"name":"Query","fields":[` +
+	`{"name":"note","args":[{"name":"id","type":{"kind":"SCALAR","name":"ID","ofType":null}}],"type":{"kind":"OBJECT","name":"Note","ofType":null}},` +
+	`{"name":"notes","args":[],"type":{"kind":"LIST","name":null,"ofType":{"kind":"OBJECT","name":"Note"}}}` +
+	`]},` +
+	`"mutationType":{"name":"Mutation","fields":[` +
+	`{"name":"createNote","args":[{"name":"title","type":{"kind":"SCALAR","name":"String","ofType":null}},{"name":"body","type":{"kind":"SCALAR","name":"String","ofType":null}}],"type":{"kind":"OBJECT","name":"Note","ofType":null}}` +
+	`]}` +
+	`}}}`
+
+// handleGraphQL is the GraphQL ingestion surface. The vulnerable build leaves schema introspection
+// enabled — a common GraphQL misconfiguration (CWE-200 information disclosure) — so a POST of the
+// introspection query returns the full schema, handing an attacker every operation (including the
+// id-taking note(id) query, a GraphQL IDOR candidate). The hardened build disables introspection,
+// so the schema is not disclosed and the ingestion probe finds no surface. Only introspection is
+// wired here; exploiting a discovered operation is driven through api_request.
+func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	var in struct {
+		Query string `json:"query"`
+	}
+	_ = json.Unmarshal(body, &in)
+	if strings.Contains(in.Query, "__schema") {
+		if s.hardened {
+			// The control: introspection is disabled, so the schema is never disclosed.
+			writeJSON(w, http.StatusOK, map[string]any{"errors": []map[string]string{{"message": "GraphQL introspection is disabled"}}})
+			return
+		}
+		// The bug: introspection is enabled, disclosing the full attackable surface.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(graphqlSchema))
+		return
+	}
+	// Non-introspection operations are not resolved by this demo endpoint; the agent exploits a
+	// discovered operation via api_request against the real app, not this fixture.
+	writeJSON(w, http.StatusOK, map[string]any{"errors": []map[string]string{{"message": "only introspection is wired in this demo endpoint"}}})
+}
 
 // handleGetProfile returns the caller's own account record. It is correctly scoped to the
 // caller, so it is a clean read-back for the mass-assignment probe.

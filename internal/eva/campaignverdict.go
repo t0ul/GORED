@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/t0ul/GORED/internal/core"
+	"github.com/t0ul/GORED/internal/ingest"
 	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/internal/tools"
@@ -47,6 +48,10 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 	nuc := map[string][]tools.NucleiFinding{} // snapshot the breadth findings under the lock
 	for base, fs := range c.nuclei {
 		nuc[base] = fs
+	}
+	gql := map[string]ingest.GraphQLSurface{} // snapshot the introspected GraphQL surfaces
+	for base, surf := range c.graphql {
+		gql[base] = surf
 	}
 	s.mu.Unlock()
 
@@ -115,6 +120,17 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 			if p, ok := probes.ProofFromNuclei(f, app); ok {
 				proofs = append(proofs, p)
 			}
+		}
+	}
+	// Pool the GraphQL ingestion findings: an introspectable endpoint is a schema-disclosure
+	// misconfiguration whose id-taking operations are the IDOR/BAC candidates for the report.
+	for base, surf := range gql {
+		app := baseName[base]
+		if app == "" {
+			app = base
+		}
+		if p, ok := probes.ProofFromGraphQL(surf, app, "/graphql"); ok {
+			proofs = append(proofs, p)
 		}
 	}
 	return proofs
