@@ -1549,15 +1549,14 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .slot-right .role{transform:perspective(1100px) rotateY(-34deg)}
 .slot-center .role{width:100%}
 .cockpit3:not(.immersive) .slot-left .role,.cockpit3:not(.immersive) .slot-right .role{max-height:84vh;overflow:auto;padding-top:7vh}
-/* title header runs parallel to the slanted top edge, anchored to the plane's OUTER edge so it
-   sits identically on every page regardless of title length: the underline hugs the text
-   (inline-block, no long trailing drop), left wing anchors left, right wing anchors right; the
-   body stays left-aligned so the two wings read as clean mirrors */
-.cockpit3:not(.immersive) .slot-left .rolehdr,.cockpit3:not(.immersive) .slot-right .rolehdr{display:inline-block;margin-bottom:3vh}
-.cockpit3:not(.immersive) .slot-left .rolehdr{transform:rotate(9deg);transform-origin:left center}
-.cockpit3:not(.immersive) .slot-right .role{text-align:right}
+/* the WHOLE wing content (title AND paragraphs) slants parallel to the trapezoid's top edge by
+   the same angle, so the title and body read consistently — not a slanted title over flat body.
+   The title underline hugs its text (inline-block) and the title anchors to the plane's OUTER
+   edge (left wing left, right wing right); the body stays left-aligned so the wings mirror. */
+.cockpit3:not(.immersive) .slot-left .role{transform:perspective(1100px) rotateY(34deg) rotate(8deg)}
+.cockpit3:not(.immersive) .slot-right .role{transform:perspective(1100px) rotateY(-34deg) rotate(-8deg);text-align:right}
 .cockpit3:not(.immersive) .slot-right .role>*:not(.rolehdr){text-align:left}
-.cockpit3:not(.immersive) .slot-right .rolehdr{transform:rotate(-9deg);transform-origin:right center}
+.cockpit3:not(.immersive) .slot-left .rolehdr,.cockpit3:not(.immersive) .slot-right .rolehdr{display:inline-block;margin-bottom:3vh}
 .cockpit3:not(.immersive) .slot-center{height:72vh;animation:none}
 .cockpit3:not(.immersive) .slot-left,.cockpit3:not(.immersive) .slot-right{cursor:default;align-items:flex-start}
 /* big wing titles anchored at the top of the receding plane (the wide outer end) */
