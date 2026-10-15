@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/t0ul/GORED/internal/core"
+	"github.com/t0ul/GORED/internal/ingest"
 	"github.com/t0ul/GORED/internal/tools"
 )
 
@@ -82,6 +83,33 @@ func ProofFromNoSQLi(f NoSQLiFinding, app string) (core.Proof, bool) {
 	p := core.Proof{App: app, Locus: locus, Kind: kind, CWE: f.CWE, Confidence: f.Confidence,
 		Source: "gored-nosqli", Evidence: f.Evidence, Rung: core.LadderExploitable, Exploitable: true,
 		Repro: fmt.Sprintf("POST %s with a JSON body injecting operators (%s) — authenticates where wrong credentials do not", f.Path, f.Vector)}
+	return p, true
+}
+
+// ProofFromGraphQL normalizes an introspected GraphQL surface into a Proof. A surface recovered at
+// all means introspection is enabled — a real information-disclosure misconfiguration (CWE-200) that
+// hands an attacker the full schema. It is confirmed present on real bytes (the endpoint answered the
+// introspection query), so it sits at the present rung with medium confidence; it is never
+// exploitable on its own. The id-taking operations are recorded as the IDOR/BAC candidates to drive.
+func ProofFromGraphQL(s ingest.GraphQLSurface, app, locus string) (core.Proof, bool) {
+	if len(s.Ops) == 0 {
+		return core.Proof{}, false
+	}
+	if locus == "" {
+		locus = "/graphql"
+	}
+	l, _ := core.NormLocus(locus)
+	ev := fmt.Sprintf("GraphQL introspection enabled: %d operations disclosed", len(s.Ops))
+	if ids := s.IDOps(); len(ids) > 0 {
+		var names []string
+		for _, o := range ids {
+			names = append(names, o.Name)
+		}
+		ev += fmt.Sprintf("; id-taking operations (IDOR/BAC candidates): %s", strings.Join(names, ", "))
+	}
+	p := core.Proof{App: app, Locus: l, Kind: "GraphQL introspection enabled (schema disclosure)", CWE: "CWE-200",
+		Rung: core.LadderPresent, Confidence: core.ConfMedium, Source: "gored-graphql", Evidence: ev,
+		Repro: fmt.Sprintf("POST %s with a GraphQL introspection query ({__schema{queryType{name fields{name}}}}) — the full schema is returned", locus)}
 	return p, true
 }
 
