@@ -199,10 +199,16 @@ func (s *Server) compare(w http.ResponseWriter, r *http.Request) {
 	render(w, compareTmpl, map[string]any{"Runs": rns})
 }
 
-// studio is the read-only factory surface: the tools the stages actually carry, the skills
-// now held as data in the store, and the per-stage prompts. Authoring is deferred — the
-// plan is data-first, no edit button over hardcoded Go. This page is the migration milestone.
+// studio is the factory surface: the tools the stages carry (read-only — they are Go), and the
+// skills, now authorable data in the registry. Each skill shows whether it has drifted from its
+// pristine built-in (for the REVERT control) and which stage it drives (for ARM / DRY-RUN).
 func (s *Server) studio(w http.ResponseWriter, _ *http.Request) {
+	// pristine[name] = the in-code default instruction; stageForSkill[name] = the stage it drives.
+	pristine := map[string]string{}
+	stageForSkill := map[string]string{}
+	for _, sk := range core.Catalog() {
+		pristine[sk.Name] = sk.Instruction
+	}
 	type stageInfo struct {
 		Name, Skill, Goal string
 		Tools             []string
@@ -210,6 +216,8 @@ func (s *Server) studio(w http.ResponseWriter, _ *http.Request) {
 	toolSet := map[string]bool{}
 	var stages []stageInfo
 	for name, st := range appsweep.Stages() {
+		pristine[st.Skill.Name] = st.Skill.Instruction
+		stageForSkill[st.Skill.Name] = name
 		var names []string
 		if st.BuildTools != nil {
 			names = st.BuildTools(nil, "").Names() // nil gate: reading names never dials out
@@ -226,9 +234,23 @@ func (s *Server) studio(w http.ResponseWriter, _ *http.Request) {
 	}
 	sort.Strings(tools)
 
-	var skills []store.SkillRow
+	type skillView struct {
+		store.SkillRow
+		Default string
+		Changed bool
+		Stage   string
+	}
+	var skills []skillView
 	if s.store != nil {
-		skills, _ = s.store.ListSkills()
+		rows, _ := s.store.ListSkills()
+		for _, r := range rows {
+			def := pristine[r.Name]
+			skills = append(skills, skillView{
+				SkillRow: r, Default: def,
+				Changed: strings.TrimSpace(r.Instruction) != strings.TrimSpace(def),
+				Stage:   stageForSkill[r.Name],
+			})
+		}
 	}
 
 	render(w, studioTmpl, map[string]any{"Tools": tools, "Skills": skills, "Stages": stages})
@@ -253,6 +275,20 @@ func (s *Server) saveSkill(w http.ResponseWriter, r *http.Request) {
 		temp = core.SkillCold
 	}
 	_ = s.store.UpsertSkill(core.Skill{Name: name, Temp: temp, Instruction: r.FormValue("instruction")})
+	http.Redirect(w, r, "/studio", http.StatusSeeOther)
+}
+
+// revertSkill restores a skill to its in-code pristine default (resolved server-side).
+func (s *Server) revertSkill(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "no registry (run with a -store)", http.StatusServiceUnavailable)
+		return
+	}
+	_ = r.ParseForm()
+	name := strings.TrimSpace(r.FormValue("name"))
+	if instr, temp, ok := s.pristineInstruction(name); ok {
+		_ = s.store.UpsertSkill(core.Skill{Name: name, Temp: temp, Instruction: instr})
+	}
 	http.Redirect(w, r, "/studio", http.StatusSeeOther)
 }
 

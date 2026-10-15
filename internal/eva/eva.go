@@ -111,6 +111,23 @@ func (s *Server) effectiveInstruction(stage string) string {
 	return def
 }
 
+// pristineInstruction returns the in-code default for a skill name (a stage's own skill, else
+// the catalog) — the target of a REVERT. Resolved server-side so the full instruction never has
+// to round-trip through the browser (which normalises whitespace and would defeat the match).
+func (s *Server) pristineInstruction(skill string) (string, core.SkillTemp, bool) {
+	for _, st := range appsweep.Stages() {
+		if st.Skill.Name == skill {
+			return st.Skill.Instruction, st.Skill.Temp, true
+		}
+	}
+	for _, sk := range core.Catalog() {
+		if sk.Name == skill {
+			return sk.Instruction, sk.Temp, true
+		}
+	}
+	return "", "", false
+}
+
 // Handler wires the routes (Go 1.22+ pattern mux).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -124,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /compare", s.compare)
 	mux.HandleFunc("GET /studio", s.studio)
 	mux.HandleFunc("POST /studio/skill", s.saveSkill)
+	mux.HandleFunc("POST /studio/revert", s.revertSkill)
 	mux.HandleFunc("GET /run/{id}/trace", s.traceView)
 	mux.HandleFunc("GET /run/{id}/leaderboard", s.runLeaderboard)
 	mux.HandleFunc("GET /leaderboard", s.leaderboard)
