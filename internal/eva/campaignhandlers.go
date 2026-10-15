@@ -212,6 +212,7 @@ func (s *Server) targetSave(w http.ResponseWriter, r *http.Request) {
 		LowCreds:   strings.TrimSpace(r.FormValue("low_creds")),
 		PrivHeader: strings.TrimSpace(r.FormValue("priv_header")),
 		LowHeader:  strings.TrimSpace(r.FormValue("low_header")),
+		Spec:       strings.TrimSpace(r.FormValue("spec")),
 		Notes:      strings.TrimSpace(r.FormValue("notes")),
 	}
 	_ = s.store.SaveTarget(t)
