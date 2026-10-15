@@ -1,0 +1,45 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">DIFF <span class="badge matrix">TRACES</span></span>
+  <span class="hudcfg">{{.A.Stage}} · {{.A.ModelLabel}}  vs  {{.B.Stage}} · {{.B.ModelLabel}}</span>
+  <span class="hudphase">{{.Diverged}} / {{.Total}} DIVERGED</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left"><section class="role lens">
+    <div class="rolehdr">◣ RUN A</div>
+    <div class="readout">
+      <div class="ro">RUN <b>{{.A.ID}}</b></div>
+      <div class="ro">STAGE <b>{{.A.Stage}}</b></div>
+      <div class="ro">MODEL <b>{{.A.ModelLabel}}</b></div>
+      <div class="ro">STATUS <b>{{.A.Status}}</b></div>
+    </div>
+    <p class="hint" style="margin-top:12px">Two sorties aligned step by step. A divergent row (gold) is where the models' next action differed.</p>
+  </section></div>
+  <div class="slot slot-center" id="slot-center"><section class="role lens">
+    <div class="rolehdr">◉ ALIGNED · <span class="count">{{.Total}}</span></div>
+    <div class="tblwrap"><table class="lb difftbl"><thead><tr><th>#</th><th>A</th><th>B</th></tr></thead><tbody>
+    {{range .Rows}}<tr{{if .Diverge}} class="diverge"{{end}}>
+      <td class="rank">{{.N}}</td>
+      <td>{{if .A}}[{{.A.Span}}] {{.A.Event}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .B}}[{{.B.Span}}] {{.B.Event}}{{else}}<span class="muted">—</span>{{end}}</td>
+    </tr>{{end}}
+    </tbody></table></div>
+  </section></div>
+  <div class="slot slot-right" id="slot-right"><section class="role lens">
+    <div class="rolehdr">◥ RUN B</div>
+    <div class="readout">
+      <div class="ro">RUN <b>{{.B.ID}}</b></div>
+      <div class="ro">STAGE <b>{{.B.Stage}}</b></div>
+      <div class="ro">MODEL <b>{{.B.ModelLabel}}</b></div>
+      <div class="ro">STATUS <b>{{.B.Status}}</b></div>
+      <div class="ro">DIVERGED <b class="{{if .Diverged}}bad{{else}}grn{{end}}">{{.Diverged}} / {{.Total}}</b></div>
+    </div>
+  </section></div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/run/{{.A.ID}}">A ⟶</a> · <a href="/run/{{.B.ID}}">B ⟶</a> · <a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a></nav></div>
+  <span></span>
+</div>
+{{- end}}

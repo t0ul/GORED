@@ -199,6 +199,47 @@ func (s *Server) compare(w http.ResponseWriter, r *http.Request) {
 	render(w, compareTmpl, map[string]any{"Runs": rns})
 }
 
+// diffTrace aligns two runs' traces step by step so you can see where one model's sortie
+// diverged from the other's — the A/B research view over the raw recorded bytes.
+func (s *Server) diffTrace(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	s.mu.Lock()
+	ra, rb := s.runs[q.Get("a")], s.runs[q.Get("b")]
+	s.mu.Unlock()
+	if ra == nil || rb == nil {
+		http.Error(w, "need two runs: /difftrace?a=<id>&b=<id>", http.StatusBadRequest)
+		return
+	}
+	evA, _, _, _, _ := parseRunTrace(ra.Trace)
+	evB, _, _, _, _ := parseRunTrace(rb.Trace)
+	type diffRow struct {
+		N       int
+		A, B    *traceEvt
+		Diverge bool
+	}
+	n := len(evA)
+	if len(evB) > n {
+		n = len(evB)
+	}
+	rows := make([]diffRow, 0, n)
+	div := 0
+	for i := 0; i < n; i++ {
+		var a, b *traceEvt
+		if i < len(evA) {
+			a = &evA[i]
+		}
+		if i < len(evB) {
+			b = &evB[i]
+		}
+		d := a == nil || b == nil || a.Span+"/"+a.Event != b.Span+"/"+b.Event
+		if d {
+			div++
+		}
+		rows = append(rows, diffRow{N: i + 1, A: a, B: b, Diverge: d})
+	}
+	render(w, difftraceTmpl, map[string]any{"A": ra, "B": rb, "Rows": rows, "Diverged": div, "Total": n})
+}
+
 // studio is the factory surface: the tools the stages carry (read-only — they are Go), and the
 // skills, now authorable data in the registry. Each skill shows whether it has drifted from its
 // pristine built-in (for the REVERT control) and which stage it drives (for ARM / DRY-RUN).

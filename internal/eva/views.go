@@ -61,4 +61,5 @@ var (
 	compareTmpl     = page("compare")
 	leaderboardTmpl = page("leaderboard")
 	traceTmpl       = page("trace")
+	difftraceTmpl   = page("difftrace")
 )

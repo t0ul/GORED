@@ -31,7 +31,7 @@
   <div class="slot slot-right" id="slot-right">
     <section class="role lens">
       <div class="rolehdr">◥ ACTIONS</div>
-      {{if .Runs}}<a class="chip" href="/leaderboard?{{range .Runs}}id={{.ID}}&amp;{{end}}">OPEN AS RESEARCH LEADERBOARD</a>{{else}}<p class="muted">—</p>{{end}}
+      {{if .Runs}}<a class="chip" href="/leaderboard?{{range .Runs}}id={{.ID}}&amp;{{end}}">OPEN AS RESEARCH LEADERBOARD</a>{{if eq (len .Runs) 2}} <a class="chip act" href="/difftrace?a={{(index .Runs 0).ID}}&amp;b={{(index .Runs 1).ID}}">DIFF TRACES</a>{{end}}{{else}}<p class="muted">—</p>{{end}}
     </section>
   </div>
 </div>

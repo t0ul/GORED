@@ -139,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /run/{id}/abort", s.abort)
 	mux.HandleFunc("POST /run/{id}/directive", s.directive)
 	mux.HandleFunc("GET /compare", s.compare)
+	mux.HandleFunc("GET /difftrace", s.diffTrace)
 	mux.HandleFunc("GET /studio", s.studio)
 	mux.HandleFunc("POST /studio/skill", s.saveSkill)
 	mux.HandleFunc("POST /studio/revert", s.revertSkill)
