@@ -13,8 +13,15 @@
     <div class="decision" id="decision" hidden>
       <div class="card-tag warn">⚠ PILOT DECISION — PHASE <span id="dphase"></span></div>
       <p class="muted">Pick the moves to spend tokens on, add a constraint, proceed. The oracle confirms on real bytes — you pick the move, not the verdict.</p>
+      <p class="muted" style="font-size:11px;margin:0">drag to reorder — the loop spends on the first checked move first</p>
       <div class="moves" id="dmoves"></div>
       <label>CONSTRAINT / HINT <input id="dhint" placeholder="e.g. focus /greeting, try the reflected param"></label>
+      <div class="chips" id="vetochips">
+        <span class="chip act" onclick="veto('stay on the json-api surface')">json-api only</span>
+        <span class="chip act" onclick="veto('do not touch /admin')">avoid /admin</span>
+        <span class="chip act" onclick="veto('read-only — no writes')">read-only</span>
+        <span class="chip act" onclick="veto('one tool call, then re-plan')">single shot</span>
+      </div>
       <div class="btnrow"><button type="button" onclick="submitDecision('proceed')">PROCEED</button><button type="button" class="danger" onclick="submitDecision('abort')">ABORT</button></div>
     </div>
   </div>
@@ -27,7 +34,7 @@
     <div class="dockctl">
       <button class="swap reset" onclick="resetFocus()">RESET</button>
       <button class="swap" id="focusbtn" onclick="toggleLock()">AUTO</button>
-      {{if or (eq .Status "running") (eq .Status "waiting")}}<button form="abortform" class="danger">ABORT</button>{{else}}<button form="rerunform" class="reset">RE-RUN</button>{{end}}
+      {{if or (eq .Status "running") (eq .Status "waiting")}}<input class="directivein" id="directive" placeholder="nudge the agent…" onkeydown="if(event.key==='Enter'){event.preventDefault();sendDirective();}"><button class="swap" onclick="sendDirective()">SEND</button><button form="abortform" class="danger">ABORT</button>{{else}}<button form="rerunform" class="reset">RE-RUN</button>{{end}}
     </div>
     <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/studio">STUDIO</a> · <a href="/run/{{.ID}}/trace">TRACE</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">LEADERBOARD</a>{{end}}</nav>
     <div class="keyhint">keys: &lt; &gt; swap · r reset · l lock</div>
@@ -113,11 +120,19 @@
   [].forEach.call(mapnodes.children, function(n){ seenPath[(n.children[0].textContent+' '+n.children[1].textContent)]=n; });
 
   var decision=el('decision'), cockpit=document.querySelector('.cockpit3');
+  // veto chips append a constraint to the gate hint; drag reorders the moves (submit reads DOM order)
+  window.veto=function(t){ var d=el('dhint'); if(d) d.value=(d.value? d.value+'; ':'')+t; };
+  window.sendDirective=function(){ var i=el('directive'); if(!i) return; var h=(i.value||'').trim(); if(!h) return; fetch('/run/'+RUN_ID+'/directive',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'hint='+encodeURIComponent(h)}); var dh=el('dhint'); if(dh && decision && !decision.hidden){ dh.value=(dh.value? dh.value+'; ':'')+h; } i.value=''; i.placeholder='queued — lands at next gate'; };
+  (function(){ var box=el('dmoves'), src=null;
+    box.addEventListener('dragstart', function(e){ var l=e.target.closest('.move'); if(l){ src=l; l.classList.add('dragging'); } });
+    box.addEventListener('dragend', function(){ if(src){ src.classList.remove('dragging'); src=null; } });
+    box.addEventListener('dragover', function(e){ e.preventDefault(); if(!src) return; var l=e.target.closest('.move'); if(!l||l===src) return; var r=l.getBoundingClientRect(); box.insertBefore(src, (e.clientY-r.top)/r.height>0.5 ? l.nextSibling : l); });
+  })();
   function raiseDecision(phase, proposals){
     el('dphase').textContent=(phase||'').toUpperCase();
     var box=el('dmoves'); box.innerHTML='';
     (proposals||[]).forEach(function(m,i){
-      var l=document.createElement('label'); l.className='move';
+      var l=document.createElement('label'); l.className='move'; l.draggable=true;
       var cb=document.createElement('input'); cb.type='checkbox'; cb.name='move'; cb.value=i; l.appendChild(cb);
       function sp(c,t){ var s=document.createElement('span'); s.className=c; s.textContent=t; l.appendChild(s); }
       sp('mv-tool',m.Tool||''); sp('mv-path',m.Path||'—'); sp('mv-surface s-'+(m.Surface||''),m.Surface||''); sp('mv-src src-'+(m.Source||''),m.Source||''); sp('mv-why',m.Why||'');

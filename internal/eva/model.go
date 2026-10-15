@@ -31,10 +31,25 @@ type run struct {
 	// Pending is the open checkpoint awaiting the pilot, nil when none. cp relays the
 	// pilot's decision back to the blocked Runner goroutine. Both are guarded by the
 	// Server mutex.
-	Pending *pending
-	cp      *pilotCheckpoint
-	cancel  context.CancelFunc // cancels the run's context for a hard ABORT; nil until execute runs
-	slot    int                // the concurrency bay / port offset this run holds
+	Pending    *pending
+	cp         *pilotCheckpoint
+	cancel     context.CancelFunc // cancels the run's context for a hard ABORT; nil until execute runs
+	queuedHint string             // a mid-run directive, merged into the next checkpoint's hint
+	slot       int                // the concurrency bay / port offset this run holds
+}
+
+// mergeHints joins two non-empty directive hints, so a mid-run directive rides alongside the
+// pilot's gate hint rather than replacing it.
+func mergeHints(a, b string) string {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	default:
+		return a + "; " + b
+	}
 }
 
 // IsMatrix reports whether this is a researcher-matrix sortie (several models on one stage).
@@ -96,13 +111,13 @@ func (c *pilotCheckpoint) Decide(ctx context.Context, phase string, board *core.
 	if c.autonomy == "assisted" {
 		select {
 		case d := <-c.decided:
-			return d.chosen, d.hint, d.proceed
+			return d.chosen, mergeHints(d.hint, c.takeQueuedHint()), d.proceed
 		case <-time.After(assistBeat):
 			var def []core.Move
 			if len(proposals) > 0 {
 				def = proposals[:1] // the model's top-ranked move
 			}
-			return def, "", true
+			return def, c.takeQueuedHint(), true // a queued directive steers the auto-proceed
 		case <-ctx.Done():
 			return nil, "", false
 		}
@@ -110,10 +125,19 @@ func (c *pilotCheckpoint) Decide(ctx context.Context, phase string, board *core.
 	// piloted: block until the pilot decides (or the context is cancelled).
 	select {
 	case d := <-c.decided:
-		return d.chosen, d.hint, d.proceed
+		return d.chosen, mergeHints(d.hint, c.takeQueuedHint()), d.proceed
 	case <-ctx.Done():
 		return nil, "", false
 	}
+}
+
+// takeQueuedHint reads and clears any mid-run directive queued on the run.
+func (c *pilotCheckpoint) takeQueuedHint() string {
+	c.srv.mu.Lock()
+	defer c.srv.mu.Unlock()
+	h := c.run.queuedHint
+	c.run.queuedHint = ""
+	return h
 }
 
 func toEVARun(rn *run) store.EVARun {

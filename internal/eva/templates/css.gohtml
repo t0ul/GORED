@@ -120,7 +120,9 @@ button.swap{padding:11px 18px}
 .scan{position:relative}
 /* moves */
 .moves{display:grid;gap:6px}
-.move{display:grid;grid-template-columns:auto 90px 1fr 90px 60px;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);background:#0c0703;text-transform:none;letter-spacing:.3px;cursor:pointer;font-size:12px}
+.move{display:grid;grid-template-columns:auto 90px 1fr 90px 60px;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);background:#0c0703;text-transform:none;letter-spacing:.3px;cursor:grab;font-size:12px}
+.move.dragging{opacity:.45;border-color:var(--amber)}
+.directivein{width:150px;font-size:12px;padding:6px 8px}
 .move:hover{border-color:var(--orange)}
 .mv-tool{color:var(--orange);font-weight:700}
 .mv-path{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -365,6 +365,21 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/run/"+id, http.StatusSeeOther)
 }
 
+// directive queues a mid-run hint on a live run; the next pilot checkpoint folds it into the
+// agent's directive (see pilotCheckpoint.Decide / mergeHints). It never decides a verdict — it
+// only steers which move the loop spends tokens on next, like the gate hint.
+func (s *Server) directive(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_ = r.ParseForm()
+	h := strings.TrimSpace(r.FormValue("hint"))
+	s.mu.Lock()
+	if rn := s.runs[id]; rn != nil && (rn.Status == "running" || rn.Status == "waiting") && h != "" {
+		rn.queuedHint = mergeHints(rn.queuedHint, h)
+	}
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // abort hard-cancels a live run: it cancels the run's context (interrupting in-flight model
 // and tool calls, and releasing a blocked pilot gate — Decide selects on ctx.Done()) and
 // marks it aborted. The clean stop is still the gate abort via decide; this is the e-stop.
