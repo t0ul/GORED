@@ -125,6 +125,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request) {
 		autonomy = "piloted"
 	}
 	f := bench.DefaultFlags()
+	f.MaxStall = stallBound // stop a flailing run early (EVA-only; CI path leaves this 0)
 	if v := r.FormValue("model"); v != "" {
 		f.Model = v
 	}

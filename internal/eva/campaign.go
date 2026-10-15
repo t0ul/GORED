@@ -403,6 +403,7 @@ func (s *Server) launchCampaignRun(c *campaign, tg store.Target, stage string, s
 	f.Base = tg.Base
 	f.Model = c.Model
 	f.Ensure = tg.Ensure
+	f.MaxStall = stallBound // stop a flailing run early (campaigns especially, under the loop)
 	f.BasePort += slot * portStep
 
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)

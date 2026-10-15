@@ -29,6 +29,11 @@ type Bounds struct {
 	// thinking before it emits the tool call, so a fair benchmark of those models
 	// must raise this — otherwise the JSON is truncated and every step is a parse miss.
 	MaxOutTokens int
+	// MaxStall stops a run after this many consecutive unproductive steps (a reply with no
+	// usable NEW tool call: a parse miss, an unknown tool, or a verbatim repeat). 0 disables
+	// it, which keeps the benchmark/CI loop byte-for-byte unchanged; EVA sets it so a small
+	// model that flails does not burn the whole step budget producing nothing.
+	MaxStall int
 }
 
 func (b Bounds) withDefaults() Bounds {
@@ -186,6 +191,20 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 
 	lastKey := "" // anti-repetition: break loops where the model repeats one call
 	phaseIdx := 0 // staged loop: which Phase we are in (0 when there are no phases)
+	stall := 0    // consecutive unproductive steps (no usable new tool call); see Bounds.MaxStall
+	// bail counts one unproductive step and reports whether the run has stalled out. The caller
+	// breaks the loop on true. A productive step (a real tool call) resets stall to 0 below.
+	bail := func(step int) bool {
+		stall++
+		if b.MaxStall > 0 && stall >= b.MaxStall {
+			r.emit(traceID, "run", "stalled", gledger.F{"step": step, "stall": stall})
+			if res.Outcome == "" {
+				res.Outcome = "stalled"
+			}
+			return true
+		}
+		return false
+	}
 	for step := 1; step <= b.MaxSteps; step++ {
 		if time.Since(start) > b.Wall {
 			r.emit(traceID, "run", "budget_wall", gledger.F{"step": step})
@@ -217,6 +236,9 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 		if len(acts) == 0 {
 			r.emit(traceID, "model", "parse_miss", gledger.F{"step": step})
 			r.Board.Add(FindObservation, "model produced no valid tool call", step)
+			if bail(step) {
+				break
+			}
 			continue
 		}
 		// A reply may carry a whole plan; take the first step that is not a verbatim
@@ -243,6 +265,9 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 		if !found {
 			r.emit(traceID, "tool", "unknown_tool", gledger.F{"step": step, "tool": act.Tool})
 			r.Board.Add(FindObservation, "no such tool: "+act.Tool, step)
+			if bail(step) {
+				break
+			}
 			continue
 		}
 		// Anti-repetition: a small model often repeats the exact same call. Refuse a
@@ -250,10 +275,14 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 		if key := actionKey(act); key == lastKey {
 			r.emit(traceID, "tool", "repeat_skipped", gledger.F{"step": step, "tool": resolved})
 			r.Board.Add(FindObservation, "already did "+describeAction(act)+" — do NOT repeat it; try a different endpoint or next step", step)
+			if bail(step) {
+				break
+			}
 			continue
 		} else {
 			lastKey = key
 		}
+		stall = 0 // a real, new tool call: the run is making progress
 		r.emit(traceID, "tool", "tool_call", gledger.F{"step": step, "tool": resolved, "args": act.Args})
 		res.ToolCalls++
 		out, callErr := tool.Call(ctx, act.Args)

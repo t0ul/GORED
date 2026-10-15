@@ -24,6 +24,11 @@ import (
 // not fight over a port (each run boots one model; 20 is ample headroom).
 const portStep = 20
 
+// stallBound stops an EVA run after this many consecutive unproductive steps (a small model
+// flailing — no usable new tool call). EVA sets it on every run it launches; the CLI/CI path
+// (bench.DefaultFlags, MaxStall 0) is unaffected, so the benchmark loop stays byte-for-byte.
+const stallBound = 4
+
 type Server struct {
 	mu        sync.Mutex
 	runs      map[string]*run
