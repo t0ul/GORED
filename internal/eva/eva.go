@@ -1548,17 +1548,12 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .slot-left .role,.slot-right .role{width:82%;transform:perspective(1100px) rotateY(34deg);transform-origin:center}
 .slot-right .role{transform:perspective(1100px) rotateY(-34deg)}
 .slot-center .role{width:100%}
-.cockpit3:not(.immersive) .slot-left .role,.cockpit3:not(.immersive) .slot-right .role{max-height:84vh;overflow:auto;padding-top:7vh}
-/* the WHOLE wing content (title AND paragraphs) slants parallel to the trapezoid's top edge by
-   the same angle, so the title and body read consistently — not a slanted title over flat body.
-   The title underline hugs its text (inline-block) and the title anchors to the plane's OUTER
-   edge (left wing left, right wing right); the body stays left-aligned so the wings mirror. */
-.cockpit3:not(.immersive) .slot-left .role{transform:perspective(1100px) rotateY(34deg) rotate(8deg)}
-.cockpit3:not(.immersive) .slot-right .role{transform:perspective(1100px) rotateY(-34deg) rotate(-8deg);text-align:right}
-.cockpit3:not(.immersive) .slot-right .role>*:not(.rolehdr){text-align:left}
-.cockpit3:not(.immersive) .slot-left .rolehdr,.cockpit3:not(.immersive) .slot-right .rolehdr{display:inline-block;margin-bottom:3vh}
+/* config-view wings behave exactly like the run view's wings: the base perspective recede alone,
+   so every div — the title and each body line — slants on the receding plane. No title-specific
+   transforms, no anchoring hacks. Only difference from the run view: the centre box scrolls. */
+.cockpit3:not(.immersive) .slot-left .role,.cockpit3:not(.immersive) .slot-right .role{max-height:84vh;overflow:auto}
 .cockpit3:not(.immersive) .slot-center{height:72vh;animation:none}
-.cockpit3:not(.immersive) .slot-left,.cockpit3:not(.immersive) .slot-right{cursor:default;align-items:flex-start}
+.cockpit3:not(.immersive) .slot-left,.cockpit3:not(.immersive) .slot-right{cursor:default}
 /* big wing titles anchored at the top of the receding plane (the wide outer end) */
 .slot-left .rolehdr,.slot-right .rolehdr{font-size:20px;letter-spacing:4px;padding-bottom:9px}
 .role{display:grid;gap:11px;align-content:start}
