@@ -32,8 +32,8 @@
   <button class="swap" onclick="manualSwap('left')" title="focus left ( &lt; )">◀</button>
   <div class="dockmid">
     <div class="dockctl">
-      <button class="rect" onclick="resetFocus()">RESET</button>
-      <button class="rect" id="focusbtn" onclick="toggleLock()">AUTO</button>
+      <button class="rect sync" onclick="resetFocus()">RESET</button>
+      <button class="rect sync" id="focusbtn" onclick="toggleLock()">AUTO</button>
       {{if or (eq .Status "running") (eq .Status "waiting")}}<input class="directivein" id="directive" placeholder="nudge the agent…" onkeydown="if(event.key==='Enter'){event.preventDefault();sendDirective();}"><button class="rect sync" onclick="sendDirective()">SEND</button><button form="abortform" class="rect danger">ABORT</button>{{else}}<button form="rerunform" class="rect go">RE-RUN</button>{{end}}
     </div>
     <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/studio">STUDIO</a> · <a href="/run/{{.ID}}/trace">TRACE</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">LEADERBOARD</a>{{end}}</nav>
