@@ -1115,47 +1115,104 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
 </script>
 `))
 
-var studioTmpl = template.Must(template.New("studio").Funcs(funcs).Parse(baseCSS + shellTop + `
-<main class="viewscreen">
-<h1 class="runhdr">STUDIO</h1>
-<p class="sub">the factory · tools · skills · prompts <span class="dim">(read-only — authoring lands once the registry drives the stages)</span></p>
-
-<h2>⬡ TOOLS</h2>
-<div class="chips">{{range .Tools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">none</span>{{end}}</div>
-
-<h2>⬡ SKILLS</h2>
-{{if .Skills}}{{range .Skills}}
-<div class="card frame skillcard">
-  <div class="card-tag">{{.Name}} <span class="temp temp-{{.Temp}}">{{.Temp}}</span> {{if .BuiltIn}}<span class="src-router">built-in</span>{{else}}<span class="src-model">authored</span>{{end}}</div>
-  <pre class="repro">{{.Instruction}}</pre>
+var studioTmpl = template.Must(template.New("studio").Funcs(funcs).Parse(baseCSS + `
+<div class="hudbar">
+  <span class="dtitle">STUDIO <span class="badge done">FACTORY</span></span>
+  <span class="hudcfg">tools · skills · prompts <span class="dim">(read-only until the registry drives the stages)</span></span>
+  <span class="hudphase">{{len .Stages}} STAGES</span>
 </div>
-{{end}}{{else}}<p class="muted">no skills registry (run with a -store to seed the catalog)</p>{{end}}
-
-<h2>⬡ PROMPTS · PER STAGE</h2>
-{{range .Stages}}
-<div class="card frame skillcard">
-  <div class="card-tag">{{.Name}} <span class="dim">tools: {{range .Tools}}{{.}} {{end}}</span></div>
-  <pre class="repro">{{.Instruction}}</pre>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ CATALOG</div>
+      <div class="readout">
+        <div class="ro">TOOLS <b>{{len .Tools}}</b></div>
+        <div class="ro">SKILLS <b>{{len .Skills}}</b></div>
+        <div class="ro">STAGES <b>{{len .Stages}}</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px">The factory surfaces — the tools an agent can call, the skills (prompts) that steer it, and the per-stage playbooks. Authoring lands once the registry drives the stages.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ TOOLS · <span class="count">{{len .Tools}}</span></div>
+      <div class="chips">{{range .Tools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">none</span>{{end}}</div>
+      <div class="rolehdr" style="margin-top:18px">◉ SKILLS</div>
+      {{if .Skills}}{{range .Skills}}
+      <div class="card frame skillcard">
+        <div class="card-tag">{{.Name}} <span class="temp temp-{{.Temp}}">{{.Temp}}</span> {{if .BuiltIn}}<span class="src-router">built-in</span>{{else}}<span class="src-model">authored</span>{{end}}</div>
+        <pre class="repro">{{.Instruction}}</pre>
+      </div>
+      {{end}}{{else}}<p class="muted">no skills registry (run with -store to seed the catalog)</p>{{end}}
+      <div class="rolehdr" style="margin-top:18px">◉ PROMPTS · PER STAGE</div>
+      {{range .Stages}}
+      <div class="card frame skillcard">
+        <div class="card-tag">{{.Name}} <span class="dim">tools: {{range .Tools}}{{.}} {{end}}</span></div>
+        <pre class="repro">{{.Instruction}}</pre>
+      </div>
+      {{end}}
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ INVENTORY</div>
+      <div class="readout">
+        {{range .Stages}}<div class="ro">{{.Name}} <b>{{len .Tools}} tools</b></div>{{end}}
+      </div>
+    </section>
+  </div>
 </div>
-{{end}}
-</main>` + sideHUD + shellBottom))
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav></div>
+  <span></span>
+</div>
+`))
 
-var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseCSS + shellTop + `
-<main class="viewscreen">
-<h1 class="runhdr">COMPARE</h1>
-{{if .Runs}}
-<p class="nav"><a href="/leaderboard?{{range .Runs}}id={{.ID}}&amp;{{end}}">⬡ OPEN AS RESEARCH LEADERBOARD</a></p>
-<div class="tblwrap"><table><thead><tr><th>run</th><th>stage</th><th>model</th><th>dial</th><th>status</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
-{{range .Runs}}{{if .Sums}}{{$c := index .Sums 0}}<tr>
-  <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
-  <td>{{pct $c.CaptureRate}}</td><td>{{$c.Captured}}/{{$c.Trials}}</td><td>{{printf "%.1f" $c.MeanToolCall}}</td><td>{{printf "%.0f" $c.MeanTokens}}</td>
-</tr>{{else}}<tr>
-  <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
-  <td colspan="4" class="muted">no summary</td>
-</tr>{{end}}{{end}}
-</tbody></table></div>
-{{else}}<p class="muted">select two or more runs from the cockpit to compare.</p>{{end}}
-</main>` + sideHUD + shellBottom))
+var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseCSS + `
+<div class="hudbar">
+  <span class="dtitle">COMPARE <span class="badge matrix">SORTIES</span></span>
+  <span class="hudcfg">side-by-side sortie summaries</span>
+  <span class="hudphase">{{len .Runs}} RUNS</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ COMPARE</div>
+      <p class="hint" style="margin-top:8px">Each row is one sortie's headline contender. Promote the set to the research leaderboard to rank every contender across them on real target bytes.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ SORTIES · <span class="count">{{len .Runs}}</span></div>
+      {{if .Runs}}
+      <div class="tblwrap"><table class="lb"><thead><tr><th>run</th><th>stage</th><th>model</th><th>dial</th><th>status</th><th>cap%</th><th>cap</th><th>tools</th><th>tok</th></tr></thead><tbody>
+      {{range .Runs}}{{if .Sums}}{{$c := index .Sums 0}}<tr>
+        <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+        <td>{{pct $c.CaptureRate}}</td><td>{{$c.Captured}}/{{$c.Trials}}</td><td>{{printf "%.1f" $c.MeanToolCall}}</td><td>{{printf "%.0f" $c.MeanTokens}}</td>
+      </tr>{{else}}<tr>
+        <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+        <td colspan="4" class="muted">no summary</td>
+      </tr>{{end}}{{end}}
+      </tbody></table></div>
+      {{else}}<p class="muted">select two or more runs from the cockpit to compare.</p>{{end}}
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ ACTIONS</div>
+      {{if .Runs}}<a class="chip" href="/leaderboard?{{range .Runs}}id={{.ID}}&amp;{{end}}">OPEN AS RESEARCH LEADERBOARD</a>{{else}}<p class="muted">—</p>{{end}}
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav></div>
+  <span></span>
+</div>
+`))
 
 var leaderboardTmpl = template.Must(template.New("lb").Funcs(funcs).Parse(baseCSS + `
 <div class="hudbar">
@@ -1218,57 +1275,60 @@ var leaderboardTmpl = template.Must(template.New("lb").Funcs(funcs).Parse(baseCS
 </div>
 `))
 
-var traceTmpl = template.Must(template.New("trace").Funcs(funcs).Parse(baseCSS + shellTop + `
-<main class="viewscreen">
-<h1 class="runhdr">TRACE</h1>
-<div class="trace-head"><span class="vbadge{{if not .Verified}} no{{end}}">{{if .Verified}}HASH-CHAIN VERIFIED{{else}}UNVERIFIED{{end}}</span> <span class="count">{{.Count}} records · run {{.ID}}</span></div>
-<div class="player"><button onclick="tstep(-1)">◀ STEP</button><button onclick="tplay()">▶ PLAY</button><button onclick="tstep(1)">STEP ▶</button><button class="ghost" onclick="treset()">RESET</button> <span class="pos" id="tpos">0 / {{.Count}}</span></div>
-<div class="tl" id="tl">
-{{range .Events}}<div class="tlev seen {{.Cls}}"><span class="sp">[{{.Span}}] {{.Event}}</span>{{if .Detail}}<div class="tx">{{.Detail}}</div>{{end}}</div>{{end}}
+var traceTmpl = template.Must(template.New("trace").Funcs(funcs).Parse(baseCSS + `
+<div class="hudbar">
+  <span class="dtitle">TRACE <span class="badge {{if .Verified}}done{{else}}error{{end}}">{{if .Verified}}VERIFIED{{else}}UNVERIFIED{{end}}</span></span>
+  <span class="hudcfg">run {{.ID}} · gledger append-only audit</span>
+  <span class="hudphase">{{.Count}} RECORDS</span>
 </div>
-<p class="nav"><a href="/run/{{.ID}}">◤ BACK TO SORTIE</a></p>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ RUN</div>
+      <div class="readout">
+        <div class="ro">RUN <b>{{.ID}}</b></div>
+        <div class="ro">RECORDS <b>{{.Count}}</b></div>
+        <div class="ro">CHAIN <b class="{{if .Verified}}grn{{end}}">{{if .Verified}}VERIFIED{{else}}BROKEN{{end}}</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px">Replay the sortie step by step. Each record is hash-chained to the one before it — tampering breaks the chain.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ REPLAY · <span class="count" id="tpos">0 / {{.Count}}</span></div>
+      <div class="player"><button onclick="tstep(-1)">◀ STEP</button><button onclick="tplay()">▶ PLAY</button><button onclick="tstep(1)">STEP ▶</button><button class="ghost" onclick="treset()">RESET</button></div>
+      <div class="tl" id="tl">
+      {{range .Events}}<div class="tlev seen {{.Cls}}"><span class="sp">[{{.Span}}] {{.Event}}</span>{{if .Detail}}<div class="tx">{{.Detail}}</div>{{end}}</div>{{end}}
+      </div>
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ INTEGRITY</div>
+      {{if .Verified}}<div class="verdict-bar hit">● HASH-CHAIN VERIFIED</div>{{else}}<div class="verdict-bar miss">○ UNVERIFIED</div>{{end}}
+      <p class="hint" style="margin-top:10px">gledger stamps each record with the hash of the previous — an append-only, tamper-evident ledger. The verdicts shown in the cockpit are reproduced from exactly these bytes.</p>
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/run/{{.ID}}">BACK TO SORTIE</a> · <a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a></nav></div>
+  <span></span>
+</div>
 <script>
 (function(){
   var evs=[].slice.call(document.querySelectorAll('#tl .tlev')); var i=-1; var timer=null;
-  var pos=document.getElementById('tpos');
-  function show(n){ if(n<-1)n=-1; if(n>=evs.length)n=evs.length-1; evs.forEach(function(e,k){e.classList.toggle('active',k===n);}); if(n>=0&&evs[n])evs[n].scrollIntoView({block:'nearest'}); i=n; pos.textContent=(n+1)+' / '+evs.length; }
+  var pos=document.getElementById('tpos'); var total=evs.length;
+  function show(n){ if(n<-1)n=-1; if(n>=evs.length)n=evs.length-1; evs.forEach(function(e,k){e.classList.toggle('active',k===n);}); if(n>=0&&evs[n])evs[n].scrollIntoView({block:'nearest'}); i=n; pos.textContent=(n+1)+' / '+total; }
   window.tstep=function(d){ if(timer){clearInterval(timer);timer=null;} show(i+d); };
   window.treset=function(){ if(timer){clearInterval(timer);timer=null;} show(-1); };
   window.tplay=function(){ if(timer){clearInterval(timer);timer=null;return;} timer=setInterval(function(){ if(i>=evs.length-1){clearInterval(timer);timer=null;return;} show(i+1); },450); };
 })();
 </script>
-</main>` + sideHUD + shellBottom))
+`))
 
-// shellTop / shellBottom are the shared mecha-cockpit chrome: a top entry-plug bar, then a
-// three-column grid — left nav console, center viewscreen, right panel — the side consoles
-// trapezoidal and angled toward the central viewscreen. Every page opens with shellTop, emits
-// its own <main class="viewscreen">…</main> plus a right <aside class="sidepanel">…</aside>,
-// and closes with shellBottom, so the whole cockpit stays one coherent frame.
-// The wings carry text on a plane that recedes toward the centre (the "horizon"): a 3D
-// perspective + rotateY on the text block, so rows converge toward the central viewscreen.
-const shellTop = `<div class="cockpit">
-  <aside class="console"><div class="wing-face wf-left">
-    <div class="wf-title">EVA-01</div>
-    <a class="wf-row" href="/">COCKPIT</a>
-    <a class="wf-row" href="/studio">STUDIO</a>
-    <div class="wf-row">LINK NOMINAL</div>
-    <div class="wf-row">A.T. FIELD ACTIVE</div>
-    <div class="wf-row">HARMONICS STABLE</div>
-  </div></aside>`
-
-const shellBottom = `</div>`
-
-// sideHUD is the default right wing: status text on the receding plane.
-const sideHUD = `<aside class="sidepanel"><div class="wing-face wf-right">
-  <div class="wf-title">SYSTEM</div>
-  <div class="wf-row">MAGI 3 / 3</div>
-  <div class="wf-row">EGRESS SEALED</div>
-  <div class="wf-row">ORACLE REAL-BYTES</div>
-  <div class="wf-row">CONTAINMENT OK</div>
-  <div class="wf-row">LINK NOMINAL</div>
-</div></aside>`
-
-const baseCSS = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVA · GORED</title>
+const baseCSS =`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVA · GORED</title>
 <style>
 :root{
   --bg:#0a0603; --bg2:#140a04; --panel:#19100a; --panel2:#201609; --line:#3a240f;
@@ -1522,7 +1582,7 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .slot-center{position:relative}
 .slot-center .log,.slot-center .evlog{max-height:none}
 .lens .rolehdr .count{color:var(--mut);font-size:11px}
-.lens .log,.lens .evlog,.lens .tblwrap,.lens .repro{background:transparent;border-color:rgba(255,120,0,.22)}
+.lens .log,.lens .evlog,.lens .tblwrap,.lens .repro,.lens .tl{background:transparent;border-color:rgba(255,120,0,.22)}
 .lens .node{background:rgba(255,120,0,.06);border-color:rgba(255,120,0,.28)}
 .lens table tr{border-color:rgba(255,120,0,.16)}
 .decision{position:absolute;inset:0;z-index:5;background:linear-gradient(180deg,rgba(24,12,3,.97),rgba(10,6,2,.98));border:1px solid var(--amber);padding:16px 18px;overflow:auto;display:grid;gap:12px;align-content:start;box-shadow:inset 0 0 40px rgba(255,171,0,.12),0 0 40px rgba(255,171,0,.2)}
