@@ -27,6 +27,8 @@ type campaignView struct {
 	Cur      string
 	Elapsed  string
 	Targets  string
+	Loop     bool
+	Pass     int
 	NumRuns  int
 	Captures int
 	Children []campaignChild
@@ -38,7 +40,7 @@ func (s *Server) viewCampaign(c *campaign) campaignView {
 	defer s.mu.Unlock()
 	v := campaignView{
 		ID: c.ID, Name: c.Name, Model: c.Model, Status: c.Status, Cur: c.Cur,
-		Elapsed: c.Elapsed, Targets: strings.Join(c.Targets, ", "), NumRuns: len(c.RunIDs),
+		Elapsed: c.Elapsed, Targets: strings.Join(c.Targets, ", "), Loop: c.Loop, Pass: c.Pass, NumRuns: len(c.RunIDs),
 	}
 	for _, rid := range c.RunIDs {
 		rn := s.runs[rid]
@@ -78,7 +80,7 @@ func (s *Server) campaignsPage(w http.ResponseWriter, _ *http.Request) {
 		if c := s.campaigns[id]; c != nil {
 			cvs = append(cvs, campaignView{
 				ID: c.ID, Name: c.Name, Model: c.Model, Status: c.Status, Cur: c.Cur,
-				Elapsed: c.Elapsed, Targets: strings.Join(c.Targets, ", "), NumRuns: len(c.RunIDs),
+				Elapsed: c.Elapsed, Targets: strings.Join(c.Targets, ", "), Loop: c.Loop, Pass: c.Pass, NumRuns: len(c.RunIDs),
 			})
 		}
 	}
@@ -115,7 +117,8 @@ func (s *Server) campaignCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "select at least one target", http.StatusBadRequest)
 		return
 	}
-	c := s.startCampaign(name, model, targets)
+	loop := r.FormValue("loop") != ""
+	c := s.startCampaign(name, model, targets, loop)
 	http.Redirect(w, r, "/campaign/"+c.ID, http.StatusSeeOther)
 }
 

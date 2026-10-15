@@ -12,6 +12,7 @@
       <div class="readout">
         <div class="ro">STATUS <b class="{{if eq .Status "running"}}grn{{end}}" id="ro-status">{{.Status}}</b></div>
         <div class="ro">IN FLIGHT <b id="ro-cur">{{if .Cur}}{{.Cur}}{{else}}—{{end}}</b></div>
+        <div class="ro">PASS <b class="{{if .Loop}}pur{{end}}" id="ro-pass">{{.Pass}}{{if .Loop}} · looping{{end}}</b></div>
         <div class="ro">SORTIES <b id="ro-runs">{{.NumRuns}}</b></div>
         <div class="ro">CAPTURES <b class="{{if .Captures}}yel{{end}}" id="ro-caps">{{.Captures}}</b></div>
       </div>
@@ -39,7 +40,7 @@
     <div class="dockctl">
       {{if eq .Status "running"}}<form method="post" action="/campaign/{{.ID}}/abort"><button class="rect danger">ABORT CAMPAIGN</button></form>{{end}}
     </div>
-    <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/campaigns">CAMPAIGN</a> · <a href="/campaign/{{.ID}}/report">REPORT</a> · <a href="/leaderboard">LEADERBOARD</a></nav>
+    <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/campaigns">CAMPAIGN</a> · <a href="/campaign/{{.ID}}/report">REPORT</a> · <a href="/campaign/{{.ID}}/pentest">PENTEST</a> · <a href="/campaign/{{.ID}}/report.md">.MD</a> · <a href="/campaign/{{.ID}}/surface.csv">.CSV</a> · <a href="/leaderboard">LEADERBOARD</a></nav>
   </div>
   <span></span>
 </div>
@@ -56,6 +57,7 @@
       document.getElementById('ro-cur').textContent = c.Cur || '—';
       document.getElementById('ro-runs').textContent = c.NumRuns;
       document.getElementById('ro-caps').textContent = c.Captures;
+      var rp=document.getElementById('ro-pass'); if(rp) rp.textContent = c.Pass + (c.Loop?' · looping':'');
       var ul=document.getElementById('childlist');
       if(ul && c.Children){ var h=''; c.Children.forEach(function(ch){
         h+='<li><a href="/run/'+ch.ID+'">'+ch.Stage+' <span class="vs">vs</span> '+ch.Base+'</a> <span class="badge '+ch.Status+'">'+ch.Status+'</span>'+(ch.Captured?' <span class="badge cap">CAPTURED</span>':'')+'</li>';

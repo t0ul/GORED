@@ -50,6 +50,7 @@
         {{if .Targets}}<div class="tgtpicks">{{range .Targets}}
           <label class="chk"><input type="checkbox" name="target" value="{{.Name}}" checked> <b>{{.Name}}</b> <span class="dim">{{.Base}}</span></label>
         {{end}}</div>{{else}}<p class="muted">add a target first</p>{{end}}
+        <label class="chk" style="margin-top:8px"><input type="checkbox" name="loop" value="1"> <b>LOOP</b> — keep sweeping until aborted (non-stop overnight; each pass re-seeds from project memory)</label>
         <p class="hint">Each selected target runs its stages autonomously (no gate), one model at a time, in order. Containment is per target; writes stay self-scoped. Walk away.</p>
       </form>
     </section>
@@ -58,7 +59,7 @@
     <section class="role lens">
       <div class="rolehdr">◥ CAMPAIGN LOG</div>
       {{if .Campaigns}}<ul class="runs">{{range .Campaigns}}
-        <li><a href="/campaign/{{.ID}}">{{.Name}}</a> <span class="dim">{{.Model}}</span> <span class="badge {{.Status}}">{{.Status}}</span>{{if .Cur}} <span class="dim">· {{.Cur}}</span>{{end}} <span class="dim">{{.NumRuns}} runs</span> <a href="/campaign/{{.ID}}/report" class="dim">report →</a></li>
+        <li><a href="/campaign/{{.ID}}">{{.Name}}</a> <span class="dim">{{.Model}}</span> <span class="badge {{.Status}}">{{.Status}}</span>{{if .Loop}} <span class="badge matrix">loop p{{.Pass}}</span>{{end}}{{if .Cur}} <span class="dim">· {{.Cur}}</span>{{end}} <span class="dim">{{.NumRuns}} runs</span> <a href="/campaign/{{.ID}}/report" class="dim">report →</a></li>
       {{end}}</ul>{{else}}<p class="muted">no campaigns yet</p>{{end}}
     </section>
   </div>
