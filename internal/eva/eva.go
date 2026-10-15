@@ -24,7 +24,6 @@ import (
 	"github.com/t0ul/GORED/internal/appsweep"
 	"github.com/t0ul/GORED/internal/bench"
 	"github.com/t0ul/GORED/internal/core"
-	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/store"
 	gledger "github.com/t0ul/gledger"
 )
@@ -389,6 +388,14 @@ type runView struct {
 	*run
 	Findings []core.Finding
 	Repro    string
+	Targets  []targetNode // the discovered surface, for the target "Angel" panel
+	Breached bool         // a capture landed — the Angel's pattern goes red
+}
+
+// targetNode is one discovered request on the target surface (the Angel's map).
+type targetNode struct {
+	Method string
+	Path   string
 }
 
 func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
@@ -403,6 +410,9 @@ func (s *Server) runPage(w http.ResponseWriter, r *http.Request) {
 	if rn.Status == "done" || rn.Status == "aborted" || rn.Status == "error" {
 		v.Findings, v.Repro = traceTriage(rn.Trace)
 	}
+	// The target map fills from the trace as recon/attack touches the surface — live too.
+	v.Targets = traceSitemap(rn.Trace)
+	v.Breached = captured(rn.Sums)
 	render(w, runTmpl, v)
 }
 
@@ -472,13 +482,35 @@ func (s *Server) traceView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ok, _ := gledger.VerifyFile(rn.Trace)
-	html, err := gledger.RenderHTML("GORED trace "+rn.ID, recs, ok)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	evs := make([]traceEvt, 0, len(recs))
+	for _, rec := range recs {
+		ev := traceEvt{Span: rec.Span, Event: rec.Event, Detail: eventDetail(rec.Fields)}
+		switch {
+		case strings.Contains(rec.Event, "capture"):
+			ev.Cls = "hit"
+		case strings.Contains(rec.Event, "error"), strings.Contains(rec.Event, "denied"), strings.Contains(rec.Event, "breach"):
+			ev.Cls = "warn"
+		}
+		evs = append(evs, ev)
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(html)
+	render(w, traceTmpl, map[string]any{"ID": rn.ID, "Verified": ok, "Count": len(evs), "Events": evs})
+}
+
+// traceEvt is one trace record themed for the EVA timeline.
+type traceEvt struct{ Span, Event, Detail, Cls string }
+
+// eventDetail picks the most informative field for a trace line, truncated.
+func eventDetail(f map[string]any) string {
+	for _, k := range []string{"tool", "via", "phase", "hint", "value", "result", "error", "reply", "curl", "beacon"} {
+		if s := asStr(f[k]); s != "" {
+			s = strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
+			if len(s) > 160 {
+				s = s[:160] + "…"
+			}
+			return s
+		}
+	}
+	return ""
 }
 
 // runLeaderboard serves the full research leaderboard HTML for one run (capture-rate bar,
@@ -491,9 +523,10 @@ func (s *Server) runLeaderboard(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	meta := report.LeaderboardMeta{Title: "EVA · " + rn.Stage, Target: rn.Base, Trials: rn.Trials, Note: rn.ModelLabel() + " [" + rn.Autonomy + "]"}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(report.RenderLeaderboardHTML(meta, rn.Sums))
+	render(w, leaderboardTmpl, map[string]any{
+		"Title": "EVA · " + rn.Stage, "Target": rn.Base,
+		"Note": rn.ModelLabel() + " [" + rn.Autonomy + "]", "Rows": sortedSums(rn.Sums),
+	})
 }
 
 // leaderboard serves a combined research leaderboard across selected runs (?id=a&id=b), the
@@ -510,9 +543,26 @@ func (s *Server) leaderboard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mu.Unlock()
-	meta := report.LeaderboardMeta{Title: "EVA · compare", Target: target, Note: "selected sorties"}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(report.RenderLeaderboardHTML(meta, sums))
+	render(w, leaderboardTmpl, map[string]any{
+		"Title": "EVA · compare", "Target": target, "Note": "selected sorties", "Rows": sortedSums(sums),
+	})
+}
+
+// sortedSums orders contenders by capture rate, then capture-per-Mtoken, then fewest tokens —
+// the leaderboard's own ranking, so the themed table matches the research renderer.
+func sortedSums(in []core.ContenderSummary) []core.ContenderSummary {
+	out := make([]core.ContenderSummary, len(in))
+	copy(out, in)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CaptureRate != out[j].CaptureRate {
+			return out[i].CaptureRate > out[j].CaptureRate
+		}
+		if out[i].CapturePerMTok != out[j].CapturePerMTok {
+			return out[i].CapturePerMTok > out[j].CapturePerMTok
+		}
+		return out[i].MeanTokens < out[j].MeanTokens
+	})
+	return out
 }
 
 // traceTriage reads a run's trace and returns its blackboard findings and the capture repro
@@ -545,6 +595,62 @@ func traceTriage(path string) ([]core.Finding, string) {
 		}
 	}
 	return findings, repro
+}
+
+// traceSitemap reads a run's trace and returns the distinct requests the agent made on the
+// target — the surface map the target "Angel" panel draws. It parses the already-written
+// tool-call events, so it reflects exactly what was touched, and fills live as the run goes.
+func traceSitemap(path string) []targetNode {
+	recs, err := gledger.Read(path)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var nodes []targetNode
+	for _, rec := range recs {
+		if rec.Span != "tool" || rec.Event != "tool_call" {
+			continue
+		}
+		args, ok := rec.Fields["args"].(map[string]any)
+		if !ok {
+			continue
+		}
+		method := strings.ToUpper(asStr(args["method"]))
+		if method == "" {
+			method = "GET"
+		}
+		p := asStr(args["path"])
+		if p == "" {
+			p = urlPath(asStr(args["url"]))
+		}
+		if p == "" || !strings.HasPrefix(p, "/") {
+			continue
+		}
+		if len(p) > 80 {
+			p = p[:80] + "…"
+		}
+		if key := method + " " + p; !seen[key] {
+			seen[key] = true
+			nodes = append(nodes, targetNode{Method: method, Path: p})
+		}
+	}
+	if len(nodes) > 50 {
+		nodes = nodes[:50]
+	}
+	return nodes
+}
+
+func asStr(v any) string { s, _ := v.(string); return s }
+
+// urlPath returns the path portion of a full URL, or "" if it has no path.
+func urlPath(u string) string {
+	if i := strings.Index(u, "://"); i >= 0 {
+		if j := strings.IndexByte(u[i+3:], '/'); j >= 0 {
+			return u[i+3+j:]
+		}
+		return ""
+	}
+	return u
 }
 
 // decide relays the pilot's checkpoint decision to the blocked Runner goroutine.
@@ -702,6 +808,13 @@ func aborted(results []core.SweepResult) bool {
 var funcs = template.FuncMap{
 	"pct":      func(f float64) string { return fmt.Sprintf("%.0f%%", f*100) },
 	"captured": captured,
+	"add":      func(a, b int) int { return a + b },
+	"deref": func(p *float64) float64 {
+		if p == nil {
+			return 0
+		}
+		return *p
+	},
 	"trunc": func(s string, n int) string {
 		s = strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
 		if len(s) > n {
@@ -711,7 +824,8 @@ var funcs = template.FuncMap{
 	},
 }
 
-var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + nervHead + `
+var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + shellTop + `
+<main class="viewscreen">
 <form method="post" action="/run" class="card frame">
   <div class="card-tag">LAUNCH SEQUENCE</div>
   <label>STAGE
@@ -750,12 +864,12 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + n
   if (sel && ta) sel.addEventListener('change', function(){ if (INSTR[sel.value] !== undefined) ta.value = INSTR[sel.value]; });
 })();
 </script>
-` + nervFoot))
+</main>` + sideHUD + shellBottom))
 
 var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
 {{if or (eq .Status "running") (eq .Status "waiting")}}<noscript><meta http-equiv="refresh" content="3"></noscript>{{end}}
-` + nervHeadMini + `
-<p><a href="/">← cockpit</a></p>
+` + shellTop + `
+<main class="viewscreen">
 <h1 class="runhdr">{{.Stage}} <span class="badge {{.Status}}">{{.Status}}</span></h1>
 <p class="sub">vs {{.Base}} · {{if .IsMatrix}}matrix <b class="dim">{{.Models}}</b>{{else}}model {{.Model}}{{end}} · dial <b class="dim">{{.Autonomy}}</b> · {{.Trials}} trial(s){{if .Prompt}} · <span class="dim">custom prompt</span>{{end}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</p>
 {{if eq .Status "running"}}<p class="muted scan">⬡ booting the model and running the loop… live telemetry below.</p>{{end}}
@@ -800,9 +914,9 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
   {{else}}
   <div class="verdict-bar miss">○ NO CAPTURE — TARGET HELD</div>
   {{end}}
-  <table><thead><tr><th>contender</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
+  <div class="tblwrap"><table><thead><tr><th>contender</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
   {{range .Sums}}<tr><td>{{.Contender}}</td><td>{{pct .CaptureRate}}</td><td>{{.Captured}}/{{.Trials}}</td><td>{{printf "%.1f" .MeanToolCall}}</td><td>{{printf "%.0f" .MeanTokens}}</td></tr>{{end}}
-  </tbody></table>
+  </tbody></table></div>
 {{end}}
 {{if .Repro}}<div class="card frame"><div class="card-tag">REPRO — THE CAPTURING REQUEST</div><pre class="repro">{{.Repro}}</pre></div>{{end}}
 {{if .Findings}}
@@ -834,10 +948,19 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
 </script>
 {{end}}
 <p class="muted">trace: {{.Trace}}</p>
-` + nervFoot))
+</main>
+<aside class="sidepanel">
+  <div class="panel-tag">TARGET ◈ {{if .Breached}}PATTERN RED{{else}}PATTERN BLUE{{end}}</div>
+  <div class="angel{{if .Breached}} breached{{end}}">
+    <div class="core"><div class="cross"></div><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="pat">{{if .Breached}}● BREACH{{else}}◎ LOCKED{{end}}</div></div>
+    <div class="count">SURFACE · {{len .Targets}} paths touched</div>
+    <div class="nodes">{{range .Targets}}<div class="node"><span class="m">{{.Method}}</span><span class="p">{{.Path}}</span></div>{{else}}<div class="muted" style="font-size:11px">no requests yet</div>{{end}}</div>
+  </div>
+</aside>
+` + shellBottom))
 
-var studioTmpl = template.Must(template.New("studio").Funcs(funcs).Parse(baseCSS + nervHeadMini + `
-<p><a href="/">← cockpit</a></p>
+var studioTmpl = template.Must(template.New("studio").Funcs(funcs).Parse(baseCSS + shellTop + `
+<main class="viewscreen">
 <h1 class="runhdr">STUDIO</h1>
 <p class="sub">the factory · tools · skills · prompts <span class="dim">(read-only — authoring lands once the registry drives the stages)</span></p>
 
@@ -859,14 +982,14 @@ var studioTmpl = template.Must(template.New("studio").Funcs(funcs).Parse(baseCSS
   <pre class="repro">{{.Instruction}}</pre>
 </div>
 {{end}}
-` + nervFoot))
+</main>` + sideHUD + shellBottom))
 
-var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseCSS + nervHeadMini + `
-<p><a href="/">← cockpit</a></p>
+var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseCSS + shellTop + `
+<main class="viewscreen">
 <h1 class="runhdr">COMPARE</h1>
 {{if .Runs}}
 <p class="nav"><a href="/leaderboard?{{range .Runs}}id={{.ID}}&amp;{{end}}">⬡ OPEN AS RESEARCH LEADERBOARD</a></p>
-<table><thead><tr><th>run</th><th>stage</th><th>model</th><th>dial</th><th>status</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
+<div class="tblwrap"><table><thead><tr><th>run</th><th>stage</th><th>model</th><th>dial</th><th>status</th><th>cap%</th><th>captured</th><th>tools</th><th>tokens</th></tr></thead><tbody>
 {{range .Runs}}{{if .Sums}}{{$c := index .Sums 0}}<tr>
   <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
   <td>{{pct $c.CaptureRate}}</td><td>{{$c.Captured}}/{{$c.Trials}}</td><td>{{printf "%.1f" $c.MeanToolCall}}</td><td>{{printf "%.0f" $c.MeanTokens}}</td>
@@ -874,26 +997,96 @@ var compareTmpl = template.Must(template.New("compare").Funcs(funcs).Parse(baseC
   <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
   <td colspan="4" class="muted">no summary</td>
 </tr>{{end}}{{end}}
-</tbody></table>
+</tbody></table></div>
 {{else}}<p class="muted">select two or more runs from the cockpit to compare.</p>{{end}}
-` + nervFoot))
+</main>` + sideHUD + shellBottom))
 
-// nervHead / nervHeadMini / nervFoot are the shared NERV chrome.
-const nervHead = `<div class="hdr">
+var leaderboardTmpl = template.Must(template.New("lb").Funcs(funcs).Parse(baseCSS + shellTop + `
+<main class="viewscreen">
+<h1 class="runhdr">LEADERBOARD</h1>
+<p class="sub">{{.Title}} · {{.Target}}{{if .Note}} · {{.Note}}{{end}}</p>
+{{if .Rows}}
+<div class="tblwrap"><table class="lb"><thead><tr><th>#</th><th>contender</th><th class="capcell">capture</th><th>captured</th><th>tools</th><th>tokens</th><th>cap/Mtok</th><th>recall/prec</th></tr></thead><tbody>
+{{range $i, $r := .Rows}}<tr{{if eq $i 0}} class="top"{{end}}>
+  <td class="rank">{{add $i 1}}</td>
+  <td>{{$r.Contender}}</td>
+  <td class="capcell"><div class="capbar"><i style="width:{{pct $r.CaptureRate}}"></i><span>{{pct $r.CaptureRate}}</span></div></td>
+  <td>{{$r.Captured}}/{{$r.Trials}}</td>
+  <td>{{printf "%.1f" $r.MeanToolCall}}</td>
+  <td>{{printf "%.0f" $r.MeanTokens}}</td>
+  <td>{{if gt $r.CapturePerMTok 0.0}}{{printf "%.0f" $r.CapturePerMTok}}{{else}}—{{end}}</td>
+  <td>{{if $r.MeanRecall}}{{printf "%.2f / %.2f" (deref $r.MeanRecall) (deref $r.MeanPrecision)}}{{else}}—{{end}}</td>
+</tr>{{end}}
+</tbody></table></div>
+{{else}}<p class="muted">no contenders.</p>{{end}}
+</main>` + sideHUD + shellBottom))
+
+var traceTmpl = template.Must(template.New("trace").Funcs(funcs).Parse(baseCSS + shellTop + `
+<main class="viewscreen">
+<h1 class="runhdr">TRACE</h1>
+<div class="trace-head"><span class="vbadge{{if not .Verified}} no{{end}}">{{if .Verified}}HASH-CHAIN VERIFIED{{else}}UNVERIFIED{{end}}</span> <span class="count">{{.Count}} records · run {{.ID}}</span></div>
+<div class="player"><button onclick="tstep(-1)">◀ STEP</button><button onclick="tplay()">▶ PLAY</button><button onclick="tstep(1)">STEP ▶</button><button class="ghost" onclick="treset()">RESET</button> <span class="pos" id="tpos">0 / {{.Count}}</span></div>
+<div class="tl" id="tl">
+{{range .Events}}<div class="tlev seen {{.Cls}}"><span class="sp">[{{.Span}}] {{.Event}}</span>{{if .Detail}}<div class="tx">{{.Detail}}</div>{{end}}</div>{{end}}
+</div>
+<p class="nav"><a href="/run/{{.ID}}">◤ BACK TO SORTIE</a></p>
+<script>
+(function(){
+  var evs=[].slice.call(document.querySelectorAll('#tl .tlev')); var i=-1; var timer=null;
+  var pos=document.getElementById('tpos');
+  function show(n){ if(n<-1)n=-1; if(n>=evs.length)n=evs.length-1; evs.forEach(function(e,k){e.classList.toggle('active',k===n);}); if(n>=0&&evs[n])evs[n].scrollIntoView({block:'nearest'}); i=n; pos.textContent=(n+1)+' / '+evs.length; }
+  window.tstep=function(d){ if(timer){clearInterval(timer);timer=null;} show(i+d); };
+  window.treset=function(){ if(timer){clearInterval(timer);timer=null;} show(-1); };
+  window.tplay=function(){ if(timer){clearInterval(timer);timer=null;return;} timer=setInterval(function(){ if(i>=evs.length-1){clearInterval(timer);timer=null;return;} show(i+1); },450); };
+})();
+</script>
+</main>` + sideHUD + shellBottom))
+
+// shellTop / shellBottom are the shared mecha-cockpit chrome: a top entry-plug bar, then a
+// three-column grid — left nav console, center viewscreen, right panel — the side consoles
+// trapezoidal and angled toward the central viewscreen. Every page opens with shellTop, emits
+// its own <main class="viewscreen">…</main> plus a right <aside class="sidepanel">…</aside>,
+// and closes with shellBottom, so the whole cockpit stays one coherent frame.
+const shellTop = `<div class="topbar">
   <div class="logo">⬡</div>
-  <div><h1>EVA</h1><p class="sub">GORED // NERV TACTICAL OPS · PILOT A SECURITY-TESTING RUN AGAINST A LOCAL APP</p></div>
-</div><div class="stripe"></div>
-<p class="nav"><a href="/">⬡ COCKPIT</a> · <a href="/studio">⬡ STUDIO</a></p>`
+  <div class="brandblock"><span class="brand">EVA</span><span class="sub">GORED // NERV TACTICAL OPS</span></div>
+  <div class="sysline"><span class="sys ok">EGRESS ◈ CONTAINED</span><span class="sys ok">ORACLE ◈ REAL-BYTES</span></div>
+</div>
+<div class="stripe"></div>
+<div class="cockpit">
+  <aside class="console">
+    <div class="hexmark">⬡</div>
+    <nav class="cnav">
+      <a href="/">◤ COCKPIT</a>
+      <a href="/studio">◤ STUDIO</a>
+    </nav>
+    <div class="readout">
+      <div class="ro"><span>UNIT</span><b>EVA-01</b></div>
+      <div class="ro"><span>MODE</span><b>SORTIE</b></div>
+      <div class="ro"><span>LINK</span><b class="grn">NOMINAL</b></div>
+    </div>
+  </aside>`
 
-const nervHeadMini = `<div class="hdr mini"><div class="logo">⬡</div><div><span class="brand">EVA</span> <span class="sub">GORED // NERV</span></div></div><div class="stripe"></div>`
+const shellBottom = `</div><div class="stripe bottom"></div><p class="foot">⬡ GORED EVANGELION UNIT · ORACLE ON REAL BYTES · EGRESS CONTAINED</p>`
 
-const nervFoot = `<div class="stripe bottom"></div><p class="foot">⬡ GORED EVANGELION UNIT · ORACLE ON REAL BYTES · EGRESS CONTAINED</p>`
+// sideHUD is the default right panel for pages without their own: a flavor status readout so
+// every screen fills all three columns.
+const sideHUD = `<aside class="sidepanel">
+  <div class="panel-tag">SYSTEM</div>
+  <div class="reticle">⊕</div>
+  <div class="readout">
+    <div class="ro"><span>A.T. FIELD</span><b class="grn">ACTIVE</b></div>
+    <div class="ro"><span>HARMONICS</span><b>STABLE</b></div>
+    <div class="ro"><span>MAGI</span><b class="grn">3 / 3</b></div>
+    <div class="ro"><span>CONTAINMENT</span><b class="grn">SEALED</b></div>
+  </div>
+</aside>`
 
 const baseCSS = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVA · GORED</title>
 <style>
 :root{
   --bg:#07080a; --bg2:#0c0e12; --panel:#101319; --panel2:#151a22; --line:#242b36;
-  --orange:#ff6a00; --amber:#ffab00; --green:#86d633; --red:#ff2a2a;
+  --orange:#ff6a00; --amber:#ffab00; --green:#86d633; --red:#ff2a2a; --blue:#58a6ff;
   --fg:#d6dee6; --mut:#6f7b8a; --acc:#ff6a00;
 }
 *{box-sizing:border-box}
@@ -903,25 +1096,43 @@ body{
     radial-gradient(1200px 600px at 70% -10%, rgba(255,106,0,.08), transparent 60%),
     var(--bg);
   color:var(--fg); font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  max-width:860px; margin:0 auto; padding:24px 16px 48px; letter-spacing:.2px;
+  max-width:1200px; margin:0 auto; padding:18px 16px 44px; letter-spacing:.2px;
 }
 a{color:var(--amber);text-decoration:none}a:hover{text-decoration:underline}
 h1,h2{letter-spacing:3px;text-transform:uppercase;margin:.3rem 0}
-h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);padding-left:8px;margin-top:28px}
+h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);padding-left:8px;margin-top:24px}
 .sub{color:var(--mut);margin-top:0;font-size:12px;letter-spacing:1px;text-transform:uppercase}
 .muted{color:var(--mut)} .dim{color:var(--amber);font-size:12px;letter-spacing:1px}
-.vs{color:var(--mut);font-style:normal}
-/* header */
-.hdr{display:flex;align-items:center;gap:16px}
-.hdr.mini{gap:10px}.hdr.mini .brand{color:var(--orange);font-weight:700;letter-spacing:3px}
-.logo{font-size:40px;color:var(--orange);line-height:1;text-shadow:0 0 16px rgba(255,106,0,.6)}
-.hdr.mini .logo{font-size:22px}
-.hdr h1{font-size:34px;color:var(--orange);text-shadow:0 0 18px rgba(255,106,0,.45);margin:0}
-.stripe{height:10px;margin:12px 0 20px;
+.vs{color:var(--mut);font-style:normal} .grn{color:var(--green)}
+/* top entry-plug bar */
+.topbar{display:flex;align-items:center;gap:14px}
+.logo{font-size:36px;color:var(--orange);line-height:1;text-shadow:0 0 16px rgba(255,106,0,.6)}
+.brandblock{display:flex;flex-direction:column;line-height:1.1}
+.brand{font-size:30px;color:var(--orange);letter-spacing:5px;font-weight:700;text-shadow:0 0 18px rgba(255,106,0,.45)}
+.sysline{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.sys{font-size:10px;letter-spacing:2px;color:var(--mut);border:1px solid var(--line);padding:3px 8px}
+.sys.ok{color:var(--green);border-color:rgba(134,214,51,.4)}
+.stripe{height:9px;margin:10px 0 16px;
   background:repeating-linear-gradient(45deg,var(--orange) 0 14px,#111 14px 28px);
   opacity:.8;border-top:1px solid #000;border-bottom:1px solid #000}
-.stripe.bottom{margin:28px 0 10px;opacity:.5}
+.stripe.bottom{margin:24px 0 10px;opacity:.5}
 .foot{color:var(--mut);font-size:11px;letter-spacing:1px;text-align:center;text-transform:uppercase}
+/* three-column cockpit: nav console | viewscreen | side panel, side consoles angled inward */
+.cockpit{display:grid;grid-template-columns:184px minmax(0,1fr) 258px;gap:14px;align-items:start}
+.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid var(--line);padding:14px 13px;position:sticky;top:12px;display:grid;gap:12px;align-content:start}
+.console{clip-path:polygon(0 0, 100% 16px, 100% calc(100% - 16px), 0 100%)}
+.sidepanel{clip-path:polygon(0 16px, 100% 0, 100% 100%, 0 calc(100% - 16px))}
+.viewscreen{min-width:0}
+.hexmark{font-size:40px;color:var(--orange);text-align:center;opacity:.55;text-shadow:0 0 18px rgba(255,106,0,.5)}
+.cnav{display:grid;gap:6px}
+.cnav a{color:var(--fg);border:1px solid var(--line);padding:8px 10px;font-size:12px;letter-spacing:2px}
+.cnav a:hover{border-color:var(--orange);color:var(--orange);text-decoration:none;background:rgba(255,106,0,.06)}
+.readout{display:grid;gap:5px;font-size:11px}
+.ro{display:flex;justify-content:space-between;gap:8px;border-bottom:1px dotted var(--line);padding-bottom:3px;color:var(--mut);letter-spacing:1px}
+.ro b{color:var(--amber);font-weight:700}.ro b.grn{color:var(--green)}
+.panel-tag{font-size:10px;letter-spacing:3px;color:var(--orange);text-transform:uppercase}
+.reticle{font-size:42px;color:var(--orange);text-align:center;opacity:.5;text-shadow:0 0 16px rgba(255,106,0,.5)}
+@media(max-width:840px){.cockpit{grid-template-columns:1fr}.console,.sidepanel{position:static;clip-path:none}}
 /* frame card with NERV corner brackets */
 .card{background:linear-gradient(var(--panel),var(--bg2));border:1px solid var(--line);padding:18px;display:grid;gap:12px;position:relative}
 .frame{box-shadow:inset 0 0 0 1px rgba(255,106,0,.06)}
@@ -1007,5 +1218,52 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .temp{font-size:10px;letter-spacing:1px;padding:1px 6px;border:1px solid var(--line)}
 .temp-cold{color:#58a6ff;border-color:#58a6ff}
 .temp-warm{color:var(--amber);border-color:var(--amber)}
+/* trace timeline (themed replay) */
+.trace-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.vbadge{font-size:11px;letter-spacing:2px;padding:2px 9px;border:1px solid var(--green);color:var(--green)}
+.vbadge.no{border-color:var(--red);color:var(--red)}
+.tl{display:grid;gap:4px;max-height:560px;overflow:auto;border:1px solid var(--line);background:#05060a;padding:10px}
+.tlev{border-left:2px solid var(--line);padding:5px 10px;font-size:12px;color:var(--mut);opacity:.5;transition:opacity .15s}
+.tlev.seen{opacity:1}
+.tlev.active{border-left-color:var(--orange);background:rgba(255,106,0,.08)}
+.tlev .sp{color:var(--amber);letter-spacing:1px}
+.tlev.hit{border-left-color:var(--orange)}.tlev.hit .sp{color:var(--orange)}
+.tlev.warn .sp{color:var(--red)}
+.tlev .tx{color:var(--fg);white-space:pre-wrap;word-break:break-word}
+.player{display:flex;gap:8px;align-items:center;margin:10px 0}
+.player button{padding:7px 12px;font-size:12px}
+.player .pos{color:var(--mut);font-size:11px;letter-spacing:1px}
+/* wide tables scroll inside the viewscreen instead of clipping under the side panel */
+.tblwrap{overflow-x:auto;max-width:100%;margin:12px 0}
+.tblwrap table,.tblwrap .lb{margin:0}
+/* leaderboard (themed) */
+.lb{width:100%;border-collapse:collapse;margin:12px 0;min-width:560px}
+.lb th,.lb td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px}
+.lb th{color:var(--orange);letter-spacing:1.5px;text-transform:uppercase;font-size:11px}
+.lb tr.top td{color:var(--fg)}
+.capcell{min-width:150px}
+.capbar{height:12px;background:#05060a;border:1px solid var(--line);position:relative;overflow:hidden}
+.capbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--orange))}
+.capbar>span{position:absolute;right:4px;top:-1px;font-size:10px;color:var(--fg)}
+.rank{color:var(--orange);font-weight:700}
+/* target "Angel" viz */
+.angel{display:grid;gap:10px}
+.angel .core{position:relative;height:120px;display:flex;align-items:center;justify-content:center}
+.angel .ring{position:absolute;inset:0;margin:auto;width:108px;height:108px;border:1px solid var(--line);border-radius:50%}
+.angel .ring.r2{width:74px;height:74px;border-color:rgba(255,106,0,.3)}
+.angel .ring.r3{width:40px;height:40px;border-color:rgba(255,106,0,.5)}
+.angel .pat{font-size:12px;letter-spacing:2px;color:var(--green);z-index:1;text-align:center}
+.angel.breached .ring{border-color:rgba(255,42,42,.4);animation:pulse 1.4s infinite}
+.angel.breached .pat{color:var(--red)}
+.angel .cross{position:absolute;inset:0;background:
+  linear-gradient(var(--line),var(--line)) center/1px 100% no-repeat,
+  linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat;opacity:.4}
+.nodes{display:grid;gap:3px;max-height:260px;overflow:auto;font-size:11px}
+.node{display:flex;gap:6px;align-items:center;border:1px solid var(--line);padding:4px 7px;color:var(--mut);background:#05060a}
+.node .m{color:var(--amber);font-size:10px;min-width:30px}
+.node .p{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node.hit{border-color:var(--orange);color:var(--orange)}
+.node.hit .p{color:var(--orange)}
+.count{font-size:11px;color:var(--mut);letter-spacing:1px}
 </style>
 `
