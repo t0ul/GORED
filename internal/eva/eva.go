@@ -1548,7 +1548,16 @@ th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-
 .slot-left .role,.slot-right .role{width:82%;transform:perspective(1100px) rotateY(34deg);transform-origin:center}
 .slot-right .role{transform:perspective(1100px) rotateY(-34deg)}
 .slot-center .role{width:100%}
-.cockpit3:not(.immersive) .slot-left .role,.cockpit3:not(.immersive) .slot-right .role{max-height:84vh;overflow:auto;padding-top:8vh}
+.cockpit3:not(.immersive) .slot-left .role,.cockpit3:not(.immersive) .slot-right .role{max-height:84vh;overflow:auto;padding-top:7vh}
+/* title header runs parallel to the slanted top edge, anchored to the plane's OUTER edge so it
+   sits identically on every page regardless of title length: the underline hugs the text
+   (inline-block, no long trailing drop), left wing anchors left, right wing anchors right; the
+   body stays left-aligned so the two wings read as clean mirrors */
+.cockpit3:not(.immersive) .slot-left .rolehdr,.cockpit3:not(.immersive) .slot-right .rolehdr{display:inline-block;margin-bottom:3vh}
+.cockpit3:not(.immersive) .slot-left .rolehdr{transform:rotate(9deg);transform-origin:left center}
+.cockpit3:not(.immersive) .slot-right .role{text-align:right}
+.cockpit3:not(.immersive) .slot-right .role>*:not(.rolehdr){text-align:left}
+.cockpit3:not(.immersive) .slot-right .rolehdr{transform:rotate(-9deg);transform-origin:right center}
 .cockpit3:not(.immersive) .slot-center{height:72vh;animation:none}
 .cockpit3:not(.immersive) .slot-left,.cockpit3:not(.immersive) .slot-right{cursor:default;align-items:flex-start}
 /* big wing titles anchored at the top of the receding plane (the wide outer end) */
