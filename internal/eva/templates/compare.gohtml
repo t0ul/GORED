@@ -1,0 +1,43 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">COMPARE <span class="badge matrix">SORTIES</span></span>
+  <span class="hudcfg">side-by-side sortie summaries</span>
+  <span class="hudphase">{{len .Runs}} RUNS</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ COMPARE</div>
+      <p class="hint" style="margin-top:8px">Each row is one sortie's headline contender. Promote the set to the research leaderboard to rank every contender across them on real target bytes.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ SORTIES · <span class="count">{{len .Runs}}</span></div>
+      {{if .Runs}}
+      <div class="tblwrap"><table class="lb"><thead><tr><th>run</th><th>stage</th><th>model</th><th>dial</th><th>status</th><th>cap%</th><th>cap</th><th>tools</th><th>tok</th></tr></thead><tbody>
+      {{range .Runs}}{{if .Sums}}{{$c := index .Sums 0}}<tr>
+        <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+        <td>{{pct $c.CaptureRate}}</td><td>{{$c.Captured}}/{{$c.Trials}}</td><td>{{printf "%.1f" $c.MeanToolCall}}</td><td>{{printf "%.0f" $c.MeanTokens}}</td>
+      </tr>{{else}}<tr>
+        <td><a href="/run/{{.ID}}">{{.ID}}</a></td><td>{{.Stage}}</td><td>{{.ModelLabel}}</td><td class="dim">{{.Autonomy}}</td><td><span class="badge {{.Status}}">{{.Status}}</span></td>
+        <td colspan="4" class="muted">no summary</td>
+      </tr>{{end}}{{end}}
+      </tbody></table></div>
+      {{else}}<p class="muted">select two or more runs from the cockpit to compare.</p>{{end}}
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ ACTIONS</div>
+      {{if .Runs}}<a class="chip" href="/leaderboard?{{range .Runs}}id={{.ID}}&amp;{{end}}">OPEN AS RESEARCH LEADERBOARD</a>{{else}}<p class="muted">—</p>{{end}}
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav></div>
+  <span></span>
+</div>
+{{- end}}

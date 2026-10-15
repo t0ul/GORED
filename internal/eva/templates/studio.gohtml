@@ -1,0 +1,54 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">STUDIO <span class="badge done">FACTORY</span></span>
+  <span class="hudcfg">tools · skills · prompts <span class="dim">(read-only until the registry drives the stages)</span></span>
+  <span class="hudphase">{{len .Stages}} STAGES</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ CATALOG</div>
+      <div class="readout">
+        <div class="ro">TOOLS <b>{{len .Tools}}</b></div>
+        <div class="ro">SKILLS <b>{{len .Skills}}</b></div>
+        <div class="ro">STAGES <b>{{len .Stages}}</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px">The factory surfaces — the tools an agent can call, the skills (prompts) that steer it, and the per-stage playbooks. Authoring lands once the registry drives the stages.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ TOOLS · <span class="count">{{len .Tools}}</span></div>
+      <div class="chips">{{range .Tools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">none</span>{{end}}</div>
+      <div class="rolehdr" style="margin-top:18px">◉ SKILLS</div>
+      {{if .Skills}}{{range .Skills}}
+      <div class="card frame skillcard">
+        <div class="card-tag">{{.Name}} <span class="temp temp-{{.Temp}}">{{.Temp}}</span> {{if .BuiltIn}}<span class="src-router">built-in</span>{{else}}<span class="src-model">authored</span>{{end}}</div>
+        <pre class="repro">{{.Instruction}}</pre>
+      </div>
+      {{end}}{{else}}<p class="muted">no skills registry (run with -store to seed the catalog)</p>{{end}}
+      <div class="rolehdr" style="margin-top:18px">◉ PROMPTS · PER STAGE</div>
+      {{range .Stages}}
+      <div class="card frame skillcard">
+        <div class="card-tag">{{.Name}} <span class="dim">tools: {{range .Tools}}{{.}} {{end}}</span></div>
+        <pre class="repro">{{.Instruction}}</pre>
+      </div>
+      {{end}}
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ INVENTORY</div>
+      <div class="readout">
+        {{range .Stages}}<div class="ro">{{.Name}} <b>{{len .Tools}} tools</b></div>{{end}}
+      </div>
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav></div>
+  <span></span>
+</div>
+{{- end}}

@@ -1,0 +1,276 @@
+{{define "css" -}}
+:root{
+  --bg:#0a0603; --bg2:#140a04; --panel:#19100a; --panel2:#201609; --line:#3a240f;
+  --orange:#ff6a00; --amber:#ffab00; --yellow:#ffd21a; --green:#8bd450; --red:#ff2a2a; --blue:#58a6ff;
+  --purple:#965fd4; --purple-d:#734f9a; /* EVA-01 unit colours: the pilot / sync accent */
+  --fg:#f0dcc0; --mut:#9a7a52; --acc:#ff6a00;
+  --hex:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='49'><path d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9zM0 15l12.98-7.5V0h-2v6.35L0 12.69v2.3zm0 18.5L12.98 41v8h-2v-6.85L0 35.81v-2.3zM15 0v7.5L27.99 15H28v-2.31h-.01L17 6.35V0h-2zm0 49v-8l12.99-7.5H28v2.31h-.01L17 42.15V49h-2z' fill='%23ffb020' fill-opacity='0.09'/></svg>");
+  --scan:repeating-linear-gradient(0deg,rgba(0,0,0,.22) 0 1px,transparent 1px 3px);
+}
+*{box-sizing:border-box}
+body{
+  background:
+    var(--hex),
+    radial-gradient(1200px 620px at 70% -12%, rgba(255,120,0,.10), transparent 62%),
+    var(--bg);
+  background-attachment:fixed;
+  color:var(--fg); font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  max-width:none; margin:0; padding:14px 14px; letter-spacing:.2px;
+}
+a{color:var(--amber);text-decoration:none}a:hover{text-decoration:underline}
+h1,h2{letter-spacing:3px;text-transform:uppercase;margin:.3rem 0}
+h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);padding-left:8px;margin-top:24px}
+.sub{color:var(--mut);margin-top:0;font-size:12px;letter-spacing:1px;text-transform:uppercase}
+.muted{color:var(--mut)} .dim{color:var(--amber);font-size:12px;letter-spacing:1px}
+.vs{color:var(--mut);font-style:normal} .grn{color:var(--green)}
+/* top entry-plug bar */
+.topbar{display:flex;align-items:center;gap:14px}
+.logo{font-size:36px;color:var(--orange);line-height:1;text-shadow:0 0 16px rgba(255,106,0,.6)}
+.brandblock{display:flex;flex-direction:column;line-height:1.1}
+.brand{font-size:30px;color:var(--orange);letter-spacing:5px;font-weight:700;text-shadow:0 0 18px rgba(255,106,0,.45)}
+.sysline{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.sys{font-size:10px;letter-spacing:2px;color:var(--mut);border:1px solid var(--line);padding:3px 8px}
+.sys.ok{color:var(--green);border-color:rgba(134,214,51,.4)}
+.stripe{height:9px;margin:10px 0 16px;
+  background:repeating-linear-gradient(45deg,var(--orange) 0 14px,#111 14px 28px);
+  opacity:.8;border-top:1px solid #000;border-bottom:1px solid #000}
+.stripe.bottom{margin:24px 0 10px;opacity:.5}
+.foot{color:var(--mut);font-size:11px;letter-spacing:1px;text-align:center;text-transform:uppercase}
+/* three-column cockpit: the side consoles are tall bowtie wings — full-height outer edge,
+   converging to a short inner edge at the central viewscreen. The slant is fixed-angle: the
+   top edge drops tan(15deg)*width, so console(200w)=54px and sidepanel(240w)=64px, and the
+   content is counter-rotated by the same 15deg so the words run PARALLEL to the top edge. */
+/* MECHA COCKPIT: full-height bowtie console wings that run top to bottom of the viewport,
+   their big outer ends converging to a compact central monitor that scrolls. */
+.cockpit{max-width:none;margin:0;display:grid;grid-template-columns:1fr 440px 1fr;gap:18px;align-items:stretch;min-height:calc(100vh - 28px)}
+.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.6);overflow:hidden;display:flex;align-items:center;justify-content:center}
+/* %-based taper scales with the full height: big outer ends, converging inner waist at the box */
+.console{clip-path:polygon(0 0, 100% 20%, 100% 80%, 0 100%)}
+.sidepanel{clip-path:polygon(0 20%, 100% 0, 100% 100%, 0 80%)}
+/* text on the wing lies on a plane receding toward the central horizon (one-point perspective) */
+.wing-face{display:grid;gap:16px;width:78%;text-transform:uppercase;letter-spacing:2px}
+.wf-title{font-size:26px;letter-spacing:5px;color:var(--orange);text-shadow:0 0 14px rgba(255,106,0,.4)}
+.wf-row{font-size:15px;color:var(--mut);border-bottom:1px solid var(--line);padding-bottom:5px;white-space:nowrap}
+a.wf-row{color:var(--fg);text-decoration:none}a.wf-row:hover{color:var(--orange)}
+.wf-left{transform:perspective(1000px) rotateY(38deg);transform-origin:center}
+.wf-right{transform:perspective(1000px) rotateY(-38deg);transform-origin:center}
+/* the central monitor: centred and sized to the wings' inner-edge span (the 20%/80% taper),
+   so its top and bottom sit flush with the waist of the bowtie; content scrolls inside */
+.viewscreen{min-width:0;align-self:center;height:60vh;overflow:auto;border:1px solid var(--orange);background:linear-gradient(180deg,rgba(255,106,0,.05),transparent 45%);padding:16px 18px;box-shadow:0 0 34px rgba(255,106,0,.12),inset 0 0 44px rgba(0,0,0,.55)}
+.hexmark{font-size:40px;color:var(--orange);text-align:center;opacity:.55;text-shadow:0 0 18px rgba(255,106,0,.5)}
+.cnav{display:grid;gap:6px}
+.cnav a{color:var(--fg);border:1px solid var(--line);padding:8px 10px;font-size:12px;letter-spacing:2px}
+.cnav a:hover{border-color:var(--orange);color:var(--orange);text-decoration:none;background:rgba(255,106,0,.06)}
+.readout{display:grid;gap:5px;font-size:11px}
+.ro{display:flex;justify-content:space-between;gap:8px;border-bottom:1px dotted var(--line);padding-bottom:3px;color:var(--mut);letter-spacing:1px}
+.ro b{color:var(--amber);font-weight:700}.ro b.grn{color:var(--green)}
+.panel-tag{font-size:10px;letter-spacing:3px;color:var(--orange);text-transform:uppercase}
+.reticle{font-size:42px;color:var(--orange);text-align:center;opacity:.5;text-shadow:0 0 16px rgba(255,106,0,.5)}
+@media(max-width:840px){.cockpit{grid-template-columns:1fr}.console,.sidepanel{position:static;clip-path:none;min-height:auto}.tilt-l,.tilt-r{transform:none}.cwrap{width:auto}}
+/* frame card with NERV corner brackets */
+.card{background:linear-gradient(var(--panel),var(--bg2));border:1px solid var(--line);padding:18px;display:grid;gap:12px;position:relative}
+.frame{box-shadow:inset 0 0 0 1px rgba(255,106,0,.06)}
+.frame::before,.frame::after{content:"";position:absolute;width:16px;height:16px;border:2px solid var(--orange)}
+.frame::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+.frame::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+.card-tag{font-size:11px;letter-spacing:3px;color:var(--orange);text-transform:uppercase}
+.card-tag.warn{color:var(--amber)}
+.alert{border-color:var(--amber);box-shadow:inset 0 0 0 1px rgba(255,171,0,.18),0 0 24px rgba(255,171,0,.08);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{box-shadow:inset 0 0 0 1px rgba(255,171,0,.18),0 0 10px rgba(255,171,0,.05)}50%{box-shadow:inset 0 0 0 1px rgba(255,171,0,.35),0 0 30px rgba(255,171,0,.16)}}
+/* form */
+label{display:grid;gap:5px;font-size:11px;color:var(--mut);letter-spacing:1.5px;text-transform:uppercase}
+label.chk{grid-auto-flow:column;justify-content:start;align-items:center;gap:9px;text-transform:none;letter-spacing:.5px}
+input,select,textarea{background:#0c0703;color:var(--fg);border:1px solid var(--line);border-radius:0;padding:9px 10px;font:inherit;width:100%}
+textarea{resize:vertical;line-height:1.4}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
+.hint{color:var(--mut);font-size:11px;letter-spacing:.3px;text-transform:none;margin:-4px 0 2px;line-height:1.4}
+/* hexagonal action buttons: clip to a horizontal hex, text centred inside; glow via drop-shadow
+   (box-shadow would be clipped away by clip-path), outline variants become translucent fills */
+button{position:relative;background:var(--orange);color:#140a04;border:0;border-radius:0;padding:12px 30px;font:inherit;font-weight:700;letter-spacing:2px;text-transform:uppercase;cursor:pointer;clip-path:polygon(8% 0,92% 0,100% 50%,92% 100%,8% 100%,0 50%);filter:drop-shadow(0 0 9px rgba(255,120,0,.45))}
+button:hover{background:var(--amber);color:#140a04}button:disabled{opacity:.45;cursor:not-allowed;filter:none}
+button.danger{background:rgba(255,42,42,.2);color:#ff8a8a}
+button.danger:hover{background:var(--red);color:#140a04}
+button.ghost,button.reset,button.swap{background:rgba(255,120,0,.14);color:var(--amber);filter:drop-shadow(0 0 7px rgba(255,120,0,.3))}
+button.ghost:hover,button.reset:hover,button.swap:hover{background:rgba(255,170,20,.3);color:var(--amber)}
+button.swap{padding:11px 18px}
+.hazard{height:7px;background:repeating-linear-gradient(45deg,var(--orange) 0 12px,var(--bg2) 12px 24px);opacity:.85}
+@keyframes breathe{0%,100%{box-shadow:0 0 54px rgba(255,120,0,.22),inset 0 0 70px rgba(255,150,30,.07)}50%{box-shadow:0 0 86px rgba(255,140,0,.4),inset 0 0 96px rgba(255,160,40,.13)}}
+.btnrow{display:flex;gap:12px;margin-top:4px}
+/* autonomy dial */
+.dial{border:1px solid var(--line);padding:12px;display:grid;gap:8px}
+.dial legend{color:var(--orange);font-size:11px;letter-spacing:3px;padding:0 6px}
+.radio{display:grid;grid-template-columns:auto auto 1fr;align-items:center;gap:10px;text-transform:none;letter-spacing:.3px;color:var(--fg);font-size:13px}
+.radio b{color:var(--amber);letter-spacing:2px}
+.dial .radio:first-of-type b{color:var(--purple)}
+.dial .radio:first-of-type input{accent-color:var(--purple)}
+.radio span{color:var(--mut);font-size:12px}
+/* runs list */
+.runs{list-style:none;padding:0;max-height:42vh;overflow-y:auto}.runs li{padding:9px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.runs a{color:var(--fg)}
+/* badges */
+.badge{font-size:11px;padding:2px 9px;border:1px solid var(--line);letter-spacing:2px;text-transform:uppercase}
+.badge.running{color:var(--green);border-color:var(--green);animation:livepulse 1.6s infinite}
+@keyframes livepulse{0%,100%{box-shadow:0 0 0 rgba(134,214,51,0)}50%{box-shadow:0 0 12px rgba(134,214,51,.5)}}
+.badge.waiting{color:var(--amber);border-color:var(--amber);animation:pulse 1.6s infinite}
+.badge.done{color:var(--green);border-color:var(--green)}
+.badge.aborted{color:var(--mut)}
+.badge.error{color:var(--red);border-color:var(--red)}
+.badge.matrix{color:var(--purple);border-color:var(--purple)}
+.badge.cap{color:var(--yellow);border-color:var(--yellow);text-shadow:0 0 8px rgba(255,210,26,.5)}
+.scan{position:relative}
+/* moves */
+.moves{display:grid;gap:6px}
+.move{display:grid;grid-template-columns:auto 90px 1fr 90px 60px;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);background:#0c0703;text-transform:none;letter-spacing:.3px;cursor:pointer;font-size:12px}
+.move:hover{border-color:var(--orange)}
+.mv-tool{color:var(--orange);font-weight:700}
+.mv-path{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mv-surface{font-size:10px;letter-spacing:1px;text-align:center;padding:2px 4px;border:1px solid var(--line);color:var(--mut)}
+.s-html-page{color:var(--amber);border-color:var(--amber)}
+.s-json-api{color:#58a6ff;border-color:#58a6ff}
+.s-spa-shell{color:var(--purple);border-color:var(--purple)}
+.mv-src{font-size:10px;letter-spacing:1px;text-align:center;color:var(--mut)}
+.src-model{color:var(--green)}.src-router{color:var(--mut)}
+.mv-why{grid-column:2/-1;color:var(--mut);font-size:11px}
+/* board */
+.board{margin-top:6px;font-size:12px}
+.board summary{cursor:pointer;color:var(--amber);letter-spacing:1px}
+.board ul{list-style:none;padding:8px 0 0;display:grid;gap:4px}
+.board .ft{color:var(--orange);font-size:10px;letter-spacing:1px;text-transform:uppercase}
+/* verdict */
+.verdict-bar{margin:18px 0;padding:14px 16px;font-weight:700;letter-spacing:3px;text-transform:uppercase;border:1px solid}
+.verdict-bar.hit{color:var(--yellow);border-color:var(--yellow);background:rgba(255,210,26,.1);text-shadow:0 0 14px rgba(255,210,26,.6)}
+.verdict-bar.miss{color:var(--mut);border-color:var(--line)}
+/* table */
+table{width:100%;border-collapse:collapse;margin:14px 0}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--orange);font-weight:700;font-size:11px;letter-spacing:1.5px;text-transform:uppercase}
+.runhdr{font-size:22px;color:var(--fg)}
+.err{background:#1a0606;color:var(--red);padding:12px;border:1px solid var(--red);white-space:pre-wrap}
+/* live telemetry log */
+.log{max-height:360px;overflow:auto;font-size:12px;line-height:1.5;background:#0c0703;border:1px solid var(--line);padding:10px;display:flex;flex-direction:column;gap:2px}
+.logln{color:var(--mut);white-space:pre-wrap;word-break:break-word}
+.logln.hit{color:var(--yellow);font-weight:700}
+.logln.warn{color:var(--amber)}
+.logln.contain{color:var(--green)}
+.log:empty::before{content:"⬡ awaiting telemetry…";color:var(--mut)}
+.repro{background:#0c0703;border:1px solid var(--line);padding:10px;overflow:auto;color:var(--green);font-size:12px;white-space:pre-wrap;word-break:break-word}
+.ghost{background:transparent;color:var(--orange);border:1px solid var(--orange);margin-top:10px}
+.ghost:hover{background:var(--orange);color:#0a0a0a}
+.pick{width:auto;vertical-align:middle;accent-color:var(--orange)}
+.nav{font-size:12px;letter-spacing:2px;margin:-8px 0 16px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1px solid var(--orange);color:var(--orange);padding:4px 10px;font-size:12px;letter-spacing:1px}
+.skillcard{margin:10px 0}
+.temp{font-size:10px;letter-spacing:1px;padding:1px 6px;border:1px solid var(--line)}
+.temp-cold{color:#58a6ff;border-color:#58a6ff}
+.temp-warm{color:var(--amber);border-color:var(--amber)}
+/* trace timeline (themed replay) */
+.trace-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.vbadge{font-size:11px;letter-spacing:2px;padding:2px 9px;border:1px solid var(--green);color:var(--green)}
+.vbadge.no{border-color:var(--red);color:var(--red)}
+.tl{display:grid;gap:4px;max-height:560px;overflow:auto;border:1px solid var(--line);background:#0c0703;padding:10px}
+.tlev{border-left:2px solid var(--line);padding:5px 10px;font-size:12px;color:var(--mut);opacity:.5;transition:opacity .15s}
+.tlev.seen{opacity:1}
+.tlev.active{border-left-color:var(--orange);background:rgba(255,106,0,.08)}
+.tlev .sp{color:var(--amber);letter-spacing:1px}
+.tlev.hit{border-left-color:var(--yellow)}.tlev.hit .sp{color:var(--yellow)}
+.tlev.contain{border-left-color:var(--green)}.tlev.contain .sp{color:var(--green)}
+.tlev.warn .sp{color:var(--red)}
+.tlev .tx{color:var(--fg);white-space:pre-wrap;word-break:break-word}
+.player{display:flex;gap:8px;align-items:center;margin:10px 0}
+.player button{padding:7px 12px;font-size:12px}
+.player .pos{color:var(--mut);font-size:11px;letter-spacing:1px}
+/* wide tables scroll inside the viewscreen instead of clipping under the side panel */
+.tblwrap{overflow-x:auto;max-width:100%;margin:12px 0}
+.tblwrap table,.tblwrap .lb{margin:0}
+/* leaderboard (themed) */
+.lb{width:100%;border-collapse:collapse;margin:12px 0;min-width:560px}
+.lb th,.lb td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px}
+.lb th{color:var(--orange);letter-spacing:1.5px;text-transform:uppercase;font-size:11px}
+.lb tr.top td{color:var(--fg)}
+.lb tr.top .rank{color:var(--yellow);text-shadow:0 0 10px rgba(255,210,26,.5)}
+.capcell{min-width:150px}
+.capbar{height:12px;background:#0c0703;border:1px solid var(--line);position:relative;overflow:hidden}
+.capbar>i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--yellow))}
+.capbar>span{position:absolute;right:4px;top:-1px;font-size:10px;color:var(--fg)}
+.rank{color:var(--orange);font-weight:700}
+/* target "Angel" viz */
+.angel{display:grid;gap:10px}
+.angel .core{position:relative;height:88px;display:flex;align-items:center;justify-content:center}
+.angel .ring{position:absolute;inset:0;margin:auto;width:84px;height:84px;border:1px solid var(--line);border-radius:50%}
+.angel .ring.r2{width:56px;height:56px;border-color:rgba(255,106,0,.3)}
+.angel .ring.r3{width:30px;height:30px;border-color:rgba(255,106,0,.5)}
+.angel .pat{font-size:12px;letter-spacing:2px;color:var(--green);z-index:1;text-align:center}
+.angel.breached .ring{border-color:rgba(255,210,26,.6);animation:pulse 1.4s infinite}
+.angel.breached .pat{color:var(--yellow);text-shadow:0 0 12px rgba(255,210,26,.6)}
+.angel .cross{position:absolute;inset:0;background:
+  linear-gradient(var(--line),var(--line)) center/1px 100% no-repeat,
+  linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat;opacity:.4}
+.nodes{display:grid;gap:3px;max-height:110px;overflow:hidden;font-size:11px}
+.node{display:flex;gap:6px;align-items:center;border:1px solid var(--line);padding:4px 7px;color:var(--mut);background:#0c0703}
+.node .m{color:var(--amber);font-size:10px;min-width:30px}
+.node .p{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.node.hit{border-color:var(--orange);color:var(--orange)}
+.node.hit .p{color:var(--orange)}
+.count{font-size:11px;color:var(--mut);letter-spacing:1px}
+/* THREE-ROLE SWAPPABLE COCKPIT (run view): input | execution | output. Arrows swap a wing
+   into the centre to focus it; the two side wings recede toward the centre in perspective. */
+.cockpit3{display:grid;grid-template-columns:1fr 46vw 1fr;gap:18px;align-items:center;min-height:calc(100vh - 96px)}
+.slot{min-width:0}
+.slot-center{align-self:center;height:66vh;overflow:auto;border:1px solid rgba(255,138,0,.85);background:radial-gradient(135% 105% at 50% -5%,rgba(255,150,12,.14),rgba(255,105,0,.05) 44%,transparent 100%),#0f0a05;padding:16px 18px;box-shadow:0 0 64px rgba(255,120,0,.28),0 0 140px rgba(255,80,0,.12),inset 0 0 80px rgba(255,150,30,.06);animation:breathe 3.4s ease-in-out infinite}
+.slot-left,.slot-right{height:calc(100vh - 96px);background:radial-gradient(125% 85% at 50% 50%,rgba(255,142,12,.12),rgba(255,100,0,.04) 46%,transparent 100%),#0d0803;overflow:hidden;display:flex;align-items:center;justify-content:center;cursor:pointer;filter:drop-shadow(0 0 1.5px rgba(255,165,45,.95)) drop-shadow(0 0 20px rgba(255,120,0,.3))}
+.slot-left{clip-path:polygon(0 0,100% 17%,100% 83%,0 100%)}
+.slot-right{clip-path:polygon(0 17%,100% 0,100% 100%,0 83%)}
+/* wing content lies on a plane receding toward the central horizon: the words slant parallel
+   to the converging trapezoid edges (every view, not just the immersive run) */
+.slot-left .role,.slot-right .role{width:82%;transform:perspective(1100px) rotateY(34deg);transform-origin:center}
+.slot-right .role{transform:perspective(1100px) rotateY(-34deg)}
+.slot-center .role{width:100%}
+/* config-view wings behave exactly like the run view's wings: the base perspective recede alone,
+   so every div — the title and each body line — slants on the receding plane. No title-specific
+   transforms, no anchoring hacks. A long wing list (the sortie log) scrolls inside its own fixed
+   box (like the run view's FEED log) so the title stays put and nothing overflows the trapezoid. */
+.cockpit3:not(.immersive) .slot-center{height:72vh;animation:none}
+.cockpit3:not(.immersive) .slot-left,.cockpit3:not(.immersive) .slot-right{cursor:default}
+/* big wing titles anchored at the top of the receding plane (the wide outer end) */
+.slot-left .rolehdr,.slot-right .rolehdr{font-size:20px;letter-spacing:4px;padding-bottom:9px}
+.role{display:grid;gap:11px;align-content:start}
+.rolehdr{font-size:13px;letter-spacing:3px;color:var(--orange);text-transform:uppercase;border-bottom:1px solid rgba(255,120,0,.35);padding-bottom:6px;text-shadow:0 0 12px rgba(255,120,0,.5)}
+.slot-center .rolehdr{font-size:15px}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:13px;letter-spacing:1px;border-bottom:1px solid var(--line);padding-bottom:5px;text-transform:uppercase}
+.kv span{color:var(--mut)} .kv b{color:var(--amber);font-weight:700;text-align:right}
+.kv b.brk{word-break:break-all;font-weight:400;color:var(--fg);text-align:left}
+.ev{font-size:12px;color:var(--mut);border-bottom:1px solid var(--line);padding:4px 0;white-space:pre-wrap;word-break:break-word}
+.ev .ft{color:var(--orange);font-size:10px;letter-spacing:1px;text-transform:uppercase}
+.evlog{display:grid;gap:2px}
+/* bottom dock: swap arrows + site nav */
+.dock{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;margin-top:10px;border-top:1px solid rgba(255,106,0,.3);padding-top:10px}
+.homedock{grid-template-columns:1fr 46vw 1fr}
+.homedock>button{justify-self:center}
+.homedock .docknav{justify-self:end}
+.swap{background:transparent;color:var(--orange);border:1px solid var(--orange);font-size:18px;padding:6px 18px;letter-spacing:0}
+.swap:hover{background:var(--orange);color:#0a0a0a}
+.dockmid{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
+.dtitle{font-size:16px;letter-spacing:3px;text-transform:uppercase;color:var(--fg)}
+.docknav{font-size:12px;letter-spacing:2px;color:var(--mut)}
+.docknav a{color:var(--amber)}
+@media(max-width:860px){.cockpit3{grid-template-columns:1fr;min-height:auto}.slot-left,.slot-right{height:auto;clip-path:none}.slot-left .role,.slot-right .role{transform:none;width:auto}.slot-center{height:auto}}
+/* config header strip + live lenses + rising decision overlay */
+.hudbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;border:1px solid rgba(255,106,0,.3);padding:8px 14px;margin-bottom:10px;background:linear-gradient(90deg,rgba(255,106,0,.05),transparent)}
+.hudbar .dtitle{font-size:15px;letter-spacing:3px;text-transform:uppercase}
+.hudbar .hudcfg{color:var(--mut);font-size:12px;letter-spacing:1px}
+.hudbar .hudphase{margin-left:auto;color:var(--yellow);font-size:12px;letter-spacing:2px;text-shadow:0 0 10px rgba(255,210,26,.45)}
+.slot-center{position:relative}
+.slot-center .log,.slot-center .evlog{max-height:none}
+.lens .rolehdr .count{color:var(--mut);font-size:11px}
+.lens .log,.lens .evlog,.lens .tblwrap,.lens .repro,.lens .tl{background:transparent;border-color:rgba(255,120,0,.22)}
+.lens .node{background:rgba(255,120,0,.06);border-color:rgba(255,120,0,.28)}
+.lens table tr{border-color:rgba(255,120,0,.16)}
+.decision{position:absolute;inset:0;z-index:5;background:linear-gradient(180deg,rgba(20,10,30,.97),rgba(10,6,14,.98));border:1px solid var(--purple);padding:16px 18px;overflow:auto;display:grid;gap:12px;align-content:start;box-shadow:inset 0 0 44px rgba(150,95,212,.14),0 0 46px rgba(150,95,212,.3)}
+.decision .card-tag.warn{color:var(--purple)}
+.decision[hidden]{display:none}
+.decision.rise{animation:rise .35s ease-out}
+@keyframes rise{from{transform:translateY(26px);opacity:0}to{transform:translateY(0);opacity:1}}
+.cockpit3.decided .slot-left,.cockpit3.decided .slot-right{opacity:.3;filter:blur(1px)}
+.reset{font-size:11px;letter-spacing:2px;padding:5px 14px}
+{{- end}}

@@ -1,0 +1,132 @@
+{{define "content" -}}
+{{if or (eq .Status "running") (eq .Status "waiting")}}<noscript><meta http-equiv="refresh" content="3"></noscript>{{end}}
+<div class="hudbar">
+  <span class="dtitle">{{.Stage}} <span class="badge {{.Status}}">{{.Status}}</span></span>
+  <span class="hudcfg">{{.Base}} · {{.ModelLabel}} · {{.Autonomy}}{{if .Prompt}} · custom prompt{{end}}{{if .Elapsed}} · {{.Elapsed}}{{end}}</span>
+  <span class="hudphase" id="hudphase">PHASE —</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3 immersive">
+  <div class="slot slot-left" id="slot-left" onclick="manualSwap('left')"></div>
+  <div class="slot slot-center" id="slot-center">
+    <div class="decision" id="decision" hidden>
+      <div class="card-tag warn">⚠ PILOT DECISION — PHASE <span id="dphase"></span></div>
+      <p class="muted">Pick the moves to spend tokens on, add a constraint, proceed. The oracle confirms on real bytes — you pick the move, not the verdict.</p>
+      <div class="moves" id="dmoves"></div>
+      <label>CONSTRAINT / HINT <input id="dhint" placeholder="e.g. focus /greeting, try the reflected param"></label>
+      <div class="btnrow"><button type="button" onclick="submitDecision('proceed')">PROCEED</button><button type="button" class="danger" onclick="submitDecision('abort')">ABORT</button></div>
+    </div>
+  </div>
+  <div class="slot slot-right" id="slot-right" onclick="manualSwap('right')"></div>
+</div>
+<div class="dock">
+  <button class="swap" onclick="manualSwap('left')" title="focus left ( &lt; )">◀</button>
+  <div class="dockmid">
+    <button class="swap reset" onclick="resetFocus()">RESET</button>
+    <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/studio">STUDIO</a> · <a href="/run/{{.ID}}/trace">TRACE</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">LEADERBOARD</a>{{end}}</nav>
+  </div>
+  <button class="swap" onclick="manualSwap('right')" title="focus right ( &gt; )">▶</button>
+</div>
+
+<div id="roles" hidden>
+  <section class="role lens" data-lens="feed" id="lens-feed">
+    <div class="rolehdr">◢ FEED</div>
+    <div id="feed" class="log">{{range .Events}}<div class="logln {{.Cls}}">[{{.Span}}] {{.Event}}{{if .Detail}}  {{.Detail}}{{end}}</div>{{end}}</div>
+  </section>
+  <section class="role lens" data-lens="map" id="lens-map">
+    <div class="rolehdr">◉ MAP · <span class="count" id="mapcount">{{len .Targets}} paths</span></div>
+    <div class="angel{{if .Breached}} breached{{end}}" id="angel"><div class="core"><div class="cross"></div><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="pat" id="angelpat">{{if .Breached}}● BREACH{{else}}◎ LOCKED{{end}}</div></div></div>
+    <div class="nodes" id="mapnodes">{{range .Targets}}<div class="node"><span class="m">{{.Method}}</span><span class="p">{{.Path}}</span></div>{{end}}</div>
+  </section>
+  <section class="role lens" data-lens="findings" id="lens-findings">
+    <div class="rolehdr">◆ FINDINGS · <span class="count" id="findcount">{{len .Findings}}</span></div>
+    {{if .Sums}}{{if captured .Sums}}<div class="verdict-bar hit">● CAPTURED</div>{{else}}<div class="verdict-bar miss">○ HELD</div>{{end}}
+    <div class="tblwrap"><table><thead><tr><th>contender</th><th>cap%</th><th>cap</th><th>tools</th><th>tok</th></tr></thead><tbody>{{range .Sums}}<tr><td>{{.Contender}}</td><td>{{pct .CaptureRate}}</td><td>{{.Captured}}/{{.Trials}}</td><td>{{printf "%.1f" .MeanToolCall}}</td><td>{{printf "%.0f" .MeanTokens}}</td></tr>{{end}}</tbody></table></div>{{end}}
+    <div id="findlist" class="evlog">{{range .Findings}}<div class="ev"><span class="ft">{{.Type}}</span> {{trunc .Value 200}}</div>{{end}}</div>
+    {{if .Repro}}<div class="card-tag">REPRO</div><pre class="repro">{{.Repro}}</pre>{{end}}
+  </section>
+</div>
+
+<script>
+(function(){
+  var PAGE_STATUS = "{{.Status}}";
+  var RUN_ID = "{{.ID}}";
+  var state = {left:'lens-feed', center:'lens-map', right:'lens-findings'};
+  var manual = false, lastPhase = '';
+  function el(id){ return document.getElementById(id); }
+  function place(){ ['left','center','right'].forEach(function(s){ var ln=el(state[s]); if(ln) el('slot-'+s).appendChild(ln); }); }
+  function slotOf(lens){ for(var s in state){ if(state[s]===lens) return s; } return null; }
+  function setCenter(lens){ var s=slotOf(lens); if(!s||s==='center') return; var t=state.center; state.center=lens; state[s]=t; place(); }
+  function focus(lens){ if(manual) return; setCenter(lens); }
+  function lensForPhase(p){ p=(p||'').toLowerCase();
+    if(p.indexOf('recon')>=0||p.indexOf('finger')>=0||p.indexOf('map')>=0||p.indexOf('discover')>=0) return 'lens-map';
+    if(p.indexOf('exploit')>=0||p.indexOf('attack')>=0||p.indexOf('probe')>=0||p.indexOf('inject')>=0) return 'lens-feed';
+    if(p.indexOf('valid')>=0||p.indexOf('verif')>=0||p.indexOf('chain')>=0) return 'lens-findings';
+    return 'lens-map'; }
+  window.manualSwap=function(side){ manual=true; var t=state.center; state.center=state[side]; state[side]=t; place(); };
+  window.resetFocus=function(){ manual=false; if(PAGE_STATUS==='running'||PAGE_STATUS==='waiting'){ focus(lensForPhase(lastPhase)); } else { setCenter('lens-findings'); } };
+  place();
+
+  document.addEventListener('keydown', function(e){
+    if(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if(e.key==='<'||e.key===',') manualSwap('left');
+    else if(e.key==='>'||e.key==='.') manualSwap('right');
+  });
+
+  var feed=el('feed'), mapnodes=el('mapnodes'), findlist=el('findlist'), seenPath={};
+  function feedLine(span,ev,detail,cls){ var d=document.createElement('div'); d.className='logln '+(cls||''); d.textContent='['+span+'] '+ev+(detail?'  '+detail:''); feed.appendChild(d); feed.scrollTop=feed.scrollHeight; }
+  function pathOf(u){ var i=(''+u).indexOf('://'); if(i>=0){ var j=(''+u).indexOf('/',i+3); return j>=0?(''+u).slice(j):''; } return ''+u; }
+  function addNode(method,p){ if(!p||p[0]!=='/') return; if(p.length>80)p=p.slice(0,80)+'…'; var k=method+' '+p; if(seenPath[k])return; seenPath[k]=1; var d=document.createElement('div'); d.className='node'; var ms=document.createElement('span'); ms.className='m'; ms.textContent=method; var ps=document.createElement('span'); ps.className='p'; ps.textContent=p; d.appendChild(ms); d.appendChild(ps); mapnodes.appendChild(d); el('mapcount').textContent=mapnodes.children.length+' paths'; }
+  function addFinding(type,val){ var d=document.createElement('div'); d.className='ev'; var ft=document.createElement('span'); ft.className='ft'; ft.textContent=type; d.appendChild(ft); d.appendChild(document.createTextNode(' '+(val.length>200?val.slice(0,200)+'…':val))); findlist.appendChild(d); el('findcount').textContent=findlist.children.length; }
+  function setBreach(){ var a=el('angel'); if(a) a.classList.add('breached'); var p=el('angelpat'); if(p) p.textContent='● BREACH'; }
+  [].forEach.call(mapnodes.children, function(n){ seenPath[(n.children[0].textContent+' '+n.children[1].textContent)]=1; });
+
+  var decision=el('decision'), cockpit=document.querySelector('.cockpit3');
+  function raiseDecision(phase, proposals){
+    el('dphase').textContent=(phase||'').toUpperCase();
+    var box=el('dmoves'); box.innerHTML='';
+    (proposals||[]).forEach(function(m,i){
+      var l=document.createElement('label'); l.className='move';
+      var cb=document.createElement('input'); cb.type='checkbox'; cb.name='move'; cb.value=i; l.appendChild(cb);
+      function sp(c,t){ var s=document.createElement('span'); s.className=c; s.textContent=t; l.appendChild(s); }
+      sp('mv-tool',m.Tool||''); sp('mv-path',m.Path||'—'); sp('mv-surface s-'+(m.Surface||''),m.Surface||''); sp('mv-src src-'+(m.Source||''),m.Source||''); sp('mv-why',m.Why||'');
+      box.appendChild(l);
+    });
+    if(!proposals||!proposals.length){ box.innerHTML='<p class="muted">no proposals — type a directive and proceed.</p>'; }
+    decision.hidden=false; decision.classList.remove('rise'); void decision.offsetWidth; decision.classList.add('rise');
+    cockpit.classList.add('decided');
+  }
+  function lowerDecision(){ decision.hidden=true; cockpit.classList.remove('decided'); if(!manual) focus(lensForPhase(lastPhase)); }
+  window.submitDecision=function(action){
+    var body='action='+action+'&hint='+encodeURIComponent(el('dhint').value);
+    [].forEach.call(decision.querySelectorAll('input[name=move]:checked'), function(c){ body+='&move='+c.value; });
+    lowerDecision();
+    fetch('/run/'+RUN_ID+'/decide', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:body});
+  };
+
+  if(PAGE_STATUS==='running'||PAGE_STATUS==='waiting'){
+    var es=new EventSource('/run/'+RUN_ID+'/events');
+    es.onmessage=function(e){
+      var r; try{ r=JSON.parse(e.data); }catch(_){ return; }
+      if(r._eva==='status'){ var b=document.querySelector('.hudbar .badge'); if(b){ b.textContent=r.status; b.className='badge '+r.status; } return; }
+      if(r._eva==='done'){ es.close(); location.reload(); return; }
+      if(r._eva==='pending'){ raiseDecision(r.phase, r.proposals); return; }
+      if(r._eva==='resume'){ lowerDecision(); return; }
+      var span=r.span||'', ev=r.event||'', f=r.fields||{};
+      var detail=f.tool||f.via||f.phase||f.hint||f.value||f.result||f.error||f.reply||'';
+      if(typeof detail!=='string') detail=JSON.stringify(detail);
+      if(detail.length>140) detail=detail.slice(0,140)+'…';
+      var cls= (ev.indexOf('capture')>=0||ev.indexOf('breach')>=0)?'hit':((ev.indexOf('denied')>=0||ev.indexOf('egress')>=0)?'contain':(ev.indexOf('error')>=0?'warn':''));
+      feedLine(span,ev,detail,cls);
+      if(span==='tool'&&ev==='tool_call'&&f.args){ var m=(f.args.method||'GET').toString().toUpperCase(); addNode(m, f.args.path||pathOf(f.args.url||'')); }
+      if(span==='board'&&ev==='finding'&&f.value){ var ty=(f.type||'')+'' , v=(''+f.value); if(ty==='flag-candidate'||ty==='vuln-candidate'||ty==='scanner'||v.indexOf('GORED{')>=0||v.indexOf('CONFIRMED')>=0||v.indexOf('VERIFIED')>=0) addFinding(ty||'finding', v); }
+      if(ev.indexOf('capture')>=0){ setBreach(); addFinding('capture', detail); focus('lens-findings'); }
+      if(span==='phase'&&ev==='phase_advance'){ lastPhase=((f.to||'')+''); el('hudphase').textContent='PHASE '+lastPhase.toUpperCase(); focus(lensForPhase(lastPhase)); }
+    };
+    focus('lens-map');
+  } else {
+    setCenter('lens-findings'); el('hudphase').textContent='PHASE COMPLETE';
+  }
+})();
+</script>
+{{- end}}

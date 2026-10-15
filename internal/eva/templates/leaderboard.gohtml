@@ -1,0 +1,60 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">LEADERBOARD <span class="badge done">MAGI</span></span>
+  <span class="hudcfg">{{.Title}}{{if .Target}} · {{.Target}}{{end}}{{if .Note}} · {{.Note}}{{end}}</span>
+  <span class="hudphase">{{len .Rows}} CONTENDERS</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ READ-OUT</div>
+      <div class="readout">
+        <div class="ro">RANK <b>capture %</b></div>
+        <div class="ro">CAP <b>oracle-confirmed</b></div>
+        <div class="ro">CAP/MTOK <b>efficiency</b></div>
+        <div class="ro">VERDICT <b class="grn">REAL BYTES</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px">Each row is a contender — a model × skill — scored on real target bytes. The top row is the sharpest weapon on record.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ CONTENDERS · <span class="count">{{len .Rows}}</span></div>
+      {{if .Rows}}
+      <div class="tblwrap"><table class="lb"><thead><tr><th>#</th><th>contender</th><th class="capcell">capture</th><th>cap</th><th>tools</th><th>tok</th><th>cap/Mtok</th></tr></thead><tbody>
+      {{range $i, $r := .Rows}}<tr{{if eq $i 0}} class="top"{{end}}>
+        <td class="rank">{{add $i 1}}</td>
+        <td>{{$r.Contender}}</td>
+        <td class="capcell"><div class="capbar"><i style="width:{{pct $r.CaptureRate}}"></i><span>{{pct $r.CaptureRate}}</span></div></td>
+        <td>{{$r.Captured}}/{{$r.Trials}}</td>
+        <td>{{printf "%.1f" $r.MeanToolCall}}</td>
+        <td>{{printf "%.0f" $r.MeanTokens}}</td>
+        <td>{{if gt $r.CapturePerMTok 0.0}}{{printf "%.0f" $r.CapturePerMTok}}{{else}}—{{end}}</td>
+      </tr>{{end}}
+      </tbody></table></div>
+      {{else}}<p class="muted">no contenders yet — launch a sortie from the cockpit.</p>{{end}}
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ TOP WEAPON</div>
+      {{if .Rows}}{{with index .Rows 0}}
+      <div class="verdict-bar hit">● {{.Contender}}</div>
+      <div class="readout">
+        <div class="ro">CAPTURE <b>{{pct .CaptureRate}}</b></div>
+        <div class="ro">CAPTURED <b>{{.Captured}}/{{.Trials}}</b></div>
+        <div class="ro">TOOLS <b>{{printf "%.1f" .MeanToolCall}}</b></div>
+        <div class="ro">TOKENS <b>{{printf "%.0f" .MeanTokens}}</b></div>
+        <div class="ro">CAP/MTOK <b>{{if gt .CapturePerMTok 0.0}}{{printf "%.0f" .CapturePerMTok}}{{else}}—{{end}}</b></div>
+      </div>
+      {{end}}{{else}}<p class="muted">—</p>{{end}}
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav></div>
+  <span></span>
+</div>
+{{- end}}

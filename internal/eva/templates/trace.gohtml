@@ -1,0 +1,52 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">TRACE <span class="badge {{if .Verified}}done{{else}}error{{end}}">{{if .Verified}}VERIFIED{{else}}UNVERIFIED{{end}}</span></span>
+  <span class="hudcfg">run {{.ID}} · gledger append-only audit</span>
+  <span class="hudphase">{{.Count}} RECORDS</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ RUN</div>
+      <div class="readout">
+        <div class="ro">RUN <b>{{.ID}}</b></div>
+        <div class="ro">RECORDS <b>{{.Count}}</b></div>
+        <div class="ro">CHAIN <b class="{{if .Verified}}grn{{end}}">{{if .Verified}}VERIFIED{{else}}BROKEN{{end}}</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px">Replay the sortie step by step. Each record is hash-chained to the one before it — tampering breaks the chain.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ REPLAY · <span class="count" id="tpos">0 / {{.Count}}</span></div>
+      <div class="player"><button onclick="tstep(-1)">◀ STEP</button><button onclick="tplay()">▶ PLAY</button><button onclick="tstep(1)">STEP ▶</button><button class="ghost" onclick="treset()">RESET</button></div>
+      <div class="tl" id="tl">
+      {{range .Events}}<div class="tlev seen {{.Cls}}"><span class="sp">[{{.Span}}] {{.Event}}</span>{{if .Detail}}<div class="tx">{{.Detail}}</div>{{end}}</div>{{end}}
+      </div>
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ INTEGRITY</div>
+      {{if .Verified}}<div class="verdict-bar hit">● HASH-CHAIN VERIFIED</div>{{else}}<div class="verdict-bar miss">○ UNVERIFIED</div>{{end}}
+      <p class="hint" style="margin-top:10px">gledger stamps each record with the hash of the previous — an append-only, tamper-evident ledger. The verdicts shown in the cockpit are reproduced from exactly these bytes.</p>
+    </section>
+  </div>
+</div>
+<div class="dock">
+  <span></span>
+  <div class="dockmid"><nav class="docknav"><a href="/run/{{.ID}}">BACK TO SORTIE</a> · <a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a></nav></div>
+  <span></span>
+</div>
+<script>
+(function(){
+  var evs=[].slice.call(document.querySelectorAll('#tl .tlev')); var i=-1; var timer=null;
+  var pos=document.getElementById('tpos'); var total=evs.length;
+  function show(n){ if(n<-1)n=-1; if(n>=evs.length)n=evs.length-1; evs.forEach(function(e,k){e.classList.toggle('active',k===n);}); if(n>=0&&evs[n])evs[n].scrollIntoView({block:'nearest'}); i=n; pos.textContent=(n+1)+' / '+total; }
+  window.tstep=function(d){ if(timer){clearInterval(timer);timer=null;} show(i+d); };
+  window.treset=function(){ if(timer){clearInterval(timer);timer=null;} show(-1); };
+  window.tplay=function(){ if(timer){clearInterval(timer);timer=null;return;} timer=setInterval(function(){ if(i>=evs.length-1){clearInterval(timer);timer=null;return;} show(i+1); },450); };
+})();
+</script>
+{{- end}}

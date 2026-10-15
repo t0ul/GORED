@@ -1,0 +1,72 @@
+{{define "content" -}}
+<div class="hudbar">
+  <span class="dtitle">EVA · GORED <span class="badge done">LAUNCH BAY</span></span>
+  <span class="hudcfg">piloted app-layer red-team · the model is the weapon</span>
+  <span class="hudphase" id="hudphase">MAGI 3 / 3</span>
+</div>
+<div class="hazard"></div>
+<div class="cockpit3">
+  <div class="slot slot-left" id="slot-left">
+    <section class="role lens">
+      <div class="rolehdr">◣ SYSTEM · MAGI</div>
+      <div class="readout">
+        <div class="ro">MAGI <b class="grn">3 / 3</b></div>
+        <div class="ro">EGRESS <b>SEALED</b></div>
+        <div class="ro">ORACLE <b>REAL-BYTES</b></div>
+        <div class="ro">CONTAINMENT <b class="grn">OK</b></div>
+        <div class="ro">LINK <b>NOMINAL</b></div>
+        <div class="ro">A.T. FIELD <b>ACTIVE</b></div>
+      </div>
+      <p class="hint" style="margin-top:14px">Target only on the egress allowlist. The oracle confirms capture on real bytes — the blackboard is untrusted target output, never the verdict.</p>
+    </section>
+  </div>
+  <div class="slot slot-center" id="slot-center">
+    <section class="role lens">
+      <div class="rolehdr">◉ LAUNCH CONFIG</div>
+      <form method="post" action="/run" id="launchform">
+        <label>STAGE <select name="stage">{{range .Stages}}<option value="{{.Name}}">{{.Name}} — {{.Goal}}</option>{{end}}</select></label>
+        <label>TARGET BASE URL <input name="base" value="http://127.0.0.1:8088"></label>
+        <label>MODEL (GGUF) <input name="model" value="qwen2.5-3b-instruct.gguf"></label>
+        <label>MODEL MATRIX · RESEARCHER MODE <input name="models" placeholder="qwen2.5-0.5b-instruct.gguf, qwen2.5-1.5b-instruct.gguf"></label>
+        <p class="hint">Leave blank for a single-model run. A comma-separated list runs one contender per model and compares them on the leaderboard — always autonomous.</p>
+        <label>BRIG BRIDGE <input name="bridge" value="127.0.0.1:5050"></label>
+        <label>SYNC PROMPT · SKILL INSTRUCTION <textarea name="skill" id="skill" rows="4">{{.FirstInstr}}</textarea></label>
+        <fieldset class="dial">
+          <legend>AUTONOMY DIAL</legend>
+          <label class="radio"><input type="radio" name="autonomy" value="piloted" checked> <b>PILOTED</b><span>pause at every gate — you pick the moves</span></label>
+          <label class="radio"><input type="radio" name="autonomy" value="assisted"> <b>ASSISTED</b><span>acts on its own after a beat unless you intervene</span></label>
+          <label class="radio"><input type="radio" name="autonomy" value="autonomous"> <b>BERSERK</b><span>no gate — runs free, the headless/CI loop</span></label>
+        </fieldset>
+        <label>TRIALS (BERSERK / MATRIX) <input name="trials" type="number" value="1" min="1"></label>
+        <label class="chk"><input type="checkbox" name="ensure" value="1" checked> auto-launch vulnapp</label>
+      </form>
+    </section>
+  </div>
+  <div class="slot slot-right" id="slot-right">
+    <section class="role lens">
+      <div class="rolehdr">◥ SORTIE LOG</div>
+      {{if .Recent}}
+      <form method="get" action="/compare">
+        <ul class="runs">{{range .Recent}}
+          <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span>{{if .IsMatrix}} <span class="badge matrix">matrix</span>{{end}} <span class="badge {{.Status}}">{{.Status}}</span>{{if captured .Sums}} <span class="badge cap">⬡ CAPTURED</span>{{end}}</li>
+        {{end}}</ul>
+        <button class="ghost">COMPARE</button>
+      </form>
+      {{else}}<p class="muted">no sorties yet</p>{{end}}
+    </section>
+  </div>
+</div>
+<div class="dock homedock">
+  <span></span>
+  <button form="launchform" {{if .Busy}}disabled{{end}}>{{if .Busy}}EVA IN FLIGHT…{{else}}LAUNCH{{end}}</button>
+  <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/leaderboard">LEADERBOARD</a> · <a href="/studio">STUDIO</a></nav>
+</div>
+<script>
+(function(){
+  var INSTR = {{.StageInstr}};
+  var sel = document.querySelector('select[name=stage]');
+  var ta = document.getElementById('skill');
+  if (sel && ta) sel.addEventListener('change', function(){ if (INSTR[sel.value] !== undefined) ta.value = INSTR[sel.value]; });
+})();
+</script>
+{{- end}}
