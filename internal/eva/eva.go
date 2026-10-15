@@ -963,7 +963,7 @@ var homeTmpl = template.Must(template.New("home").Funcs(funcs).Parse(baseCSS + `
       {{if .Recent}}
       <form method="get" action="/compare">
         <ul class="runs">{{range .Recent}}
-          <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span>{{if .IsMatrix}} <span class="badge matrix">matrix</span>{{end}} <span class="badge {{.Status}}">{{.Status}}</span></li>
+          <li><input type="checkbox" name="id" value="{{.ID}}" class="pick"> <a href="/run/{{.ID}}">{{.Stage}} <span class="vs">vs</span> {{.Base}}</a> <span class="dim">[{{.Autonomy}}]</span>{{if .IsMatrix}} <span class="badge matrix">matrix</span>{{end}} <span class="badge {{.Status}}">{{.Status}}</span>{{if captured .Sums}} <span class="badge cap">⬡ CAPTURED</span>{{end}}</li>
         {{end}}</ul>
         <button class="ghost">COMPARE</button>
       </form>
@@ -1420,11 +1420,11 @@ input:focus,select:focus,textarea:focus{outline:0;border-color:var(--orange);box
 /* hexagonal action buttons: clip to a horizontal hex, text centred inside; glow via drop-shadow
    (box-shadow would be clipped away by clip-path), outline variants become translucent fills */
 button{position:relative;background:var(--orange);color:#140a04;border:0;border-radius:0;padding:12px 30px;font:inherit;font-weight:700;letter-spacing:2px;text-transform:uppercase;cursor:pointer;clip-path:polygon(8% 0,92% 0,100% 50%,92% 100%,8% 100%,0 50%);filter:drop-shadow(0 0 9px rgba(255,120,0,.45))}
-button:hover{background:var(--yellow);color:#140a04}button:disabled{opacity:.45;cursor:not-allowed;filter:none}
+button:hover{background:var(--amber);color:#140a04}button:disabled{opacity:.45;cursor:not-allowed;filter:none}
 button.danger{background:rgba(255,42,42,.2);color:#ff8a8a}
 button.danger:hover{background:var(--red);color:#140a04}
 button.ghost,button.reset,button.swap{background:rgba(255,120,0,.14);color:var(--amber);filter:drop-shadow(0 0 7px rgba(255,120,0,.3))}
-button.ghost:hover,button.reset:hover,button.swap:hover{background:rgba(255,170,20,.3);color:var(--yellow)}
+button.ghost:hover,button.reset:hover,button.swap:hover{background:rgba(255,170,20,.3);color:var(--amber)}
 button.swap{padding:11px 18px}
 .hazard{height:7px;background:repeating-linear-gradient(45deg,var(--orange) 0 12px,var(--bg2) 12px 24px);opacity:.85}
 @keyframes breathe{0%,100%{box-shadow:0 0 54px rgba(255,120,0,.22),inset 0 0 70px rgba(255,150,30,.07)}50%{box-shadow:0 0 86px rgba(255,140,0,.4),inset 0 0 96px rgba(255,160,40,.13)}}
@@ -1447,6 +1447,7 @@ button.swap{padding:11px 18px}
 .badge.aborted{color:var(--mut)}
 .badge.error{color:var(--red);border-color:var(--red)}
 .badge.matrix{color:#58a6ff;border-color:#58a6ff}
+.badge.cap{color:var(--yellow);border-color:var(--yellow);text-shadow:0 0 8px rgba(255,210,26,.5)}
 .scan{position:relative}
 /* moves */
 .moves{display:grid;gap:6px}
