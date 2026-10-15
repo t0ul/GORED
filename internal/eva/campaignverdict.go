@@ -48,6 +48,10 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 	for base, fs := range c.nuclei {
 		nuc[base] = fs
 	}
+	ffz := map[string][]tools.FfufFinding{} // snapshot the content-discovery hits
+	for base, fs := range c.ffuf {
+		ffz[base] = fs
+	}
 	s.mu.Unlock()
 
 	var proofs []core.Proof
@@ -113,6 +117,19 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 		}
 		for _, f := range fs {
 			if p, ok := probes.ProofFromNuclei(f, app); ok {
+				proofs = append(proofs, p)
+			}
+		}
+	}
+	// Pool the ffuf content-discovery hits (unlinked endpoints, leftover backups, exposed config /
+	// VCS files) so the report covers the forced-browsing surface the model-loop and nuclei miss.
+	for base, fs := range ffz {
+		app := baseName[base]
+		if app == "" {
+			app = base
+		}
+		for _, f := range fs {
+			if p, ok := probes.ProofFromFfuf(f, app); ok {
 				proofs = append(proofs, p)
 			}
 		}
