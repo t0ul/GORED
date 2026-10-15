@@ -33,7 +33,8 @@ type run struct {
 	// Server mutex.
 	Pending *pending
 	cp      *pilotCheckpoint
-	slot    int // the concurrency bay / port offset this run holds
+	cancel  context.CancelFunc // cancels the run's context for a hard ABORT; nil until execute runs
+	slot    int                // the concurrency bay / port offset this run holds
 }
 
 // IsMatrix reports whether this is a researcher-matrix sortie (several models on one stage).

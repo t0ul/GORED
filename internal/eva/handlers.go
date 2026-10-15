@@ -302,6 +302,27 @@ func (s *Server) decide(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/run/"+id, http.StatusSeeOther)
 }
 
+// abort hard-cancels a live run: it cancels the run's context (interrupting in-flight model
+// and tool calls, and releasing a blocked pilot gate — Decide selects on ctx.Done()) and
+// marks it aborted. The clean stop is still the gate abort via decide; this is the e-stop.
+func (s *Server) abort(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.mu.Lock()
+	rn := s.runs[id]
+	if rn != nil && (rn.Status == "running" || rn.Status == "waiting") {
+		if rn.cancel != nil {
+			rn.cancel()
+		}
+		rn.Status = "aborted"
+		rn.Pending = nil
+	}
+	s.mu.Unlock()
+	if rn != nil {
+		s.persist(rn)
+	}
+	http.Redirect(w, r, "/run/"+id, http.StatusSeeOther)
+}
+
 // events streams a run's trace as Server-Sent Events: it replays the trace file from the
 // start, then tails it, emitting a control frame on each status change and at the end. The
 // run page uses this instead of a full-page meta-refresh. Each outbound passes nothing new

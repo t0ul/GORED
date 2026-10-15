@@ -92,6 +92,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /run/{id}", s.runPage)
 	mux.HandleFunc("GET /run/{id}/events", s.events)
 	mux.HandleFunc("POST /run/{id}/decide", s.decide)
+	mux.HandleFunc("POST /run/{id}/abort", s.abort)
 	mux.HandleFunc("GET /compare", s.compare)
 	mux.HandleFunc("GET /studio", s.studio)
 	mux.HandleFunc("GET /run/{id}/trace", s.traceView)
@@ -104,6 +105,15 @@ func (s *Server) Handler() http.Handler {
 // piloted/assisted dial it installs a pilot checkpoint; autonomous installs none, so that
 // path is identical to the headless loop.
 func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
+	// A cancelable context so a hard ABORT can interrupt the run (in-flight model/tool calls,
+	// and a blocked pilot gate — Decide selects on ctx.Done()). The clean stop is still the
+	// gate abort; this is the emergency stop.
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	rn.cancel = cancel
+	s.mu.Unlock()
+	defer cancel()
+
 	var opts []appsweep.Option
 	if rn.Autonomy != "autonomous" {
 		cp := &pilotCheckpoint{srv: s, run: rn, autonomy: rn.Autonomy, decided: make(chan decision)}
@@ -116,20 +126,22 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 		opts = append(opts, appsweep.WithSkillInstruction(rn.Prompt))
 	}
 
-	results, err := appsweep.Run(context.Background(), f, stage, opts...)
+	results, err := appsweep.Run(ctx, f, stage, opts...)
 
 	s.mu.Lock()
 	rn.Elapsed = time.Since(rn.Started).Round(time.Second).String()
 	rn.Pending = nil
-	switch {
-	case err != nil:
-		rn.Status, rn.Err = "error", err.Error()
-	default:
-		rn.Sums = core.Summarize(results)
-		if aborted(results) {
-			rn.Status = "aborted"
-		} else {
-			rn.Status = "done"
+	if rn.Status != "aborted" { // a hard ABORT already set the terminal status; don't overwrite
+		switch {
+		case err != nil:
+			rn.Status, rn.Err = "error", err.Error()
+		default:
+			rn.Sums = core.Summarize(results)
+			if aborted(results) {
+				rn.Status = "aborted"
+			} else {
+				rn.Status = "done"
+			}
 		}
 	}
 	s.mu.Unlock()

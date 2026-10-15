@@ -19,10 +19,15 @@
   </div>
   <div class="slot slot-right" id="slot-right" onclick="manualSwap('right')"></div>
 </div>
+{{if or (eq .Status "running") (eq .Status "waiting")}}<form method="post" action="/run/{{.ID}}/abort" id="abortform" hidden></form>{{else}}<form method="post" action="/run" id="rerunform" hidden><input name="stage" value="{{.Stage}}"><input name="base" value="{{.Base}}"><input name="model" value="{{.Model}}"><input name="models" value="{{.Models}}"><input name="autonomy" value="{{.Autonomy}}"><input name="trials" value="{{.Trials}}"><input name="ensure" value="1"><textarea name="skill" hidden>{{.Prompt}}</textarea></form>{{end}}
 <div class="dock">
   <button class="swap" onclick="manualSwap('left')" title="focus left ( &lt; )">◀</button>
   <div class="dockmid">
-    <button class="swap reset" onclick="resetFocus()">RESET</button>
+    <div class="dockctl">
+      <button class="swap reset" onclick="resetFocus()">RESET</button>
+      <button class="swap" id="focusbtn" onclick="toggleLock()">AUTO</button>
+      {{if or (eq .Status "running") (eq .Status "waiting")}}<button form="abortform" class="danger">ABORT</button>{{else}}<button form="rerunform" class="reset">RE-RUN</button>{{end}}
+    </div>
     <nav class="docknav"><a href="/">COCKPIT</a> · <a href="/studio">STUDIO</a> · <a href="/run/{{.ID}}/trace">TRACE</a>{{if .Sums}} · <a href="/run/{{.ID}}/leaderboard">LEADERBOARD</a>{{end}}</nav>
   </div>
   <button class="swap" onclick="manualSwap('right')" title="focus right ( &gt; )">▶</button>
@@ -30,8 +35,13 @@
 
 <div id="roles" hidden>
   <section class="role lens" data-lens="feed" id="lens-feed">
-    <div class="rolehdr">◢ FEED</div>
-    <div id="feed" class="log">{{range .Events}}<div class="logln {{.Cls}}">[{{.Span}}] {{.Event}}{{if .Detail}}  {{.Detail}}{{end}}</div>{{end}}</div>
+    <div class="rolehdr">◢ FEED <span class="feedchips">
+      <span class="fchip" data-span="model" onclick="feedFilter('model',this)">MODEL</span>
+      <span class="fchip" data-span="tool" onclick="feedFilter('tool',this)">TOOL</span>
+      <span class="fchip" data-span="board" onclick="feedFilter('board',this)">FINDING</span>
+      <span class="fchip" data-span="containment" onclick="feedFilter('containment',this)">CONTAIN</span>
+    </span></div>
+    <div id="feed" class="log">{{range .Events}}<div class="logln {{.Cls}}" data-span="{{.Span}}">[{{.Span}}] {{.Event}}{{if .Detail}}  {{.Detail}}{{end}}</div>{{end}}</div>
   </section>
   <section class="role lens" data-lens="map" id="lens-map">
     <div class="rolehdr">◉ MAP · <span class="count" id="mapcount">{{len .Targets}} paths</span></div>
@@ -63,9 +73,11 @@
     if(p.indexOf('exploit')>=0||p.indexOf('attack')>=0||p.indexOf('probe')>=0||p.indexOf('inject')>=0) return 'lens-feed';
     if(p.indexOf('valid')>=0||p.indexOf('verif')>=0||p.indexOf('chain')>=0) return 'lens-findings';
     return 'lens-map'; }
-  window.manualSwap=function(side){ manual=true; var t=state.center; state.center=state[side]; state[side]=t; place(); };
-  window.resetFocus=function(){ manual=false; if(PAGE_STATUS==='running'||PAGE_STATUS==='waiting'){ focus(lensForPhase(lastPhase)); } else { setCenter('lens-findings'); } };
-  place();
+  function updateLockBtn(){ var b=el('focusbtn'); if(b) b.textContent = manual ? 'LOCK' : 'AUTO'; }
+  window.manualSwap=function(side){ manual=true; var t=state.center; state.center=state[side]; state[side]=t; place(); updateLockBtn(); };
+  window.resetFocus=function(){ manual=false; if(PAGE_STATUS==='running'||PAGE_STATUS==='waiting'){ focus(lensForPhase(lastPhase)); } else { setCenter('lens-findings'); } updateLockBtn(); };
+  window.toggleLock=function(){ manual=!manual; if(!manual){ resetFocus(); } else { updateLockBtn(); } };
+  place(); updateLockBtn();
 
   document.addEventListener('keydown', function(e){
     if(e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
@@ -74,7 +86,9 @@
   });
 
   var feed=el('feed'), mapnodes=el('mapnodes'), findlist=el('findlist'), seenPath={};
-  function feedLine(span,ev,detail,cls){ var d=document.createElement('div'); d.className='logln '+(cls||''); d.textContent='['+span+'] '+ev+(detail?'  '+detail:''); feed.appendChild(d); feed.scrollTop=feed.scrollHeight; }
+  var feedHidden={};
+  window.feedFilter=function(span,chip){ if(feedHidden[span]){delete feedHidden[span];chip.classList.remove('off');}else{feedHidden[span]=1;chip.classList.add('off');} [].forEach.call(feed.querySelectorAll('.logln'), function(l){ l.style.display = feedHidden[l.getAttribute('data-span')]?'none':''; }); };
+  function feedLine(span,ev,detail,cls){ var d=document.createElement('div'); d.className='logln '+(cls||''); d.setAttribute('data-span',span); if(feedHidden[span]) d.style.display='none'; d.textContent='['+span+'] '+ev+(detail?'  '+detail:''); feed.appendChild(d); feed.scrollTop=feed.scrollHeight; }
   function pathOf(u){ var i=(''+u).indexOf('://'); if(i>=0){ var j=(''+u).indexOf('/',i+3); return j>=0?(''+u).slice(j):''; } return ''+u; }
   function addNode(method,p){ if(!p||p[0]!=='/') return; if(p.length>80)p=p.slice(0,80)+'…'; var k=method+' '+p; if(seenPath[k])return; seenPath[k]=1; var d=document.createElement('div'); d.className='node'; var ms=document.createElement('span'); ms.className='m'; ms.textContent=method; var ps=document.createElement('span'); ps.className='p'; ps.textContent=p; d.appendChild(ms); d.appendChild(ps); mapnodes.appendChild(d); el('mapcount').textContent=mapnodes.children.length+' paths'; }
   function addFinding(type,val){ var d=document.createElement('div'); d.className='ev'; var ft=document.createElement('span'); ft.className='ft'; ft.textContent=type; d.appendChild(ft); d.appendChild(document.createTextNode(' '+(val.length>200?val.slice(0,200)+'…':val))); findlist.appendChild(d); el('findcount').textContent=findlist.children.length; }
