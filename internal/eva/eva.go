@@ -949,14 +949,14 @@ var runTmpl = template.Must(template.New("run").Funcs(funcs).Parse(baseCSS + `
 {{end}}
 <p class="muted">trace: {{.Trace}}</p>
 </main>
-<aside class="sidepanel">
+<aside class="sidepanel"><div class="cwrap tilt-r">
   <div class="panel-tag">TARGET ◈ {{if .Breached}}PATTERN RED{{else}}PATTERN BLUE{{end}}</div>
   <div class="angel{{if .Breached}} breached{{end}}">
     <div class="core"><div class="cross"></div><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div class="pat">{{if .Breached}}● BREACH{{else}}◎ LOCKED{{end}}</div></div>
     <div class="count">SURFACE · {{len .Targets}} paths touched</div>
     <div class="nodes">{{range .Targets}}<div class="node"><span class="m">{{.Method}}</span><span class="p">{{.Path}}</span></div>{{else}}<div class="muted" style="font-size:11px">no requests yet</div>{{end}}</div>
   </div>
-</aside>
+</div></aside>
 ` + shellBottom))
 
 var studioTmpl = template.Must(template.New("studio").Funcs(funcs).Parse(baseCSS + shellTop + `
@@ -1054,7 +1054,7 @@ const shellTop = `<div class="topbar">
 </div>
 <div class="stripe"></div>
 <div class="cockpit">
-  <aside class="console">
+  <aside class="console"><div class="cwrap tilt-l">
     <div class="hexmark">⬡</div>
     <nav class="cnav">
       <a href="/">◤ COCKPIT</a>
@@ -1065,13 +1065,13 @@ const shellTop = `<div class="topbar">
       <div class="ro"><span>MODE</span><b>SORTIE</b></div>
       <div class="ro"><span>LINK</span><b class="grn">NOMINAL</b></div>
     </div>
-  </aside>`
+  </div></aside>`
 
 const shellBottom = `</div><div class="stripe bottom"></div><p class="foot">⬡ GORED EVANGELION UNIT · ORACLE ON REAL BYTES · EGRESS CONTAINED</p>`
 
 // sideHUD is the default right panel for pages without their own: a flavor status readout so
 // every screen fills all three columns.
-const sideHUD = `<aside class="sidepanel">
+const sideHUD = `<aside class="sidepanel"><div class="cwrap tilt-r">
   <div class="panel-tag">SYSTEM</div>
   <div class="reticle">⊕</div>
   <div class="readout">
@@ -1080,7 +1080,7 @@ const sideHUD = `<aside class="sidepanel">
     <div class="ro"><span>MAGI</span><b class="grn">3 / 3</b></div>
     <div class="ro"><span>CONTAINMENT</span><b class="grn">SEALED</b></div>
   </div>
-</aside>`
+</div></aside>`
 
 const baseCSS = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EVA · GORED</title>
 <style>
@@ -1117,14 +1117,17 @@ h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);paddin
   opacity:.8;border-top:1px solid #000;border-bottom:1px solid #000}
 .stripe.bottom{margin:24px 0 10px;opacity:.5}
 .foot{color:var(--mut);font-size:11px;letter-spacing:1px;text-align:center;text-transform:uppercase}
-/* three-column cockpit: the side consoles are bowtie trapezoids — tall on the outer edge,
-   converging to a short inner edge that meets the central viewscreen, slanted top and bottom. */
-.cockpit{display:grid;grid-template-columns:196px minmax(0,1fr) 256px;gap:16px;align-items:start}
-.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.40);position:sticky;top:14px;display:grid;gap:12px;align-content:center;min-height:380px;padding:34px 18px}
-/* left console: outer (left) edge full height, inner (right) edge short -> points right, at centre */
-.console{clip-path:polygon(0 0, 100% 16%, 100% 84%, 0 100%)}
-/* right panel mirrors it: outer (right) full, inner (left) short -> points left, at centre */
-.sidepanel{clip-path:polygon(0 16%, 100% 0, 100% 100%, 0 84%)}
+/* three-column cockpit: the side consoles are tall bowtie wings — full-height outer edge,
+   converging to a short inner edge at the central viewscreen. The slant is fixed-angle: the
+   top edge drops tan(15deg)*width, so console(200w)=54px and sidepanel(240w)=64px, and the
+   content is counter-rotated by the same 15deg so the words run PARALLEL to the top edge. */
+.cockpit{display:grid;grid-template-columns:200px minmax(0,1fr) 240px;gap:16px;align-items:start}
+.console,.sidepanel{background:linear-gradient(var(--panel),var(--bg2));border:1px solid rgba(255,106,0,.45);position:sticky;top:14px;min-height:560px;display:flex;align-items:center;justify-content:center;padding:18px 14px;overflow:hidden}
+.console{clip-path:polygon(0 0, 100% 54px, 100% calc(100% - 54px), 0 100%)}
+.sidepanel{clip-path:polygon(0 64px, 100% 0, 100% 100%, 0 calc(100% - 64px))}
+/* the content block, counter-rotated to sit parallel to the wing's slanted edges */
+.cwrap{display:grid;gap:11px;width:150px}
+.tilt-l{transform:rotate(15deg)} .tilt-r{transform:rotate(-15deg)}
 /* central viewscreen reads as the main screen between the wings */
 .viewscreen{min-width:0;border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,106,0,.03),transparent 40%);padding:16px 18px}
 .hexmark{font-size:40px;color:var(--orange);text-align:center;opacity:.55;text-shadow:0 0 18px rgba(255,106,0,.5)}
@@ -1136,7 +1139,7 @@ h2{font-size:14px;color:var(--orange);border-left:3px solid var(--orange);paddin
 .ro b{color:var(--amber);font-weight:700}.ro b.grn{color:var(--green)}
 .panel-tag{font-size:10px;letter-spacing:3px;color:var(--orange);text-transform:uppercase}
 .reticle{font-size:42px;color:var(--orange);text-align:center;opacity:.5;text-shadow:0 0 16px rgba(255,106,0,.5)}
-@media(max-width:840px){.cockpit{grid-template-columns:1fr}.console,.sidepanel{position:static;clip-path:none}}
+@media(max-width:840px){.cockpit{grid-template-columns:1fr}.console,.sidepanel{position:static;clip-path:none;min-height:auto}.tilt-l,.tilt-r{transform:none}.cwrap{width:auto}}
 /* frame card with NERV corner brackets */
 .card{background:linear-gradient(var(--panel),var(--bg2));border:1px solid var(--line);padding:18px;display:grid;gap:12px;position:relative}
 .frame{box-shadow:inset 0 0 0 1px rgba(255,106,0,.06)}
