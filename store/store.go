@@ -99,6 +99,24 @@ CREATE TABLE IF NOT EXISTS campaigns (
   cur     TEXT,
   note    TEXT
 );
+CREATE TABLE IF NOT EXISTS project_surface (
+  target TEXT NOT NULL,
+  method TEXT NOT NULL,
+  path   TEXT NOT NULL,
+  last   TEXT,
+  ts     TEXT,
+  PRIMARY KEY (target, method, path)
+);
+CREATE INDEX IF NOT EXISTS idx_psurface_target ON project_surface(target);
+CREATE TABLE IF NOT EXISTS project_findings (
+  target TEXT NOT NULL,
+  type   TEXT,
+  value  TEXT,
+  run_id TEXT,
+  ts     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pfindings_target ON project_findings(target);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pfindings_uniq ON project_findings(target, type, value);
 `
 
 // Open opens (creating if needed) a run store at path.

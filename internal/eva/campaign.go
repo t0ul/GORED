@@ -120,12 +120,29 @@ func (s *Server) seedTargets() {
 	}
 }
 
-// authInstruction builds the skill instruction for a (target, stage): when the target carries a
-// login recipe or static-header identities, it prepends an AUTHENTICATION preamble (in the same
-// "session" vocabulary the tools and AuthReconSkill use) so the autonomous model logs in and
-// wields the two identities, then appends the stage's own instruction. With no auth recipe it
+// campaignInstruction builds the skill instruction for a (target, stage): a KNOWN SURFACE
+// preamble (cross-run project memory, so a later pass seeds from what prior passes discovered
+// instead of re-enumerating) and/or an AUTHENTICATION preamble (so the autonomous model logs in
+// and wields two identities), followed by the stage's own instruction. With neither preamble it
 // returns "" — execute then falls back to the stage default, unchanged.
-func authInstruction(t store.Target, stageDefault string) string {
+func (s *Server) campaignInstruction(t store.Target, stage string) string {
+	base := s.effectiveInstruction(stage)
+	var pre []string
+	if sp := s.surfacePreamble(t.Name); sp != "" {
+		pre = append(pre, sp)
+	}
+	if ap := authPreamble(t); ap != "" {
+		pre = append(pre, ap)
+	}
+	if len(pre) == 0 {
+		return ""
+	}
+	return strings.Join(pre, "\n\n") + "\n\n" + base
+}
+
+// authPreamble is the AUTHENTICATION block for a target (in the same "session" vocabulary the
+// tools and AuthReconSkill use), or "" when the target has no auth recipe.
+func authPreamble(t store.Target) string {
 	var b strings.Builder
 	switch {
 	case t.PrivCreds != "" || t.LowCreds != "":
@@ -138,7 +155,7 @@ func authInstruction(t store.Target, stageDefault string) string {
 			body, ct := loginBody(t, t.LowCreds)
 			fmt.Fprintf(&b, "- Low-privilege identity: http_request POST %q with header Content-Type: %s and body %s, carrying \"session\":\"low\". Use \"session\":\"low\" to compare access across identities.\n", t.LoginPath, ct, body)
 		}
-		b.WriteString("A resource the privileged user can read but the low-privilege user must not is a broken-access-control finding.\n\n")
+		b.WriteString("A resource the privileged user can read but the low-privilege user must not is a broken-access-control finding.")
 	case t.PrivHeader != "" || t.LowHeader != "":
 		b.WriteString("AUTHENTICATION — two identities are provided as static headers:\n")
 		if t.PrivHeader != "" {
@@ -147,12 +164,52 @@ func authInstruction(t store.Target, stageDefault string) string {
 		if t.LowHeader != "" {
 			fmt.Fprintf(&b, "- Low-privilege: send header %q to act as the low-privilege identity.\n", t.LowHeader)
 		}
-		b.WriteString("Compare what each identity can reach; access the privileged identity has that the low-privilege one must not is a finding.\n\n")
+		b.WriteString("Compare what each identity can reach; access the privileged identity has that the low-privilege one must not is a finding.")
 	default:
-		return "" // no auth recipe: use the stage default unchanged
+		return ""
 	}
-	b.WriteString(stageDefault)
 	return b.String()
+}
+
+// surfacePreamble is the KNOWN SURFACE block for a target: the endpoints prior passes discovered,
+// so the model starts from them instead of rediscovering. "" when there is no accumulated surface.
+func (s *Server) surfacePreamble(target string) string {
+	if s.store == nil {
+		return ""
+	}
+	rows, err := s.store.ListSurface(target)
+	if err != nil || len(rows) == 0 {
+		return ""
+	}
+	if len(rows) > 40 {
+		rows = rows[:40] // keep the prompt bounded
+	}
+	var b strings.Builder
+	b.WriteString("KNOWN SURFACE (discovered in prior passes — start from these, do not re-enumerate from scratch):\n")
+	for _, r := range rows {
+		fmt.Fprintf(&b, "- %s %s\n", r.Method, r.Path)
+	}
+	b.WriteString("Probe these and obvious variations (id swaps, privileged fields) for broken access control.")
+	return b.String()
+}
+
+// recordProjectMemory persists a finished child run's discovered surface and findings to the
+// target's cross-run project memory, so later passes seed from them. Observations (model chatter)
+// are skipped; the surface and the substantive findings are what accumulates.
+func (s *Server) recordProjectMemory(target string, rn *run) {
+	if s.store == nil {
+		return
+	}
+	_, findings, surface, _, _ := parseRunTrace(rn.Trace)
+	for _, n := range surface {
+		_ = s.store.SaveSurface(target, n.Method, n.Path, n.Last)
+	}
+	for _, f := range findings {
+		if f.Type == "observation" || f.Value == "" {
+			continue
+		}
+		_ = s.store.SaveFinding(target, string(f.Type), f.Value, rn.ID)
+	}
 }
 
 // loginBody renders a creds "user:password" into the login request body + content type per the
@@ -242,6 +299,7 @@ func (s *Server) runCampaign(c *campaign) {
 			}
 			rn := s.launchCampaignRun(c, tg, stage, slot)
 			s.execute(rn, rn.flags, stage) // synchronous: runs to terminal, releases the bay
+			s.recordProjectMemory(tg.Name, rn) // accumulate surface + findings for later passes
 		}
 	}
 done:
@@ -266,7 +324,7 @@ func (s *Server) launchCampaignRun(c *campaign, tg store.Target, stage string, s
 
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
 	f.Trace = filepath.Join(s.traces, "gored-eva-"+id+"-trace.jsonl")
-	inst := authInstruction(tg, s.effectiveInstruction(stage))
+	inst := s.campaignInstruction(tg, stage)
 
 	rn := &run{
 		ID: id, Stage: stage, Base: tg.Base, Model: c.Model, Trials: 1,

@@ -56,11 +56,21 @@ func (s *Server) viewCampaign(c *campaign) campaignView {
 	return v
 }
 
+// targetView is a registered target plus its accumulated cross-run project-memory counts.
+type targetView struct {
+	store.Target
+	SurfaceN int
+	FindingN int
+}
+
 // campaignsPage is the campaign console: the target registry, the launch form, and the campaign log.
 func (s *Server) campaignsPage(w http.ResponseWriter, _ *http.Request) {
-	var targets []store.Target
+	var targets []targetView
 	if s.store != nil {
-		targets, _ = s.store.ListTargets()
+		rows, _ := s.store.ListTargets()
+		for _, t := range rows {
+			targets = append(targets, targetView{Target: t, SurfaceN: s.store.CountSurface(t.Name), FindingN: s.store.CountFindings(t.Name)})
+		}
 	}
 	s.mu.Lock()
 	cvs := make([]campaignView, 0, len(s.corder))
@@ -160,6 +170,24 @@ func (s *Server) campaignsJSON(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// projectPage renders a target's accumulated cross-run project memory: the discovered surface
+// and the findings pooled across every pass.
+func (s *Server) projectPage(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if s.store == nil {
+		http.NotFound(w, r)
+		return
+	}
+	t, ok, _ := s.store.GetTarget(name)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	surface, _ := s.store.ListSurface(name)
+	findings, _ := s.store.ListFindings(name)
+	render(w, projectTmpl, map[string]any{"Target": t, "Surface": surface, "Findings": findings})
 }
 
 // targetSave upserts a target from the console form.

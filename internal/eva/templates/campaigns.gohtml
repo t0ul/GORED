@@ -13,6 +13,7 @@
         <li><b>{{.Name}}</b> <span class="dim">{{.Base}}</span>
           <span class="badge {{if or .PrivCreds .LowCreds}}done{{else if or .PrivHeader .LowHeader}}done{{else}}aborted{{end}}">{{if or .PrivCreds .LowCreds}}creds{{else if or .PrivHeader .LowHeader}}header{{else}}no-auth{{end}}</span>
           <span class="dim">[{{.Stages}}]</span>
+          <a href="/target/{{.Name}}/project" class="dim" title="cross-run project memory">⌾ {{.SurfaceN}}p · {{.FindingN}}f</a>
           <form method="post" action="/targets/delete" style="display:inline"><input type="hidden" name="name" value="{{.Name}}"><button class="rect danger">✕</button></form>
         </li>
       {{end}}</ul>{{else}}<p class="muted">no targets</p>{{end}}
