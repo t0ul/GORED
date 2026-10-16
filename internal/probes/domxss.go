@@ -262,12 +262,21 @@ func domxssTemplate(args map[string]any, base string) (string, error) {
 	return raw + sep + param + "=FUZZ", nil
 }
 
-// InjectSpec describes the write that plants a stored payload: a method+path, the field that carries
-// the payload, and any other fields the write requires. Form picks form-encoding over JSON.
+// storedBodyMarker is where the payload goes in a raw body template, so the model can express any
+// write shape (a JSON array, nested objects, specific required fields) and still have the probe
+// drop the nonce payload in — the self-correction path when a flat {field:...} body is rejected.
+const storedBodyMarker = "__PAYLOAD__"
+
+// InjectSpec describes the write that plants a stored payload. The simple form is a Field (plus any
+// Other fields) encoded as JSON (or Form). BodyTemplate is the escape hatch: a raw request body
+// containing storedBodyMarker where the payload goes, so the caller can match an endpoint that wants
+// an array or specific fields (RR's /api/ingest wants a JSON array of {Source,AssetIdentifier,Title}).
 type InjectSpec struct {
 	Method, Path, Field string
 	Other               map[string]string
 	Form                bool
+	BodyTemplate        string // raw body with storedBodyMarker; overrides Field/Other when set
+	ContentType         string // for BodyTemplate; defaults to application/json
 }
 
 // StoredXSSProbe confirms STORED XSS: it plants a nonce execution payload through a write endpoint
@@ -284,14 +293,20 @@ type StoredXSSProbe struct {
 	Timeout  time.Duration
 }
 
-// ProbeStored plants each payload through inject, then checks whether it executes on any render page.
-func (p *StoredXSSProbe) ProbeStored(ctx context.Context, inject InjectSpec, renderPaths []string) (DOMXSSFinding, error) {
+// ProbeStored plants each payload through inject, then checks whether it executes on any render
+// page. The second return value is an actionable diagnostic used when nothing executed — so the
+// agent can SELF-CORRECT: it names whether the plant itself was rejected (and the status/snippet)
+// versus planted-but-not-rendered, instead of a dead-end "no xss".
+func (p *StoredXSSProbe) ProbeStored(ctx context.Context, inject InjectSpec, renderPaths []string) (DOMXSSFinding, string, error) {
+	if inject.BodyTemplate != "" && !strings.Contains(inject.BodyTemplate, storedBodyMarker) {
+		return DOMXSSFinding{}, "", fmt.Errorf("stored_xss: body template must contain %s where the payload goes", storedBodyMarker)
+	}
 	if len(renderPaths) == 0 {
-		return DOMXSSFinding{}, fmt.Errorf("stored_xss: need at least one render page")
+		return DOMXSSFinding{}, "", fmt.Errorf("stored_xss: need at least one render page")
 	}
 	bctx, denied, cleanup, err := browserSession(ctx, p.Base, p.Timeout)
 	if err != nil {
-		return DOMXSSFinding{}, fmt.Errorf("stored_xss: start browser: %w", err)
+		return DOMXSSFinding{}, "", fmt.Errorf("stored_xss: start browser: %w", err)
 	}
 	defer cleanup()
 
@@ -310,18 +325,27 @@ func (p *StoredXSSProbe) ProbeStored(ctx context.Context, inject InjectSpec, ren
 					}
 					return nil
 				})); err != nil {
-					return DOMXSSFinding{}, fmt.Errorf("stored_xss: set session cookie: %w", err)
+					return DOMXSSFinding{}, "", fmt.Errorf("stored_xss: set session cookie: %w", err)
 				}
 			}
 		}
 	}
 
+	planted := 0           // plants the server accepted (2xx)
+	var lastReject string  // the most recent rejection, surfaced so the model can fix the body
 	for _, pl := range domxssPayloads {
 		nonce := "gored" + nonceHex()
 		payload := fmt.Sprintf(pl, nonce)
-		if err := p.plant(ctx, inject, payload); err != nil {
-			continue // this write was rejected; try the next payload/context
+		status, snippet, err := p.plant(ctx, inject, payload)
+		if err != nil {
+			lastReject = "plant error: " + err.Error()
+			continue
 		}
+		if status >= 400 {
+			lastReject = fmt.Sprintf("HTTP %d: %s", status, snippet)
+			continue // the write was rejected, so there is nothing stored to render — fix the body
+		}
+		planted++
 		for _, rp := range renderPaths {
 			ru := strings.TrimRight(p.Base, "/") + ensureLeadingSlash(rp)
 			if p.Egress == nil || !p.Egress.Allowed(ru) {
@@ -341,22 +365,37 @@ func (p *StoredXSSProbe) ProbeStored(ctx context.Context, inject InjectSpec, ren
 					URL: ru, Payload: payload, CWE: "CWE-79", Confidence: core.ConfCertain,
 					Evidence: fmt.Sprintf("stored payload planted via %s %s executed in a real browser (nonce %s) when %s rendered it", strings.ToUpper(def(inject.Method, "POST")), inject.Path, nonce, ru),
 					Denied:   int(atomic.LoadInt64(denied)),
-				}, nil
+				}, "", nil
 			}
 		}
 	}
-	return DOMXSSFinding{Denied: int(atomic.LoadInt64(denied))}, nil
+	// Nothing executed: say WHY so the agent can self-correct rather than give up.
+	var diag string
+	if planted == 0 {
+		diag = fmt.Sprintf("no stored xss: the write %s %s was REJECTED every time, so nothing was stored — fix the request body/fields/method and retry. Last response: %s",
+			strings.ToUpper(def(inject.Method, "POST")), inject.Path, def(lastReject, "(none)"))
+	} else {
+		diag = fmt.Sprintf("no stored xss: the write %s %s was accepted (%d payloads stored) but none executed on the render pages %v — the payload may land in a field these pages do not display; try other render pages or put the payload in the field the page shows",
+			strings.ToUpper(def(inject.Method, "POST")), inject.Path, planted, renderPaths)
+	}
+	return DOMXSSFinding{Denied: int(atomic.LoadInt64(denied))}, diag, nil
 }
 
-// plant sends the write that stores the payload, as the authenticated identity, egress-gated.
-func (p *StoredXSSProbe) plant(ctx context.Context, inject InjectSpec, payload string) error {
+// plant sends the write that stores the payload, as the authenticated identity, egress-gated. It
+// returns the server's status and a short response snippet (so a rejection is actionable), erroring
+// only on egress/transport failure — an HTTP 4xx is data the caller reports, not an error.
+func (p *StoredXSSProbe) plant(ctx context.Context, inject InjectSpec, payload string) (int, string, error) {
 	raw := strings.TrimRight(p.Base, "/") + ensureLeadingSlash(inject.Path)
 	if p.Egress == nil || !p.Egress.Allowed(raw) {
-		return fmt.Errorf("egress denied: %s", raw)
+		return 0, "", fmt.Errorf("egress denied: %s", raw)
 	}
 	var body io.Reader
 	var ctype string
-	if inject.Form {
+	switch {
+	case inject.BodyTemplate != "":
+		body = strings.NewReader(strings.ReplaceAll(inject.BodyTemplate, storedBodyMarker, payload))
+		ctype = def(inject.ContentType, "application/json")
+	case inject.Form:
 		vals := url.Values{}
 		if inject.Field != "" {
 			vals.Set(inject.Field, payload)
@@ -365,7 +404,7 @@ func (p *StoredXSSProbe) plant(ctx context.Context, inject InjectSpec, payload s
 			vals.Set(k, v)
 		}
 		body, ctype = strings.NewReader(vals.Encode()), "application/x-www-form-urlencoded"
-	} else {
+	default:
 		m := map[string]string{}
 		if inject.Field != "" {
 			m[inject.Field] = payload
@@ -378,18 +417,16 @@ func (p *StoredXSSProbe) plant(ctx context.Context, inject InjectSpec, payload s
 	}
 	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(def(inject.Method, http.MethodPost)), raw, body)
 	if err != nil {
-		return err
+		return 0, "", err
 	}
 	req.Header.Set("Content-Type", ctype)
 	resp, err := p.Sessions.Client(p.Session).Do(req) // authed jar
 	if err != nil {
-		return err
+		return 0, "", err
 	}
-	resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("write rejected: HTTP %d", resp.StatusCode)
-	}
-	return nil
+	defer resp.Body.Close()
+	snip, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+	return resp.StatusCode, strings.TrimSpace(string(snip)), nil
 }
 
 func ensureLeadingSlash(p string) string {
@@ -419,17 +456,20 @@ type StoredXSSTool struct {
 func (StoredXSSTool) Name() string { return "stored_xss" }
 func (StoredXSSTool) Describe() string {
 	return `Confirm STORED cross-site scripting (CWE-79): plant a payload through a write endpoint, then check it EXECUTES in a real browser when a page renders it. ` +
-		`args: {"method":"POST","path":"/api/ingest","field":"title","other":{"severity":"High"},"form":false,"render":["/dashboard","/admin"]}. ` +
-		`It injects a unique nonce payload into "field", posts it as your session, loads each "render" page in a headless browser, and confirms only when the payload runs there. Use it on ingest/create/upload endpoints whose data is shown back on an HTML page.`
+		`Simple form: {"method":"POST","path":"/api/ingest","field":"title","other":{"severity":"High"},"render":["/dashboard","/admin"]} — the payload goes in "field", "other" carries any required fields. ` +
+		`If the endpoint rejects that shape (e.g. HTTP 400), READ the error and switch to a body template: {"method":"POST","path":"/api/ingest","body":"[{\"Source\":\"s\",\"AssetIdentifier\":\"__PAYLOAD__\",\"Title\":\"t\"}]","content_type":"application/json","render":["/admin"]} — put __PAYLOAD__ where the payload belongs (an array, nested fields, the exact field the page shows). ` +
+		`Loads each "render" page in a headless browser; confirms only when the payload runs there. On a miss it tells you whether the write was rejected (fix the body) or stored-but-not-rendered (try other render pages / the displayed field).`
 }
 
 func (t StoredXSSTool) Call(ctx context.Context, args map[string]any) (string, error) {
 	inject := InjectSpec{
-		Method: tools.AsString(args["method"]),
-		Path:   tools.AsString(args["path"]),
-		Field:  tools.AsString(args["field"]),
-		Form:   asBool(args["form"]),
-		Other:  asStringMap(args["other"]),
+		Method:       tools.AsString(args["method"]),
+		Path:         tools.AsString(args["path"]),
+		Field:        tools.AsString(args["field"]),
+		Form:         asBool(args["form"]),
+		Other:        asStringMap(args["other"]),
+		BodyTemplate: tools.AsString(args["body"]),
+		ContentType:  tools.AsString(args["content_type"]),
 	}
 	if inject.Path == "" {
 		return "", fmt.Errorf("stored_xss: need a write 'path'")
@@ -446,14 +486,14 @@ func (t StoredXSSTool) Call(ctx context.Context, args map[string]any) (string, e
 		session = "priv"
 	}
 	p := &StoredXSSProbe{Base: t.Base, Egress: t.Gate.Egress(), Sessions: t.Sessions, Session: session}
-	f, err := p.ProbeStored(ctx, inject, render)
+	f, diag, err := p.ProbeStored(ctx, inject, render)
 	if err != nil {
 		return "", err
 	}
 	if f.Flagged() {
 		return DOMXSSSentinel + " " + f.Evidence, nil
 	}
-	return "no stored xss: planted payloads did not execute on the render pages", nil
+	return diag, nil // actionable: says whether to fix the body or try other render pages
 }
 
 func asBool(v any) bool { b, _ := v.(bool); return b }

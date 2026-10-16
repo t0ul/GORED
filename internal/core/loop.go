@@ -292,7 +292,7 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 		// verbatim repeat and nudge it onward instead of burning the budget.
 		if key := actionKey(act); key == lastKey {
 			r.emit(traceID, "tool", "repeat_skipped", gledger.F{"step": step, "tool": resolved})
-			r.Board.Add(FindObservation, "already did "+describeAction(act)+" — do NOT repeat it; try a different endpoint or next step", step)
+			r.Board.Add(FindObservation, "already did "+describeAction(act)+" — do NOT send the same call again; READ the last tool result/error and CHANGE your arguments (fix the body shape, fields, method, or path), or move to the next step", step)
 			if bail(step) {
 				break
 			}
