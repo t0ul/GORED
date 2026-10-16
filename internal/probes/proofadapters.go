@@ -72,6 +72,51 @@ func ProofFromNuclei(f tools.NucleiFinding, app string) (core.Proof, bool) {
 	return p, true
 }
 
+// ffufExposure classifies a discovered path: a backup/dump, config/secret, VCS/metadata, or key file
+// is a sensitive-file exposure (CWE-538), reported here as a finding; any other discovered path is
+// unlinked surface worth recording but not itself a finding. Classification is by path shape, never
+// by an app-specific name, so it stays generic across targets.
+func ffufExposure(path string) (kind, cwe string, exposure bool) {
+	p := strings.ToLower(path)
+	switch {
+	case strings.HasPrefix(p, ".git") || strings.HasPrefix(p, ".svn") || strings.HasPrefix(p, ".hg"):
+		return "exposed version-control directory", "CWE-527", true
+	case strings.Contains(p, ".env") || strings.Contains(p, "secret") || strings.Contains(p, "credential") ||
+		strings.HasPrefix(p, "id_rsa") || strings.Contains(p, ".npmrc") || strings.Contains(p, "config") ||
+		strings.HasSuffix(p, ".config") || p == "web.config" || p == ".htaccess":
+		return "exposed configuration/secret file", "CWE-538", true
+	case strings.Contains(p, "backup") || strings.HasSuffix(p, ".bak") || strings.HasSuffix(p, ".sql") ||
+		strings.HasSuffix(p, ".zip") || strings.HasSuffix(p, ".tar.gz") || strings.Contains(p, "dump"):
+		return "exposed backup/dump file", "CWE-530", true
+	case p == ".ds_store" || strings.HasSuffix(p, ".ds_store"):
+		return "exposed metadata file", "CWE-538", true
+	default:
+		return "unlinked path discovered", "", false
+	}
+}
+
+// ProofFromFfuf normalizes a content-discovery hit. ffuf confirms a path EXISTS on the real target
+// (the status is the server's own), so a sensitive-file exposure sits at the present rung; it is
+// never exploitable on its own. A plain unlinked path is recorded at the reported rung as surface.
+// The repro is the re-runnable request. A 401/403 hit is access-controlled, so it is surface, not an
+// exposure.
+func ProofFromFfuf(f tools.FfufFinding, app string) (core.Proof, bool) {
+	if f.URL == "" {
+		return core.Proof{}, false
+	}
+	locus, _ := core.NormLocus(f.Path)
+	kind, cwe, exposure := ffufExposure(f.Path)
+	p := core.Proof{App: app, Locus: locus, Kind: kind, CWE: cwe, Source: "gored-ffuf",
+		Evidence: fmt.Sprintf("content discovery: %s returned HTTP %d (%d bytes)", f.URL, f.Status, f.Size),
+		Repro:    fmt.Sprintf("GET %s", f.URL)}
+	if exposure && f.Status != 401 && f.Status != 403 {
+		p.Rung, p.Confidence = core.LadderPresent, core.ConfMedium
+	} else {
+		p.Rung, p.Confidence = core.LadderReported, core.ConfLow
+	}
+	return p, true
+}
+
 // ProofFromNoSQLi normalizes a NoSQL-injection finding. A confirmed bypass is an executed
 // authentication bypass on real bytes — exploitable, certain — so it carries the operator
 // payload as the repro.

@@ -216,6 +216,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/memos/{id}", s.handleGetMemo)
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
+	s.mux.HandleFunc("GET /backup.zip", s.handleBackup)
 	s.mux.HandleFunc("POST /graphql", s.handleGraphQL)
 	s.mux.HandleFunc("GET /api/profile", s.handleGetProfile)
 	s.mux.HandleFunc("PUT /api/profile", s.handleUpdateProfile)
@@ -231,7 +232,14 @@ func (s *Server) routes() {
 // crawler (the discover tool) can enumerate it the way it would a real app. The
 // user's own notes (1-3) are linked; the admin note (1000) is NOT — reaching it is
 // the IDOR the exploit agent must discover by changing the id.
-func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	// The "GET /" pattern is a catch-all in Go's ServeMux, so guard it: a real app returns 404 for
+	// an unknown path, which is what makes content discovery (ffuf) meaningful — only genuinely
+	// served paths come back 200.
+	if r.URL.Path != "/" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
 	const page = `<!doctype html>
 <html><head><title>Notes</title></head><body>
 <h1>Notes</h1>
@@ -426,6 +434,20 @@ func matchVal(v any, actual string) bool {
 }
 
 func isOperator(v any) bool { _, ok := v.(map[string]any); return ok }
+
+// handleBackup is the content-discovery surface (CWE-530 sensitive-file exposure). The vulnerable
+// build serves a leftover backup archive at an UNLINKED path — the index never links /backup.zip,
+// so only forced-browsing content discovery (ffuf) finds it. The hardened build does not serve it
+// (404), closing the exposure. It carries no flag; the finding is that a sensitive file is reachable.
+func (s *Server) handleBackup(w http.ResponseWriter, _ *http.Request) {
+	if s.hardened {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("PK\x03\x04 demo backup archive (leftover, not linked from the app)\n"))
+}
 
 // graphqlSchema is the canned introspection response for the demo GraphQL endpoint: a query that
 // takes an id (note(id:ID) — the IDOR/BAC candidate the probe looks for), a list query, and a

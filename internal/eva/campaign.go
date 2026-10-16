@@ -39,6 +39,7 @@ type campaign struct {
 	Pass    int      // how many passes the loop has started
 	cancel  context.CancelFunc
 	nuclei  map[string][]tools.NucleiFinding // target base -> latest nuclei breadth findings (in-memory)
+	ffuf    map[string][]tools.FfufFinding   // target base -> latest ffuf content-discovery hits (in-memory)
 	graphql map[string]ingest.GraphQLSurface // target base -> introspected GraphQL surface (in-memory)
 }
 
@@ -56,6 +57,7 @@ func fromCampaign(sc store.Campaign) *campaign {
 		Status: sc.Status, Started: sc.Started, Elapsed: sc.Elapsed,
 		RunIDs: splitCSV(sc.RunIDs), Cur: sc.Cur, Loop: sc.Loop, Pass: sc.Pass,
 		nuclei:  map[string][]tools.NucleiFinding{},
+		ffuf:    map[string][]tools.FfufFinding{},
 		graphql: map[string]ingest.GraphQLSurface{},
 	}
 }
@@ -301,6 +303,28 @@ func (s *Server) runTargetNuclei(ctx context.Context, c *campaign, tg store.Targ
 	s.mu.Unlock()
 }
 
+// runTargetFfuf runs a contained ffuf content-discovery scan against the target and caches the hits
+// on the campaign, recording each discovered path into project memory so later passes seed from them.
+// Best-effort: a missing ffuf binary yields no hits. Single-target, gated by the egress allowlist.
+func (s *Server) runTargetFfuf(ctx context.Context, c *campaign, tg store.Target) {
+	gate := tools.NewGate(tools.DirectTransport{}, tools.NewEgress(hostPort(tg.Base)), nil)
+	fs, err := tools.FfufScanTool{Gate: gate, Base: tg.Base}.Scan(ctx, tg.Base)
+	if err != nil || len(fs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if c.ffuf == nil {
+		c.ffuf = map[string][]tools.FfufFinding{}
+	}
+	c.ffuf[tg.Base] = fs
+	s.mu.Unlock()
+	if s.store != nil {
+		for _, f := range fs {
+			_ = s.store.SaveSurface(tg.Name, "GET", "/"+f.Path, "ffuf")
+		}
+	}
+}
+
 // runTargetGraphQL introspects the target's GraphQL endpoint (if any) and caches the surface on the
 // campaign, recording the discovered operations into project memory as POST /graphql surface so later
 // passes seed from them. Best-effort: a target with no GraphQL endpoint or introspection disabled
@@ -377,7 +401,7 @@ func targetStages(t store.Target) []string {
 // startCampaign registers a campaign and launches its scheduler goroutine.
 func (s *Server) startCampaign(name, model string, targets []string, loop bool) *campaign {
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
-	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop, nuclei: map[string][]tools.NucleiFinding{}, graphql: map[string]ingest.GraphQLSurface{}}
+	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop, nuclei: map[string][]tools.NucleiFinding{}, ffuf: map[string][]tools.FfufFinding{}, graphql: map[string]ingest.GraphQLSurface{}}
 	s.mu.Lock()
 	s.campaigns[id] = c
 	s.corder = append([]string{id}, s.corder...)
@@ -434,6 +458,10 @@ func (s *Server) runCampaign(c *campaign) {
 			// exposure / CVE classes the model-loop depth probes do not (headers, host-header,
 			// error leak, dir listing). Contained + gated; results feed the pentest report.
 			s.runTargetNuclei(ctx, c, tg)
+			// Content discovery once per target per pass: ffuf finds unlinked endpoints, leftover
+			// backups, and config/secret files the route ingestion and crawl cannot see. Contained
+			// + gated; hits feed project memory and the pentest report.
+			s.runTargetFfuf(ctx, c, tg)
 			// Surface ingestion once per target per pass: introspect any GraphQL endpoint and fold
 			// the discovered operations into project memory + the report (the REST ingest is blind
 			// to GraphQL). Contained + gated; best-effort (no endpoint = no surface).
