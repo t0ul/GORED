@@ -356,11 +356,23 @@ func (s *Server) runTargetRecon(ctx context.Context, tg store.Target) {
 	}
 	egress := tools.NewEgress(hostPort(tg.Base))
 	sessions := tools.NewSessions()
-	// Log in each identity into the shared jar (same recipe the model-loop prelude uses).
+	// Log in each creds identity into the shared jar (CSRF-aware: GET the login page, extract the
+	// token, POST the credentials) so the crawl below sees each identity's authenticated surface.
 	login := tools.NewHTTPRequestTool(tg.Base, egress, nil)
 	login.Sessions = sessions
-	for _, pa := range loginPrelude(tg) {
-		_, _ = login.Call(ctx, pa.Args)
+	for _, id := range reconIdentities(tg) {
+		creds := tg.PrivCreds
+		if id == "low" {
+			creds = tg.LowCreds
+		}
+		if id == "" || creds == "" {
+			continue // anon needs no login
+		}
+		user, pass, _ := strings.Cut(creds, ":")
+		_, _ = login.Authenticate(ctx, id, tools.LoginSpec{
+			Type: tg.LoginType, Path: tg.LoginPath, UserField: tg.UserField, PassField: tg.PassField,
+			User: user, Pass: pass,
+		})
 	}
 	discover := probes.NewDiscoverTool(tg.Base, egress)
 	discover.Sessions = sessions
@@ -478,16 +490,14 @@ func loginPrelude(t store.Target) []core.PreludeAction {
 		if creds == "" {
 			return
 		}
-		body, ct := loginBody(t, creds)
+		user, pass, _ := strings.Cut(creds, ":")
 		out = append(out, core.PreludeAction{
 			Label: "login as " + session,
-			Tool:  "http_request",
+			Tool:  "login", // CSRF-aware login dispatched by the Runner's prelude (GET page -> token -> POST)
 			Args: map[string]any{
-				"method":  "POST",
-				"path":    t.LoginPath,
-				"body":    body,
-				"headers": map[string]any{"Content-Type": ct},
-				"session": session,
+				"login_type": t.LoginType, "login_path": t.LoginPath,
+				"user_field": t.UserField, "pass_field": t.PassField,
+				"user": user, "pass": pass, "session": session,
 			},
 		})
 	}

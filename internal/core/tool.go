@@ -15,6 +15,7 @@ type (
 	HTTPRequestTool = tools.HTTPRequestTool
 	ExecTool        = tools.ExecTool
 	DiffTool        = tools.DiffTool
+	LoginSpec       = tools.LoginSpec
 )
 
 var (

@@ -393,6 +393,28 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 // then sees the unauthenticated responses), so a bad credential never aborts the run.
 func (r *Runner) runPrelude(ctx context.Context, traceID string) {
 	for _, p := range r.Prelude {
+		// "login" is a CSRF-aware authentication step (GET the login page, extract the token, POST the
+		// credentials) rather than a plain tool call — it runs through the session-aware http_request
+		// tool so the login cookie lands in the named session jar.
+		if p.Tool == "login" {
+			h, _, ok := r.Tools.Resolve("http_request")
+			ht, isHTTP := h.(*HTTPRequestTool)
+			if !ok || !isHTTP {
+				r.emit(traceID, "prelude", "skipped", gledger.F{"label": p.Label, "reason": "no session-aware http_request tool"})
+				continue
+			}
+			out, err := ht.Authenticate(ctx, asString(p.Args["session"]), LoginSpec{
+				Type: asString(p.Args["login_type"]), Path: asString(p.Args["login_path"]),
+				UserField: asString(p.Args["user_field"]), PassField: asString(p.Args["pass_field"]),
+				User: asString(p.Args["user"]), Pass: asString(p.Args["pass"]),
+			})
+			if err != nil {
+				r.emit(traceID, "prelude", "error", gledger.F{"label": p.Label, "tool": "login", "error": errStr(err)})
+			} else {
+				r.emit(traceID, "prelude", "done", gledger.F{"label": p.Label, "tool": "login", "result": clipPrelude(out)})
+			}
+			continue
+		}
 		tool, _, ok := r.Tools.Resolve(p.Tool)
 		if !ok {
 			r.emit(traceID, "prelude", "skipped", gledger.F{"label": p.Label, "tool": p.Tool, "reason": "tool not in toolbox"})
