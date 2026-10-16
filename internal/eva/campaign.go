@@ -407,6 +407,11 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 	// the method + request-body shape of every fetch/XHR it makes, so the exploit phase sends a body
 	// that matches instead of guessing. Pure recon of the app's JS — no app-specific strings.
 	s.reconAPIShapes(ctx, tg, sessions, egress, jsPaths)
+	// Active probing (dynamic reverse-engineering): drive the mapped HTML pages in a real browser,
+	// submit their forms and fire their htmx/fetch triggers, and record the REAL requests — covers
+	// forms/htmx/axios that static JS mining cannot see. It submits, so it is for local throwaway
+	// targets; containment still blocks off-target hosts.
+	s.reconActiveProbe(ctx, tg, sessions, egress)
 	// Content discovery (ffuf fusion): the crawl only finds LINKED paths, so forced-browse the common
 	// unlinked ones (admin, backups, .git, .env, common /api/<word>), authenticated with the priv
 	// session cookie so it reaches the signed-in surface too. Fuzz the root and any /api prefix.
@@ -441,6 +446,33 @@ func (s *Server) reconAPIShapes(ctx context.Context, tg store.Target, sessions *
 			}
 			_ = s.store.SaveSurface(tg.Name, "", "", sh.Method, sh.Path, note)
 		}
+	}
+}
+
+// reconActiveProbe drives the mapped HTML pages in a real browser (as the priv identity), submits
+// their forms / fires their htmx+fetch triggers, and records the real request shapes the app sends —
+// framework-agnostic reverse-engineering from traffic. Best-effort (no Chrome = no-op); bounded to
+// the HTML pages the crawl found. It mutates (it submits), so it is for the local throwaway target.
+func (s *Server) reconActiveProbe(ctx context.Context, tg store.Target, sessions *tools.Sessions, egress *tools.Egress) {
+	rows, err := s.store.ListSurface(tg.Name)
+	if err != nil {
+		return
+	}
+	pages := htmlRenderPages(rows)
+	if len(pages) == 0 {
+		pages = []string{"/"}
+	}
+	ap := &probes.ActiveProbe{Base: tg.Base, Egress: egress, Sessions: sessions, Session: "priv"}
+	shapes, err := ap.Probe(ctx, pages)
+	if err != nil {
+		return
+	}
+	for _, sh := range shapes {
+		note := "clientshape"
+		if len(sh.Fields) > 0 {
+			note = "clientshape fields=" + strings.Join(sh.Fields, ",")
+		}
+		_ = s.store.SaveSurface(tg.Name, "", "", sh.Method, sh.Path, note)
 	}
 }
 
