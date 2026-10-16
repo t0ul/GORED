@@ -60,6 +60,7 @@ type FfufScanTool struct {
 	Base     string
 	Bin      string   // default DefaultFfufBin()
 	Wordlist []string // default ffufWordlist
+	Headers  []string // extra request headers, e.g. "Cookie: session=..." to fuzz the authenticated surface
 }
 
 func (FfufScanTool) Name() string { return "ffuf_scan" }
@@ -113,6 +114,11 @@ func (t FfufScanTool) Scan(ctx context.Context, target string) ([]FfufFinding, e
 	// Contained invocation: single target, no recursion, JSON records to stdout, silent.
 	argv := []string{bin, "-u", base + "/FUZZ", "-w", wl.Name(),
 		"-mc", "200,204,301,302,307,401,403", "-json", "-s"}
+	for _, h := range t.Headers {
+		if strings.TrimSpace(h) != "" {
+			argv = append(argv, "-H", h) // carry auth (e.g. a session cookie) to fuzz the signed-in surface
+		}
+	}
 	out, err := t.Gate.Detonate(ctx, target, argv)
 	if err != nil {
 		return nil, err

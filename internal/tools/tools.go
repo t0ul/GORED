@@ -144,6 +144,25 @@ func NewSessions() *Sessions {
 	return &Sessions{clients: map[string]*http.Client{}, timeout: 8 * time.Second}
 }
 
+// CookieHeader renders the session's cookies for rawurl as a "k=v; k2=v2" Cookie header, so a
+// subprocess scanner (e.g. ffuf) can carry the same login the session jar holds. Empty when the
+// session has no cookies for that URL (or the URL is bad).
+func (s *Sessions) CookieHeader(session, rawurl string) string {
+	u, err := url.Parse(rawurl)
+	if err != nil {
+		return ""
+	}
+	jar := s.Client(session).Jar
+	if jar == nil {
+		return ""
+	}
+	var parts []string
+	for _, c := range jar.Cookies(u) {
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	return strings.Join(parts, "; ")
+}
+
 // Client returns the client for a session name, lazily giving each its own cookie
 // jar so logging in once keeps the agent logged in as that identity. Every name,
 // the empty default included, is stateful — statefulness by default — while named
