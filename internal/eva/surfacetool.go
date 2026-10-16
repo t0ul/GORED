@@ -18,6 +18,7 @@ type surfaceSaveTool struct {
 	store  *store.Store
 	target string
 	model  string
+	runID  string
 }
 
 func (surfaceSaveTool) Name() string { return "save_surface" }
@@ -45,7 +46,7 @@ func (t surfaceSaveTool) Call(ctx context.Context, args map[string]any) (string,
 	if note == "" {
 		note = "model-reported"
 	}
-	if err := t.store.SaveSurface(t.target, t.model, method, path, note); err != nil {
+	if err := t.store.SaveSurface(t.target, t.model, t.runID, method, path, note); err != nil {
 		return "", fmt.Errorf("save_surface: %w", err)
 	}
 	return fmt.Sprintf("saved %s %s to project memory (model %q)", method, path, t.model), nil

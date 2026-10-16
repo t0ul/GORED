@@ -281,7 +281,7 @@ func (s *Server) recordProjectMemory(target string, rn *run) {
 	}
 	_, findings, surface, _, _ := parseRunTrace(rn.Trace)
 	for _, n := range surface {
-		_ = s.store.SaveSurface(target, rn.Model, n.Method, n.Path, n.Last)
+		_ = s.store.SaveSurface(target, rn.Model, rn.ID, n.Method, n.Path, n.Last)
 	}
 	for _, f := range findings {
 		if f.Type == "observation" || f.Value == "" {
@@ -393,7 +393,7 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 			label = "recon:" + id
 		}
 		for _, p := range discoveredPaths(out) {
-			_ = s.store.SaveSurface(tg.Name, "", "GET", p, label)
+			_ = s.store.SaveSurface(tg.Name, "", "", "GET", p, label)
 			if strings.HasPrefix(p, "/api") {
 				seenAPI = true
 			}
@@ -426,7 +426,7 @@ func (s *Server) reconContentDisc(ctx context.Context, c *campaign, tg store.Tar
 			continue
 		}
 		for _, f := range fs {
-			_ = s.store.SaveSurface(tg.Name, "", "GET", urlPath(f.URL), "ffuf")
+			_ = s.store.SaveSurface(tg.Name, "", "", "GET", urlPath(f.URL), "ffuf")
 			hits = append(hits, f)
 		}
 	}
@@ -474,7 +474,7 @@ func (s *Server) runTargetGraphQL(ctx context.Context, c *campaign, tg store.Tar
 	s.mu.Unlock()
 	if s.store != nil {
 		for _, o := range surf.Ops {
-			_ = s.store.SaveSurface(tg.Name, "", "POST", "/graphql "+o.Kind+" "+o.Name, "introspected")
+			_ = s.store.SaveSurface(tg.Name, "", "", "POST", "/graphql "+o.Kind+" "+o.Name, "introspected")
 		}
 	}
 }

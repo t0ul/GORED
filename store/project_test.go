@@ -1,17 +1,16 @@
 package store_test
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 
 	"github.com/t0ul/GORED/store"
 )
 
-// Surface rows are attributed per model: the same path found by two models is kept as two distinct
-// rows, and "" is the shared deterministic-recon surface — so a researcher can compare what each
-// model mapped on the same target instead of them overwriting one another.
-func TestSurfacePerModel(t *testing.T) {
+// The target is the unit of memory: the same endpoint found by two models is ONE row on the
+// canonical map (so any later run seeds from the whole map and never starts over), while who found
+// it is recorded per model in the attribution ledger — the point of the tweak.
+func TestSurfaceMapAndAttribution(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -25,67 +24,43 @@ func TestSurfacePerModel(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	must(st.SaveSurface(tgt, "qwen", "GET", "/api/molts/{id}", "qwen found it"))
-	must(st.SaveSurface(tgt, "granite", "GET", "/api/molts/{id}", "granite found it too"))
-	must(st.SaveSurface(tgt, "", "GET", "/login", "recon"))
+	// Two models find the same endpoint; recon finds another.
+	must(st.SaveSurface(tgt, "qwen", "run1", "GET", "/api/molts/{id}", "qwen found it"))
+	must(st.SaveSurface(tgt, "granite", "run2", "GET", "/api/molts/{id}", "granite found it too"))
+	must(st.SaveSurface(tgt, "", "", "GET", "/login", "recon"))
 
+	// The MAP is by target: one row per endpoint (not one per model) — this is what seeds a run.
 	all, err := st.ListSurface(tgt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 3 {
-		t.Fatalf("expected 3 rows across models, got %d: %+v", len(all), all)
+	if len(all) != 2 {
+		t.Fatalf("map should have 2 endpoints (deduped across models), got %d: %+v", len(all), all)
+	}
+	if st.CountSurface(tgt) != 2 {
+		t.Fatalf("map count should be 2, got %d", st.CountSurface(tgt))
 	}
 
+	// Attribution is per model: both models' sighting of /api/molts/{id} is recorded distinctly.
 	qwen, err := st.ListSurfaceByModel(tgt, "qwen")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(qwen) != 1 || qwen[0].Path != "/api/molts/{id}" || qwen[0].Model != "qwen" {
-		t.Fatalf("qwen view wrong: %+v", qwen)
+	if len(qwen) != 1 || qwen[0].Path != "/api/molts/{id}" || qwen[0].RunID != "run1" {
+		t.Fatalf("qwen attribution wrong: %+v", qwen)
 	}
-	shared, err := st.ListSurfaceByModel(tgt, "")
-	if err != nil {
-		t.Fatal(err)
+	granite, _ := st.ListSurfaceByModel(tgt, "granite")
+	if len(granite) != 1 || granite[0].RunID != "run2" {
+		t.Fatalf("granite attribution wrong: %+v", granite)
 	}
-	if len(shared) != 1 || shared[0].Path != "/login" {
-		t.Fatalf("shared recon view wrong: %+v", shared)
+	finds, _ := st.ListSurfaceFinds(tgt)
+	if len(finds) != 3 { // qwen+granite on /api/molts/{id}, recon "" on /login
+		t.Fatalf("ledger should have 3 sightings, got %d: %+v", len(finds), finds)
 	}
 
-	// Re-saving the same (target, model, path) refreshes, not duplicates.
-	must(st.SaveSurface(tgt, "qwen", "GET", "/api/molts/{id}", "refreshed"))
-	if n := st.CountSurface(tgt); n != 3 {
-		t.Fatalf("refresh should not duplicate; count=%d", n)
-	}
-}
-
-// A legacy project_surface (no model column) is blown away and rebuilt with the new schema on Open,
-// per the research-scratch brief — Open must succeed and the new column must work.
-func TestSurfaceLegacyRebuild(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE project_surface (target TEXT, method TEXT, path TEXT, last TEXT, ts TEXT, PRIMARY KEY (target, method, path))`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO project_surface VALUES ('t','GET','/old','recon','now')`); err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
-
-	st, err := store.Open(path)
-	if err != nil {
-		t.Fatalf("Open must rebuild a legacy surface table, got: %v", err)
-	}
-	defer st.Close()
-	// The rebuild dropped the old row (research scratch, not migrated) and the model column works.
-	if err := st.SaveSurface("t", "qwen", "GET", "/new", "note"); err != nil {
-		t.Fatalf("new schema broken after rebuild: %v", err)
-	}
-	rows, _ := st.ListSurfaceByModel("t", "qwen")
-	if len(rows) != 1 || rows[0].Path != "/new" {
-		t.Fatalf("expected the new model-attributed row, got %+v", rows)
+	// Re-saving refreshes the same sighting, never duplicates it.
+	must(st.SaveSurface(tgt, "qwen", "run3", "GET", "/api/molts/{id}", "again"))
+	if q, _ := st.ListSurfaceByModel(tgt, "qwen"); len(q) != 1 || q[0].RunID != "run3" {
+		t.Fatalf("refresh should update not duplicate: %+v", q)
 	}
 }

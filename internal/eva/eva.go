@@ -219,7 +219,7 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 	// model's map is its own (not scraped from the trace, not co-mingled). Campaign runs carry a
 	// target name; an interactive sortie without one simply has no recorder.
 	if s.store != nil && rn.targetName != "" {
-		opts = append(opts, appsweep.WithExtraTools(surfaceSaveTool{store: s.store, target: rn.targetName, model: rn.Model}))
+		opts = append(opts, appsweep.WithExtraTools(surfaceSaveTool{store: s.store, target: rn.targetName, model: rn.Model, runID: rn.ID}))
 	}
 
 	results, err := appsweep.Run(ctx, f, stage, opts...)
