@@ -1,10 +1,14 @@
 package probes
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -76,15 +80,16 @@ func chromePath() string {
 	return ""
 }
 
-// Probe navigates a headless browser to the target with each payload and returns the first that
-// executes. tmpl is a URL containing the literal marker FUZZ where the payload goes.
-func (p *DOMXSSProbe) Probe(ctx context.Context, tmpl string) (DOMXSSFinding, error) {
-	to := p.Timeout
+// browserSession launches a contained headless browser for the target and returns its context, the
+// off-target-request counter, and a cleanup func. Containment: every browser request is intercepted
+// and only the target host (plus about:/data:/blob: internals) is allowed; an off-target request — a
+// payload beaconing out — is failed and counted, the browser-level analog of the egress allowlist.
+// Shared by the reflected (Probe) and stored (ProbeStored) probes.
+func browserSession(ctx context.Context, base string, to time.Duration) (context.Context, *int64, func(), error) {
 	if to == 0 {
 		to = 30 * time.Second
 	}
 	baseCtx, cancelT := context.WithTimeout(ctx, to)
-	defer cancelT()
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.NoSandbox,
@@ -97,19 +102,15 @@ func (p *DOMXSSProbe) Probe(ctx context.Context, tmpl string) (DOMXSSFinding, er
 		opts = append(opts, chromedp.ExecPath(cp))
 	}
 	allocCtx, cancelA := chromedp.NewExecAllocator(baseCtx, opts...)
-	defer cancelA()
 	// Silence chromedp's async event logger: a current Chrome emits a newer Network IPAddressSpace
 	// enum (e.g. "Loopback") than this cdproto knows, so it logs an unmarshal error for every
 	// request event. That noise is cosmetic — the oracle is the window.__gored read-back, and real
 	// failures still surface through chromedp.Run — so drop it rather than spam the campaign log.
 	bctx, cancelB := chromedp.NewContext(allocCtx, chromedp.WithErrorf(func(string, ...interface{}) {}))
-	defer cancelB()
+	cleanup := func() { cancelB(); cancelA(); cancelT() }
 
-	// Containment: intercept every browser request and allow only the target host (plus
-	// about:/data:/blob: internals). An off-target request — a payload beaconing out — is failed
-	// and counted, the browser-level analog of the egress allowlist denying a scanner beacon.
-	allowHost := hostOf(p.Base)
-	var denied int64
+	allowHost := hostOf(base)
+	denied := new(int64)
 	chromedp.ListenTarget(bctx, func(ev interface{}) {
 		e, ok := ev.(*fetch.EventRequestPaused)
 		if !ok {
@@ -122,13 +123,25 @@ func (p *DOMXSSProbe) Probe(ctx context.Context, tmpl string) (DOMXSSFinding, er
 				_ = fetch.ContinueRequest(e.RequestID).Do(ectx)
 				return
 			}
-			atomic.AddInt64(&denied, 1)
+			atomic.AddInt64(denied, 1)
 			_ = fetch.FailRequest(e.RequestID, network.ErrorReasonBlockedByClient).Do(ectx)
 		}()
 	})
 	if err := chromedp.Run(bctx, fetch.Enable()); err != nil {
+		cleanup()
+		return nil, nil, func() {}, err
+	}
+	return bctx, denied, cleanup, nil
+}
+
+// Probe navigates a headless browser to the target with each payload and returns the first that
+// executes. tmpl is a URL containing the literal marker FUZZ where the payload goes.
+func (p *DOMXSSProbe) Probe(ctx context.Context, tmpl string) (DOMXSSFinding, error) {
+	bctx, denied, cleanup, err := browserSession(ctx, p.Base, p.Timeout)
+	if err != nil {
 		return DOMXSSFinding{}, fmt.Errorf("dom_xss: start browser: %w", err)
 	}
+	defer cleanup()
 
 	for _, pl := range domxssPayloads {
 		nonce := "gored" + nonceHex()
@@ -152,11 +165,11 @@ func (p *DOMXSSProbe) Probe(ctx context.Context, tmpl string) (DOMXSSFinding, er
 			return DOMXSSFinding{
 				URL: u, Payload: fmt.Sprintf(pl, nonce), CWE: "CWE-79", Confidence: core.ConfCertain,
 				Evidence: fmt.Sprintf("payload executed in a real browser (nonce %s written to window.__gored) at %s", nonce, u),
-				Denied:   int(atomic.LoadInt64(&denied)),
+				Denied:   int(atomic.LoadInt64(denied)),
 			}, nil
 		}
 	}
-	return DOMXSSFinding{Denied: int(atomic.LoadInt64(&denied))}, nil
+	return DOMXSSFinding{Denied: int(atomic.LoadInt64(denied))}, nil
 }
 
 // nonceHex returns a short random hex token used to prove a payload executed (the browser writes it
@@ -247,4 +260,232 @@ func domxssTemplate(args map[string]any, base string) (string, error) {
 		sep = "&"
 	}
 	return raw + sep + param + "=FUZZ", nil
+}
+
+// InjectSpec describes the write that plants a stored payload: a method+path, the field that carries
+// the payload, and any other fields the write requires. Form picks form-encoding over JSON.
+type InjectSpec struct {
+	Method, Path, Field string
+	Other               map[string]string
+	Form                bool
+}
+
+// StoredXSSProbe confirms STORED XSS: it plants a nonce execution payload through a write endpoint
+// (as the authenticated identity), then loads each render page in a real browser (carrying the same
+// session) and reports the first payload that executes there. Injected at A, executed at B — the
+// browser's own execution is the oracle, exactly like the reflected probe, so a stored-but-escaped
+// value never fires (no false positive). Nothing app-specific is compiled in: the caller supplies
+// the write endpoint, the field and the render pages from the recon map.
+type StoredXSSProbe struct {
+	Base     string
+	Egress   *core.Egress
+	Sessions *core.Sessions
+	Session  string // identity whose cookie jar authorizes the plant and the render
+	Timeout  time.Duration
+}
+
+// ProbeStored plants each payload through inject, then checks whether it executes on any render page.
+func (p *StoredXSSProbe) ProbeStored(ctx context.Context, inject InjectSpec, renderPaths []string) (DOMXSSFinding, error) {
+	if len(renderPaths) == 0 {
+		return DOMXSSFinding{}, fmt.Errorf("stored_xss: need at least one render page")
+	}
+	bctx, denied, cleanup, err := browserSession(ctx, p.Base, p.Timeout)
+	if err != nil {
+		return DOMXSSFinding{}, fmt.Errorf("stored_xss: start browser: %w", err)
+	}
+	defer cleanup()
+
+	// Carry the authenticated session into the browser so render pages behind login load as the
+	// signed-in identity (RR-H1's render pages are the approver/Sheriff pages).
+	if p.Sessions != nil && p.Session != "" {
+		if u, e := url.Parse(p.Base); e == nil {
+			if cookies := p.Sessions.Client(p.Session).Jar.Cookies(u); len(cookies) > 0 {
+				host := u.Hostname()
+				if err := chromedp.Run(bctx, chromedp.ActionFunc(func(cx context.Context) error {
+					exp := cdp.TimeSinceEpoch(time.Now().Add(24 * time.Hour))
+					for _, c := range cookies {
+						if e := network.SetCookie(c.Name, c.Value).WithDomain(host).WithPath("/").WithExpires(&exp).Do(cx); e != nil {
+							return e
+						}
+					}
+					return nil
+				})); err != nil {
+					return DOMXSSFinding{}, fmt.Errorf("stored_xss: set session cookie: %w", err)
+				}
+			}
+		}
+	}
+
+	for _, pl := range domxssPayloads {
+		nonce := "gored" + nonceHex()
+		payload := fmt.Sprintf(pl, nonce)
+		if err := p.plant(ctx, inject, payload); err != nil {
+			continue // this write was rejected; try the next payload/context
+		}
+		for _, rp := range renderPaths {
+			ru := strings.TrimRight(p.Base, "/") + ensureLeadingSlash(rp)
+			if p.Egress == nil || !p.Egress.Allowed(ru) {
+				continue
+			}
+			var got string
+			err := chromedp.Run(bctx,
+				chromedp.Navigate(ru),
+				chromedp.Sleep(300*time.Millisecond),
+				chromedp.Evaluate(`window.__gored || ""`, &got),
+			)
+			if err != nil {
+				continue
+			}
+			if got == nonce {
+				return DOMXSSFinding{
+					URL: ru, Payload: payload, CWE: "CWE-79", Confidence: core.ConfCertain,
+					Evidence: fmt.Sprintf("stored payload planted via %s %s executed in a real browser (nonce %s) when %s rendered it", strings.ToUpper(def(inject.Method, "POST")), inject.Path, nonce, ru),
+					Denied:   int(atomic.LoadInt64(denied)),
+				}, nil
+			}
+		}
+	}
+	return DOMXSSFinding{Denied: int(atomic.LoadInt64(denied))}, nil
+}
+
+// plant sends the write that stores the payload, as the authenticated identity, egress-gated.
+func (p *StoredXSSProbe) plant(ctx context.Context, inject InjectSpec, payload string) error {
+	raw := strings.TrimRight(p.Base, "/") + ensureLeadingSlash(inject.Path)
+	if p.Egress == nil || !p.Egress.Allowed(raw) {
+		return fmt.Errorf("egress denied: %s", raw)
+	}
+	var body io.Reader
+	var ctype string
+	if inject.Form {
+		vals := url.Values{}
+		if inject.Field != "" {
+			vals.Set(inject.Field, payload)
+		}
+		for k, v := range inject.Other {
+			vals.Set(k, v)
+		}
+		body, ctype = strings.NewReader(vals.Encode()), "application/x-www-form-urlencoded"
+	} else {
+		m := map[string]string{}
+		if inject.Field != "" {
+			m[inject.Field] = payload
+		}
+		for k, v := range inject.Other {
+			m[k] = v
+		}
+		b, _ := json.Marshal(m)
+		body, ctype = bytes.NewReader(b), "application/json"
+	}
+	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(def(inject.Method, http.MethodPost)), raw, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", ctype)
+	resp, err := p.Sessions.Client(p.Session).Do(req) // authed jar
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("write rejected: HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func ensureLeadingSlash(p string) string {
+	if !strings.HasPrefix(p, "/") {
+		return "/" + p
+	}
+	return p
+}
+
+func def(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+// StoredXSSTool (stored_xss) plants a payload through a write endpoint and confirms it executes when
+// a render page displays it — stored XSS, the vibecoder's classic "user input rendered unescaped".
+// The browser's execution is the oracle; the model supplies the endpoints from the mapped surface.
+type StoredXSSTool struct {
+	Gate     *tools.Gate
+	Base     string
+	Sessions *core.Sessions // authed jar shared with recon/login
+	Session  string         // identity to plant + view as (default "priv")
+}
+
+func (StoredXSSTool) Name() string { return "stored_xss" }
+func (StoredXSSTool) Describe() string {
+	return `Confirm STORED cross-site scripting (CWE-79): plant a payload through a write endpoint, then check it EXECUTES in a real browser when a page renders it. ` +
+		`args: {"method":"POST","path":"/api/ingest","field":"title","other":{"severity":"High"},"form":false,"render":["/dashboard","/admin"]}. ` +
+		`It injects a unique nonce payload into "field", posts it as your session, loads each "render" page in a headless browser, and confirms only when the payload runs there. Use it on ingest/create/upload endpoints whose data is shown back on an HTML page.`
+}
+
+func (t StoredXSSTool) Call(ctx context.Context, args map[string]any) (string, error) {
+	inject := InjectSpec{
+		Method: tools.AsString(args["method"]),
+		Path:   tools.AsString(args["path"]),
+		Field:  tools.AsString(args["field"]),
+		Form:   asBool(args["form"]),
+		Other:  asStringMap(args["other"]),
+	}
+	if inject.Path == "" {
+		return "", fmt.Errorf("stored_xss: need a write 'path'")
+	}
+	render := asStringSlice(args["render"])
+	if len(render) == 0 {
+		return "", fmt.Errorf("stored_xss: need 'render' pages (where the planted data is displayed)")
+	}
+	session := tools.AsString(args["session"])
+	if session == "" {
+		session = t.Session
+	}
+	if session == "" {
+		session = "priv"
+	}
+	p := &StoredXSSProbe{Base: t.Base, Egress: t.Gate.Egress(), Sessions: t.Sessions, Session: session}
+	f, err := p.ProbeStored(ctx, inject, render)
+	if err != nil {
+		return "", err
+	}
+	if f.Flagged() {
+		return DOMXSSSentinel + " " + f.Evidence, nil
+	}
+	return "no stored xss: planted payloads did not execute on the render pages", nil
+}
+
+func asBool(v any) bool { b, _ := v.(bool); return b }
+
+func asStringSlice(v any) []string {
+	switch x := v.(type) {
+	case []string:
+		return x
+	case []any:
+		var out []string
+		for _, e := range x {
+			if s := tools.AsString(e); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if x != "" {
+			return []string{x}
+		}
+	}
+	return nil
+}
+
+func asStringMap(v any) map[string]string {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, e := range m {
+		out[k] = tools.AsString(e)
+	}
+	return out
 }

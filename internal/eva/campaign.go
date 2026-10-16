@@ -693,6 +693,7 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 	if len(eps) > exploitEndpointCap {
 		eps = eps[:exploitEndpointCap]
 	}
+	renderPages := htmlRenderPages(rows) // where a stored payload could execute (for the ingest/upload class)
 	for _, ep := range eps {
 		select {
 		case <-ctx.Done():
@@ -706,7 +707,7 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		case <-ctx.Done():
 			return true
 		}
-		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep))
+		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep, renderPages))
 		s.execute(rn, rn.flags, stage)
 		s.recordProjectMemory(tg.Name, rn)
 	}
@@ -716,7 +717,7 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 // exploitInstruction builds the FOCUSED prompt for one exploit run: attack a single, already-mapped
 // endpoint, no crawling. It stays small on purpose (one endpoint + the auth note + the fitting
 // technique), so the model's context never grows to the whole surface.
-func exploitInstruction(tg store.Target, ep rankedEndpoint) string {
+func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are an authorized red-team agent. The app at %s is ALREADY MAPPED — do NOT crawl, fingerprint, or hunt for other paths.\n", tg.Base)
 	if ap := authPreamble(tg); ap != "" {
@@ -724,6 +725,9 @@ func exploitInstruction(tg store.Target, ep rankedEndpoint) string {
 	}
 	fmt.Fprintf(&b, "\nAttack EXACTLY this one endpoint:\n  %s %s   [%s — %s]\n\n", ep.Method, ep.Path, ep.Class, ep.Why)
 	b.WriteString(exploitHint(ep))
+	if (ep.Class == "ingest" || ep.Class == "upload") && len(renderPages) > 0 {
+		fmt.Fprintf(&b, "\nRender pages (where stored data is shown — pass these to stored_xss as \"render\"): %s", strings.Join(renderPages, ", "))
+	}
 	b.WriteString("\nSend real values you obtain, never a placeholder. Confirm any finding on the actual response bytes and report it. If this endpoint is not vulnerable, say so plainly and stop — do not wander to other paths.")
 	return b.String()
 }
@@ -739,7 +743,7 @@ func exploitHint(ep rankedEndpoint) string {
 	case "auth":
 		return "This is an auth endpoint. Try the nosqli tool for operator-injection authentication bypass, or jwt_forge on a token the app issued and replay the escalated token on a protected path."
 	case "upload", "ingest":
-		return "This ingests data. Probe for unrestricted upload / path traversal / injection on the parsed input with api_request."
+		return "This WRITES/ingests data that is often shown back on an HTML page. Use the stored_xss tool: it plants a nonce payload through this endpoint (field = a text field like title/name/description, plus any other required fields in \"other\") and confirms it EXECUTES when a render page displays it (pass the render pages listed below). Also probe unrestricted upload / path traversal / injection on the parsed input with api_request."
 	case "export":
 		return "This produces a document/report. Test for document IDOR / path traversal / info leak by varying its id or path parameter with api_request."
 	case "search":

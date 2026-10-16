@@ -105,6 +105,42 @@ func prioritizedEndpoints(rows []store.SurfaceRow) (eps []rankedEndpoint, untier
 	return eps, untiered
 }
 
+// htmlRenderPages picks the mapped paths that are HTML pages a browser would render — GET paths that
+// are not API routes and not static assets — so a stored-XSS attempt knows where planted data could
+// execute. Deduped and capped. Generic: it reads the recon map, not any app-specific list.
+func htmlRenderPages(rows []store.SurfaceRow) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range rows {
+		if r.Method != "" && strings.ToUpper(r.Method) != "GET" {
+			continue
+		}
+		p := r.Path
+		if p == "" || strings.ContainsAny(p, " ") || strings.HasPrefix(strings.ToLower(p), "/api") || isStaticAsset(p) {
+			continue
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
+}
+
+func isStaticAsset(p string) bool {
+	lp := strings.ToLower(p)
+	for _, ext := range []string{".js", ".css", ".png", ".jpg", ".jpeg", ".svg", ".ico", ".woff", ".woff2", ".map", ".gif"} {
+		if strings.HasSuffix(lp, ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // prioritizedPlan renders the ranked attack plan (crown jewels first, each tagged with class + tool),
 // capped and with a tail count of the lower-value paths. It is the human/console view of the same
 // worklist prioritizedEndpoints yields.
