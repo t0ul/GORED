@@ -20,8 +20,8 @@ type APIRequestTool struct {
 func (APIRequestTool) Name() string { return "api_request" }
 func (APIRequestTool) Describe() string {
 	return `Make an HTTP request with a method, headers and a body (for JSON APIs and authenticated calls). ` +
-		`args: {"method":"GET|POST|PUT|PATCH|DELETE","path":"/api/notes/1000","headers":{"X-Session":"<token>"},"body":"{...}"}. ` +
-		`Use it to send a session/Authorization header, read a record that belongs to another user by changing an id in the path, ` +
+		`args: {"method":"GET|POST|PUT|PATCH|DELETE","path":"/<collection>/<id>","headers":{"<Header>":"<value>"},"body":"{...}"}. ` +
+		`Use a path you actually discovered (never a path from this example). Send a session/Authorization header, read a record that belongs to another user by changing an id in the path, ` +
 		`or POST/PUT a JSON body with an extra privileged field. Returns the status code and the response body.`
 }
 

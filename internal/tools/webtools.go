@@ -36,7 +36,7 @@ type GetTool struct {
 func (GetTool) Name() string { return "http_request" }
 func (GetTool) Describe() string {
 	return `HTTP GET a URL on the target and return the response body. ` +
-		`args: {"url":"http://127.0.0.1:8088/greeting?name=test"} or {"path":"/greeting?name=test"}. ` +
+		`args: {"url":"http://<target>/<path>?name=test"} or {"path":"/<path>?name=test"}. ` +
 		`Use it to map the app (start at "/", follow the links) and to see which surfaces return HTML pages and which return JSON.`
 }
 func (t GetTool) Call(ctx context.Context, args map[string]any) (string, error) {
@@ -71,7 +71,7 @@ type FingerprintTool struct {
 func (FingerprintTool) Name() string { return "fingerprint" }
 func (FingerprintTool) Describe() string {
 	return `Identify a URL's surface type and technology stack. ` +
-		`args: {"url":"http://127.0.0.1:8088/"} or {"path":"/"}. It classifies the surface from the ` +
+		`args: {"url":"http://<target>/"} or {"path":"/"}. It classifies the surface from the ` +
 		`real response — an HTML page, a client-rendered single-page-app (SPA) shell, or a JSON API — ` +
 		`and runs the webanalyze scanner for any named technology (for example a JavaScript framework). ` +
 		`Reflected cross-site scripting applies to HTML surfaces that write input back into the page; a ` +
@@ -115,7 +115,7 @@ type XSSScanTool struct {
 func (XSSScanTool) Name() string { return "xss_scan" }
 func (XSSScanTool) Describe() string {
 	return `Scan a URL for reflected/DOM cross-site scripting with the dalfox scanner. ` +
-		`args: {"url":"http://127.0.0.1:8088/greeting?name=FUZZ"}. Put the literal marker FUZZ where a ` +
+		`args: {"url":"http://<target>/<path>?name=FUZZ"}. Put the literal marker FUZZ where a ` +
 		`parameter's value goes to focus the scan on that parameter. Cross-site scripting applies to ` +
 		`HTML pages that reflect your input, NOT to a JSON API. It returns dalfox's result; a result ` +
 		`reporting a confirmed finding means a real XSS exists on that parameter. Give it a URL you found ` +
@@ -160,7 +160,7 @@ type JSEndpointsTool struct {
 func (JSEndpointsTool) Name() string { return "js_endpoints" }
 func (JSEndpointsTool) Describe() string {
 	return `Fetch a JavaScript bundle and list the API paths and URLs it references. ` +
-		`args: {"url":"http://127.0.0.1:8088/main.js"} or {"path":"/main.js"}. Use it on a single-page ` +
+		`args: {"url":"http://<target>/app.js"} or {"path":"/app.js"}. Use it on a single-page ` +
 		`app's script bundle to discover the server endpoints the client calls, then probe those with http_request.`
 }
 func (t JSEndpointsTool) Call(ctx context.Context, args map[string]any) (string, error) {
