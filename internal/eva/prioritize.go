@@ -16,10 +16,13 @@ import (
 // this at a real app the operator is not mutating stays safe by default.
 
 type endpointClass struct {
-	tier  int // 1 = crown jewels, 2 = state-changing/data, 3 = info/ssrf, 0 = untiered (plain page/asset)
-	class string
-	tool  string
-	why   string
+	tier       int // 1 = crown jewels, 2 = state-changing/data, 3 = info/ssrf, 0 = untiered (plain page/asset)
+	class      string
+	tool       string
+	why        string
+	difficulty int // how hard this class is for a weak local model to LAND: 1 easy .. 3 hard. The
+	// exploit phase works easiest-first (strong one-shot oracles before id-enumeration/authz), so a
+	// weak model banks the wins it can get before the hard IDOR/admin classes.
 }
 
 // an id-like path segment: a {template} param, an all-numeric segment, or a long opaque token (uuid/slug).
@@ -40,27 +43,27 @@ func classifyEndpoint(method, path string) endpointClass {
 	}
 	switch {
 	case has("login", "signin", "sign-in", "/auth", "token", "register", "signup", "password", "reset", "activate", "session"):
-		return endpointClass{1, "auth", "nosqli / jwt_forge", "authn bypass (operator injection) or forge/replay a token"}
+		return endpointClass{1, "auth", "nosqli / jwt_forge", "authn bypass (operator injection) or forge/replay a token", 2}
 	case has("/admin", "krabmin", "administrator"):
-		return endpointClass{1, "admin", "bola", "function-level authz: can the low identity reach it?"}
+		return endpointClass{1, "admin", "bola", "function-level authz: can the low identity reach it?", 3}
 	case has("upload", "/images/"):
-		return endpointClass{2, "upload", "api_request", "unrestricted upload / path traversal / SSRF via parse"}
+		return endpointClass{2, "upload", "stored_xss / api_request", "unrestricted upload / path traversal / stored XSS on the shown value", 2}
 	case has("ingest", "import", "/parse"):
-		return endpointClass{2, "ingest", "api_request", "injection / XXE / deserialization on ingested data"}
+		return endpointClass{2, "ingest", "stored_xss / api_request", "stored XSS / injection on ingested data shown back on a page", 2}
 	case has("export", "download", "report", ".csv", ".ics", ".pdf", "branded"):
-		return endpointClass{2, "export", "api_request", "document IDOR / path traversal / info leak"}
+		return endpointClass{2, "export", "api_request", "document IDOR / path traversal / info leak", 1}
 	case has("search", "query", "filter", "?q=", "/q/"):
-		return endpointClass{2, "search", "dom_xss / nosqli", "injection + reflected/DOM XSS on the query param"}
+		return endpointClass{2, "search", "dom_xss / nosqli", "injection + reflected/DOM XSS on the query param", 1}
 	case has("config", "status", "debug", "actuator", "metrics", "health", "/logs", "/stats"):
-		return endpointClass{3, "info", "api_request", "info / secret disclosure"}
+		return endpointClass{3, "info", "api_request", "info / secret disclosure", 1}
 	case has("fetch", "proxy", "webhook", "integration", "url="):
-		return endpointClass{3, "ssrf", "api_request", "server-side request forgery"}
+		return endpointClass{3, "ssrf", "api_request", "server-side request forgery", 2}
 	case m == "POST" || m == "PUT" || m == "PATCH" || m == "DELETE":
-		return endpointClass{2, "write", "mass_assign", "mass assignment / broken-object-write (read-first; self-scoped)"}
+		return endpointClass{2, "write", "mass_assign", "mass assignment / broken-object-write (read-first; self-scoped)", 2}
 	case reIDSeg.MatchString(path) || strings.HasPrefix(lp, "/api/"):
-		return endpointClass{1, "idor", "api_request / bola", "object-level authz: read your id, then enumerate others'"}
+		return endpointClass{1, "idor", "api_request / bola", "object-level authz: read your id, then enumerate others'", 3}
 	}
-	return endpointClass{0, "", "", ""}
+	return endpointClass{0, "", "", "", 0}
 }
 
 var tierName = map[int]string{
@@ -76,6 +79,7 @@ type rankedEndpoint struct {
 	Method, Path     string
 	Class, Tool, Why string
 	Tier             int
+	Difficulty       int // 1 easy .. 3 hard; the exploit phase works easiest-first
 }
 
 // prioritizedEndpoints classifies the mapped surface and returns the tiered endpoints, crown jewels
@@ -94,7 +98,7 @@ func prioritizedEndpoints(rows []store.SurfaceRow) (eps []rankedEndpoint, untier
 			untiered++
 			continue
 		}
-		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier})
+		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty})
 	}
 	sort.SliceStable(eps, func(i, j int) bool {
 		if eps[i].Tier != eps[j].Tier {

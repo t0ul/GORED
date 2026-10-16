@@ -685,12 +685,17 @@ func endpointPhase(stage string) bool { return stage == "apiexploit" }
 func diverseEndpoints(eps []rankedEndpoint, cap int) []rankedEndpoint {
 	order := []string{}
 	byClass := map[string][]rankedEndpoint{}
+	classDiff := map[string]int{}
 	for _, e := range eps {
 		if _, ok := byClass[e.Class]; !ok {
-			order = append(order, e.Class) // first appearance is in tier order (eps is tier-sorted)
+			order = append(order, e.Class)
+			classDiff[e.Class] = e.Difficulty
 		}
 		byClass[e.Class] = append(byClass[e.Class], e)
 	}
+	// Work EASIEST class first (strong one-shot oracles before id-enumeration/authz), so a weak
+	// model banks the wins it can land before the hard IDOR/admin classes (bola) at the bottom.
+	sort.SliceStable(order, func(i, j int) bool { return classDiff[order[i]] < classDiff[order[j]] })
 	var out []rankedEndpoint
 	for round := 0; len(out) < cap; round++ {
 		progressed := false
