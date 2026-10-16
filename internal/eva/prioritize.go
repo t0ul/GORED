@@ -69,17 +69,20 @@ var tierName = map[int]string{
 	3: "T3 info / SSRF",
 }
 
-// prioritizedPlan classifies the mapped surface and renders a ranked attack plan: crown jewels first,
-// each endpoint tagged with its class and the tool to use. Untiered paths (plain pages/assets) are
-// summarized as a tail so the plan stays focused and bounded.
-func prioritizedPlan(rows []store.SurfaceRow) string {
-	type item struct {
-		c            endpointClass
-		method, path string
-	}
-	var items []item
+// rankedEndpoint is one tiered endpoint from the prioritized map: what to attack and the tool that
+// fits. It is the unit Phase 2 pulls from the DB to drive ONE focused exploit run per endpoint, so
+// no single model run ever has to hold the whole surface.
+type rankedEndpoint struct {
+	Method, Path     string
+	Class, Tool, Why string
+	Tier             int
+}
+
+// prioritizedEndpoints classifies the mapped surface and returns the tiered endpoints, crown jewels
+// first, deduped by method+path. Untiered paths (plain pages/assets) are counted but dropped — the
+// exploit worklist is only the endpoints worth a model's attention.
+func prioritizedEndpoints(rows []store.SurfaceRow) (eps []rankedEndpoint, untiered int) {
 	seen := map[string]bool{}
-	untiered := 0
 	for _, r := range rows {
 		key := r.Method + " " + r.Path
 		if seen[key] {
@@ -91,29 +94,37 @@ func prioritizedPlan(rows []store.SurfaceRow) string {
 			untiered++
 			continue
 		}
-		items = append(items, item{c, r.Method, r.Path})
+		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier})
 	}
-	if len(items) == 0 {
+	sort.SliceStable(eps, func(i, j int) bool {
+		if eps[i].Tier != eps[j].Tier {
+			return eps[i].Tier < eps[j].Tier
+		}
+		return eps[i].Path < eps[j].Path
+	})
+	return eps, untiered
+}
+
+// prioritizedPlan renders the ranked attack plan (crown jewels first, each tagged with class + tool),
+// capped and with a tail count of the lower-value paths. It is the human/console view of the same
+// worklist prioritizedEndpoints yields.
+func prioritizedPlan(rows []store.SurfaceRow) string {
+	eps, untiered := prioritizedEndpoints(rows)
+	if len(eps) == 0 {
 		return ""
 	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].c.tier != items[j].c.tier {
-			return items[i].c.tier < items[j].c.tier
-		}
-		return items[i].path < items[j].path
-	})
-	if len(items) > 40 {
-		items = items[:40]
+	if len(eps) > 40 {
+		eps = eps[:40]
 	}
 	var b strings.Builder
 	b.WriteString("ATTACK PLAN (surface prioritized by value — work top-down, use the tool named; do reads first, GORED's write probes self-scope):\n")
 	cur := 0
-	for _, it := range items {
-		if it.c.tier != cur {
-			cur = it.c.tier
+	for _, e := range eps {
+		if e.Tier != cur {
+			cur = e.Tier
 			fmt.Fprintf(&b, "%s:\n", tierName[cur])
 		}
-		fmt.Fprintf(&b, "- [%s] %s %s -> %s (%s)\n", it.c.class, it.method, it.path, it.c.tool, it.c.why)
+		fmt.Fprintf(&b, "- [%s] %s %s -> %s (%s)\n", e.Class, e.Method, e.Path, e.Tool, e.Why)
 	}
 	if untiered > 0 {
 		fmt.Fprintf(&b, "(+ %d other mapped paths — plain pages/assets, lower value)\n", untiered)
