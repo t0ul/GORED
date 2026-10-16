@@ -128,23 +128,59 @@ func TestStoredXSSBodyTemplate(t *testing.T) {
 	}
 }
 
-// Self-correction feedback: the simple object form is rejected (the app wants an array), and the
-// tool must return an ACTIONABLE diagnostic (the 400 + body) so the agent knows to fix the body,
-// not a dead-end "no xss".
-func TestStoredXSSRejectFeedback(t *testing.T) {
+// (a) shape self-heals: the simple object FIELD form against an array-only endpoint now plants +
+// executes without the model giving a template, because plant auto-wraps object -> array.
+func TestStoredXSSAutoArrayShape(t *testing.T) {
 	chromeOrSkip(t)
 	base, done := startArrayIngestApp(t)
 	defer done()
 	out, err := StoredXSSTool{Gate: demoGate(t, base), Base: base, Sessions: core.NewSessions()}.Call(
 		ctxWithTimeout(t), map[string]any{
-			"method": "POST", "path": "/ingest", "field": "name", // object, not array -> 400
+			"method": "POST", "path": "/ingest", "field": "name", // object form; tool auto-adapts to the array the app wants
 			"render": []any{"/feed"},
 		})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "REJECTED") || !strings.Contains(out, "expected array") {
-		t.Fatalf("rejection must be actionable (status + reason) so the model self-corrects; got: %s", out)
+	if !strings.Contains(out, DOMXSSSentinel) {
+		t.Fatalf("object form should auto-adapt to the array shape and execute; got: %s", out)
+	}
+}
+
+// (c) actionable reject: when EVERY shape is rejected (the endpoint needs a field the tool was not
+// given), the diagnostic must be actionable — say it was rejected, surface the response, and show a
+// GENERIC body-template example (placeholder field, never a real app's schema).
+func startAlwaysRejectApp(t *testing.T) (string, func()) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ingest", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, "missing required field: owner")
+	})
+	mux.HandleFunc("/feed", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "<!doctype html><html><body></body></html>")
+	})
+	ts := httptest.NewServer(mux)
+	return ts.URL, ts.Close
+}
+
+func TestStoredXSSRejectFeedback(t *testing.T) {
+	chromeOrSkip(t)
+	base, done := startAlwaysRejectApp(t)
+	defer done()
+	out, err := StoredXSSTool{Gate: demoGate(t, base), Base: base, Sessions: core.NewSessions()}.Call(
+		ctxWithTimeout(t), map[string]any{
+			"method": "POST", "path": "/ingest", "field": "name",
+			"render": []any{"/feed"},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "REJECTED") || !strings.Contains(out, "missing required field: owner") {
+		t.Fatalf("rejection must surface the status/reason so the model self-corrects; got: %s", out)
+	}
+	if !strings.Contains(out, "__PAYLOAD__") {
+		t.Errorf("reject diag should include the GENERIC body-template example; got: %s", out)
 	}
 }
 

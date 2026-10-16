@@ -729,6 +729,18 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		return false
 	}
 	eps, _ := prioritizedEndpoints(rows)
+	if !appsweep.BolaEnabled() {
+		// bola is the hardest class and false-positives on shared resources, so unless opted in it is
+		// out of the loop: drop the idor/admin endpoints it owns so they are not even routed.
+		kept := eps[:0]
+		for _, e := range eps {
+			if e.Class == "idor" || e.Class == "admin" {
+				continue
+			}
+			kept = append(kept, e)
+		}
+		eps = kept
+	}
 	eps = diverseEndpoints(eps, exploitEndpointCap) // spread across classes so one class can't eat the cap
 	renderPages := htmlRenderPages(rows)            // where a stored payload could execute (for the ingest/upload class)
 	for _, ep := range eps {

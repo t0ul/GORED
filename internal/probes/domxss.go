@@ -1,7 +1,6 @@
 package probes
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -372,7 +371,7 @@ func (p *StoredXSSProbe) ProbeStored(ctx context.Context, inject InjectSpec, ren
 	// Nothing executed: say WHY so the agent can self-correct rather than give up.
 	var diag string
 	if planted == 0 {
-		diag = fmt.Sprintf("no stored xss: the write %s %s was REJECTED every time, so nothing was stored — fix the request body/fields/method and retry. Last response: %s",
+		diag = fmt.Sprintf("no stored xss: the write %s %s was REJECTED every time (object/array/form shapes all tried), so nothing was stored. Read the response, add the fields it requires, and retry with a body template, e.g. {\"body\":\"[{\\\"<field>\\\":\\\"__PAYLOAD__\\\"}]\"} (put __PAYLOAD__ where the value goes; use the real field names the endpoint wants). Last response: %s",
 			strings.ToUpper(def(inject.Method, "POST")), inject.Path, def(lastReject, "(none)"))
 	} else {
 		diag = fmt.Sprintf("no stored xss: the write %s %s was accepted (%d payloads stored) but none executed on the render pages %v — the payload may land in a field these pages do not display; try other render pages or put the payload in the field the page shows",
@@ -381,52 +380,67 @@ func (p *StoredXSSProbe) ProbeStored(ctx context.Context, inject InjectSpec, ren
 	return DOMXSSFinding{Denied: int(atomic.LoadInt64(denied))}, diag, nil
 }
 
+type reqBody struct{ body, ctype string }
+
+// plantBodies returns the candidate request bodies to try for one payload. When the caller gave an
+// explicit BodyTemplate it is honored as-is (the caller chose the shape). Otherwise the tool adapts
+// the SHAPE generically — a JSON object, then the same wrapped in an ARRAY (the common "expected
+// array" endpoint), then form-encoded — so a plain shape mismatch self-heals. It never invents field
+// NAMES (that would be overfitting to one app); the caller still supplies the fields.
+func plantBodies(inject InjectSpec, payload string) []reqBody {
+	if inject.BodyTemplate != "" {
+		return []reqBody{{strings.ReplaceAll(inject.BodyTemplate, storedBodyMarker, payload), def(inject.ContentType, "application/json")}}
+	}
+	m := map[string]string{}
+	if inject.Field != "" {
+		m[inject.Field] = payload
+	}
+	for k, v := range inject.Other {
+		m[k] = v
+	}
+	obj, _ := json.Marshal(m)
+	arr, _ := json.Marshal([]map[string]string{m})
+	vals := url.Values{}
+	for k, v := range m {
+		vals.Set(k, v)
+	}
+	form := reqBody{vals.Encode(), "application/x-www-form-urlencoded"}
+	if inject.Form {
+		return []reqBody{form, {string(obj), "application/json"}, {string(arr), "application/json"}}
+	}
+	return []reqBody{{string(obj), "application/json"}, {string(arr), "application/json"}, form}
+}
+
 // plant sends the write that stores the payload, as the authenticated identity, egress-gated. It
-// returns the server's status and a short response snippet (so a rejection is actionable), erroring
-// only on egress/transport failure — an HTTP 4xx is data the caller reports, not an error.
+// tries the candidate body shapes in order and stops at the first the server accepts (2xx); it
+// returns that status and a short response snippet (so a rejection is actionable), erroring only on
+// egress/transport failure — an HTTP 4xx is data the caller reports, not an error.
 func (p *StoredXSSProbe) plant(ctx context.Context, inject InjectSpec, payload string) (int, string, error) {
 	raw := strings.TrimRight(p.Base, "/") + ensureLeadingSlash(inject.Path)
 	if p.Egress == nil || !p.Egress.Allowed(raw) {
 		return 0, "", fmt.Errorf("egress denied: %s", raw)
 	}
-	var body io.Reader
-	var ctype string
-	switch {
-	case inject.BodyTemplate != "":
-		body = strings.NewReader(strings.ReplaceAll(inject.BodyTemplate, storedBodyMarker, payload))
-		ctype = def(inject.ContentType, "application/json")
-	case inject.Form:
-		vals := url.Values{}
-		if inject.Field != "" {
-			vals.Set(inject.Field, payload)
+	method := strings.ToUpper(def(inject.Method, http.MethodPost))
+	var status int
+	var snippet string
+	for _, b := range plantBodies(inject, payload) {
+		req, err := http.NewRequestWithContext(ctx, method, raw, strings.NewReader(b.body))
+		if err != nil {
+			return 0, "", err
 		}
-		for k, v := range inject.Other {
-			vals.Set(k, v)
+		req.Header.Set("Content-Type", b.ctype)
+		resp, err := p.Sessions.Client(p.Session).Do(req) // authed jar
+		if err != nil {
+			return 0, "", err
 		}
-		body, ctype = strings.NewReader(vals.Encode()), "application/x-www-form-urlencoded"
-	default:
-		m := map[string]string{}
-		if inject.Field != "" {
-			m[inject.Field] = payload
+		snip, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		resp.Body.Close()
+		status, snippet = resp.StatusCode, strings.TrimSpace(string(snip))
+		if status < 400 {
+			return status, snippet, nil // this shape was accepted; stop adapting
 		}
-		for k, v := range inject.Other {
-			m[k] = v
-		}
-		b, _ := json.Marshal(m)
-		body, ctype = bytes.NewReader(b), "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, strings.ToUpper(def(inject.Method, http.MethodPost)), raw, body)
-	if err != nil {
-		return 0, "", err
-	}
-	req.Header.Set("Content-Type", ctype)
-	resp, err := p.Sessions.Client(p.Session).Do(req) // authed jar
-	if err != nil {
-		return 0, "", err
-	}
-	defer resp.Body.Close()
-	snip, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
-	return resp.StatusCode, strings.TrimSpace(string(snip)), nil
+	return status, snippet, nil // every shape rejected; report the last response
 }
 
 func ensureLeadingSlash(p string) string {

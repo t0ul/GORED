@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +22,19 @@ import (
 	gledger "github.com/t0ul/gledger"
 	"github.com/t0ul/gobrig"
 )
+
+// BolaEnabled reports whether the bola / broken-access-control differential is in the loop. It is
+// OFF by default: bola is the hardest class for a weak model (it thrashed ~70% of a run's calls) and
+// it false-positives on shared resources (a byte-identical response that is not a leak, e.g. a shared
+// config endpoint). Set GORED_BOLA=on|1|true|yes to opt it back in (e.g. after the oracle-precision
+// fix). A flag per the brief; it can graduate to a datastore setting later (config-in-db).
+func BolaEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GORED_BOLA"))) {
+	case "1", "on", "true", "yes":
+		return true
+	}
+	return false
+}
 
 // canaryBeacon is a non-target host (the cloud-metadata SSRF address). It is never on the
 // Egress allowlist, so the Runner's containment beacon is denied through the gated http_request
