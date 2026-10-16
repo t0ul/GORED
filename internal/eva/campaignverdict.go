@@ -166,7 +166,8 @@ func (s *Server) campaignPentest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proofs := s.campaignProofs(c)
-	verdicts := (&validate.Validator{}).Validate(nil, proofs)
+	scanners := s.campaignScanners(c)
+	verdicts := (&validate.Validator{}).Validate(scanners, proofs)
 	meta := report.ReportMeta{
 		Title:  "GORED Campaign — " + c.Name,
 		Target: strings.Join(c.Targets, ", "),
@@ -175,6 +176,19 @@ func (s *Server) campaignPentest(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(report.RenderReportHTML(meta, verdicts))
+}
+
+// campaignScanners flattens the campaign's pooled ingested scanner findings (SCA via osv-scanner,
+// and any ZAP report) so the Validator correlates and ranks them alongside the model-loop + breadth
+// proofs in the one pentest report.
+func (s *Server) campaignScanners(c *campaign) []core.ScannerFinding {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []core.ScannerFinding
+	for _, fs := range c.scanners {
+		out = append(out, fs...)
+	}
+	return out
 }
 
 func clip(s string, n int) string {

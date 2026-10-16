@@ -26,21 +26,22 @@ import (
 // scheduler goroutine walks targets×stages, launching a child run per (target, stage) through
 // the same execute path an interactive sortie uses — only the pilot gate is gone (autonomous).
 type campaign struct {
-	ID      string
-	Name    string
-	Targets []string // target names, in order
-	Model   string
-	Status  string // "running" | "done" | "aborted" | "error"
-	Started time.Time
-	Elapsed string
-	RunIDs  []string // child run ids, in launch order
-	Cur     string   // the "pass · target · stage" in flight, for live status
-	Loop    bool     // keep re-running the targets in passes until aborted (non-stop overnight)
-	Pass    int      // how many passes the loop has started
-	cancel  context.CancelFunc
-	nuclei  map[string][]tools.NucleiFinding // target base -> latest nuclei breadth findings (in-memory)
-	ffuf    map[string][]tools.FfufFinding   // target base -> latest ffuf content-discovery hits (in-memory)
-	graphql map[string]ingest.GraphQLSurface // target base -> introspected GraphQL surface (in-memory)
+	ID       string
+	Name     string
+	Targets  []string // target names, in order
+	Model    string
+	Status   string // "running" | "done" | "aborted" | "error"
+	Started  time.Time
+	Elapsed  string
+	RunIDs   []string // child run ids, in launch order
+	Cur      string   // the "pass · target · stage" in flight, for live status
+	Loop     bool     // keep re-running the targets in passes until aborted (non-stop overnight)
+	Pass     int      // how many passes the loop has started
+	cancel   context.CancelFunc
+	nuclei   map[string][]tools.NucleiFinding   // target base -> latest nuclei breadth findings (in-memory)
+	ffuf     map[string][]tools.FfufFinding     // target base -> latest ffuf content-discovery hits (in-memory)
+	graphql  map[string]ingest.GraphQLSurface   // target base -> introspected GraphQL surface (in-memory)
+	scanners map[string][]ingest.ScannerFinding // target base -> ingested SCA (osv) + ZAP findings (in-memory)
 }
 
 func toCampaign(c *campaign) store.Campaign {
@@ -56,9 +57,10 @@ func fromCampaign(sc store.Campaign) *campaign {
 		ID: sc.ID, Name: sc.Name, Targets: splitCSV(sc.Targets), Model: sc.Model,
 		Status: sc.Status, Started: sc.Started, Elapsed: sc.Elapsed,
 		RunIDs: splitCSV(sc.RunIDs), Cur: sc.Cur, Loop: sc.Loop, Pass: sc.Pass,
-		nuclei:  map[string][]tools.NucleiFinding{},
-		ffuf:    map[string][]tools.FfufFinding{},
-		graphql: map[string]ingest.GraphQLSurface{},
+		nuclei:   map[string][]tools.NucleiFinding{},
+		ffuf:     map[string][]tools.FfufFinding{},
+		graphql:  map[string]ingest.GraphQLSurface{},
+		scanners: map[string][]ingest.ScannerFinding{},
 	}
 }
 
@@ -303,6 +305,47 @@ func (s *Server) runTargetNuclei(ctx context.Context, c *campaign, tg store.Targ
 	s.mu.Unlock()
 }
 
+// addScanners pools ingested scanner findings (SCA, ZAP) for the target, under the lock.
+func (s *Server) addScanners(c *campaign, base string, fs []ingest.ScannerFinding) {
+	if len(fs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if c.scanners == nil {
+		c.scanners = map[string][]ingest.ScannerFinding{}
+	}
+	c.scanners[base] = append(c.scanners[base], fs...)
+	s.mu.Unlock()
+}
+
+// runTargetSCA runs source-side software-composition analysis (osv-scanner) over the target's
+// SourceDir, folding Node/other-ecosystem dependency vulnerabilities into the pooled scanner
+// findings. No-op when the target declares no SourceDir. Best-effort: a missing osv-scanner binary
+// or source dir yields nothing, so a campaign still runs without it.
+func (s *Server) runTargetSCA(ctx context.Context, c *campaign, tg store.Target) {
+	if strings.TrimSpace(tg.SourceDir) == "" {
+		return
+	}
+	fs, err := ingest.OSVScan(ctx, "", tg.SourceDir, tg.Name)
+	if err != nil {
+		return
+	}
+	s.addScanners(c, tg.Base, fs)
+}
+
+// runTargetZAP ingests a ZAP JSON report declared on the target (an operator runs ZAP out of band),
+// folding its alerts into the pooled scanner findings. No-op when the target declares no report.
+func (s *Server) runTargetZAP(c *campaign, tg store.Target) {
+	if strings.TrimSpace(tg.ZAPReport) == "" {
+		return
+	}
+	data, err := os.ReadFile(tg.ZAPReport)
+	if err != nil {
+		return
+	}
+	s.addScanners(c, tg.Base, ingest.ParseZAPReport(data, tg.Name))
+}
+
 // runTargetFfuf runs a contained ffuf content-discovery scan against the target and caches the hits
 // on the campaign, recording each discovered path into project memory so later passes seed from them.
 // Best-effort: a missing ffuf binary yields no hits. Single-target, gated by the egress allowlist.
@@ -401,7 +444,7 @@ func targetStages(t store.Target) []string {
 // startCampaign registers a campaign and launches its scheduler goroutine.
 func (s *Server) startCampaign(name, model string, targets []string, loop bool) *campaign {
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
-	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop, nuclei: map[string][]tools.NucleiFinding{}, ffuf: map[string][]tools.FfufFinding{}, graphql: map[string]ingest.GraphQLSurface{}}
+	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop, nuclei: map[string][]tools.NucleiFinding{}, ffuf: map[string][]tools.FfufFinding{}, graphql: map[string]ingest.GraphQLSurface{}, scanners: map[string][]ingest.ScannerFinding{}}
 	s.mu.Lock()
 	s.campaigns[id] = c
 	s.corder = append([]string{id}, s.corder...)
@@ -466,6 +509,11 @@ func (s *Server) runCampaign(c *campaign) {
 			// the discovered operations into project memory + the report (the REST ingest is blind
 			// to GraphQL). Contained + gated; best-effort (no endpoint = no surface).
 			s.runTargetGraphQL(ctx, c, tg)
+			// Feeders: source-side SCA (osv-scanner over the target's SourceDir) and any ZAP report
+			// the target declares, folded into the pooled scanner findings for the report. Both are
+			// no-ops unless the target is configured for them.
+			s.runTargetSCA(ctx, c, tg)
+			s.runTargetZAP(c, tg)
 		}
 		if !c.Loop {
 			break

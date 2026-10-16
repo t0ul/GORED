@@ -26,6 +26,8 @@ type Target struct {
 	PrivHeader string // privileged identity static header "Name: value"
 	LowHeader  string // low-privilege identity static header "Name: value"
 	Spec       string // OpenAPI/Swagger spec (file path or http URL) to seed the declared surface
+	SourceDir  string // optional: a source checkout dir with lockfiles, for SCA (osv-scanner)
+	ZAPReport  string // optional: path to a ZAP JSON report to ingest as scanner findings
 	Notes      string
 }
 
@@ -36,15 +38,16 @@ func (s *Store) SaveTarget(t Target) error {
 		ensure = 1
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO targets (name, base, transport, stages, ensure_app, login_path, login_type, user_field, pass_field, priv_creds, low_creds, priv_header, low_header, spec, notes)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		`INSERT INTO targets (name, base, transport, stages, ensure_app, login_path, login_type, user_field, pass_field, priv_creds, low_creds, priv_header, low_header, spec, source_dir, zap_report, notes)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(name) DO UPDATE SET
 		   base=excluded.base, transport=excluded.transport, stages=excluded.stages, ensure_app=excluded.ensure_app,
 		   login_path=excluded.login_path, login_type=excluded.login_type, user_field=excluded.user_field,
 		   pass_field=excluded.pass_field, priv_creds=excluded.priv_creds, low_creds=excluded.low_creds,
-		   priv_header=excluded.priv_header, low_header=excluded.low_header, spec=excluded.spec, notes=excluded.notes`,
+		   priv_header=excluded.priv_header, low_header=excluded.low_header, spec=excluded.spec,
+		   source_dir=excluded.source_dir, zap_report=excluded.zap_report, notes=excluded.notes`,
 		t.Name, t.Base, t.Transport, t.Stages, ensure, t.LoginPath, t.LoginType, t.UserField, t.PassField,
-		t.PrivCreds, t.LowCreds, t.PrivHeader, t.LowHeader, t.Spec, t.Notes,
+		t.PrivCreds, t.LowCreds, t.PrivHeader, t.LowHeader, t.Spec, t.SourceDir, t.ZAPReport, t.Notes,
 	)
 	return err
 }
@@ -57,10 +60,10 @@ func (s *Store) SeedTarget(t Target) error {
 		ensure = 1
 	}
 	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO targets (name, base, transport, stages, ensure_app, login_path, login_type, user_field, pass_field, priv_creds, low_creds, priv_header, low_header, spec, notes)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT OR IGNORE INTO targets (name, base, transport, stages, ensure_app, login_path, login_type, user_field, pass_field, priv_creds, low_creds, priv_header, low_header, spec, source_dir, zap_report, notes)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.Name, t.Base, t.Transport, t.Stages, ensure, t.LoginPath, t.LoginType, t.UserField, t.PassField,
-		t.PrivCreds, t.LowCreds, t.PrivHeader, t.LowHeader, t.Spec, t.Notes,
+		t.PrivCreds, t.LowCreds, t.PrivHeader, t.LowHeader, t.Spec, t.SourceDir, t.ZAPReport, t.Notes,
 	)
 	return err
 }
@@ -68,7 +71,7 @@ func (s *Store) SeedTarget(t Target) error {
 // ListTargets returns the registered targets, by name.
 func (s *Store) ListTargets() ([]Target, error) {
 	rows, err := s.db.Query(
-		`SELECT name, base, transport, stages, ensure_app, login_path, login_type, user_field, pass_field, priv_creds, low_creds, priv_header, low_header, spec, notes
+		`SELECT name, base, transport, stages, ensure_app, login_path, login_type, user_field, pass_field, priv_creds, low_creds, priv_header, low_header, spec, source_dir, zap_report, notes
 		 FROM targets ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -88,7 +91,7 @@ func (s *Store) ListTargets() ([]Target, error) {
 // GetTarget reads one target; ok is false when none exists.
 func (s *Store) GetTarget(name string) (Target, bool, error) {
 	row := s.db.QueryRow(
-		`SELECT name, base, transport, stages, ensure_app, login_path, login_type, user_field, pass_field, priv_creds, low_creds, priv_header, low_header, spec, notes
+		`SELECT name, base, transport, stages, ensure_app, login_path, login_type, user_field, pass_field, priv_creds, low_creds, priv_header, low_header, spec, source_dir, zap_report, notes
 		 FROM targets WHERE name=?`, name)
 	t, err := scanTarget(row)
 	if err == sql.ErrNoRows {
@@ -109,12 +112,15 @@ func (s *Store) DeleteTarget(name string) error {
 func scanTarget(sc scanRow) (Target, error) {
 	var t Target
 	var ensure int
-	var spec sql.NullString // NULL for rows written before the spec column existed
+	// NULL for rows written before each column existed.
+	var spec, sourceDir, zapReport sql.NullString
 	if err := sc.Scan(&t.Name, &t.Base, &t.Transport, &t.Stages, &ensure, &t.LoginPath, &t.LoginType,
-		&t.UserField, &t.PassField, &t.PrivCreds, &t.LowCreds, &t.PrivHeader, &t.LowHeader, &spec, &t.Notes); err != nil {
+		&t.UserField, &t.PassField, &t.PrivCreds, &t.LowCreds, &t.PrivHeader, &t.LowHeader, &spec, &sourceDir, &zapReport, &t.Notes); err != nil {
 		return t, err
 	}
 	t.Ensure = ensure != 0
 	t.Spec = spec.String
+	t.SourceDir = sourceDir.String
+	t.ZAPReport = zapReport.String
 	return t, nil
 }
