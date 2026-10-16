@@ -106,13 +106,15 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 CREATE TABLE IF NOT EXISTS project_surface (
   target TEXT NOT NULL,
+  model  TEXT NOT NULL DEFAULT '',
   method TEXT NOT NULL,
   path   TEXT NOT NULL,
   last   TEXT,
   ts     TEXT,
-  PRIMARY KEY (target, method, path)
+  PRIMARY KEY (target, model, method, path)
 );
 CREATE INDEX IF NOT EXISTS idx_psurface_target ON project_surface(target);
+CREATE INDEX IF NOT EXISTS idx_psurface_target_model ON project_surface(target, model);
 CREATE TABLE IF NOT EXISTS project_findings (
   target TEXT NOT NULL,
   type   TEXT,
@@ -129,6 +131,12 @@ func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		return nil, err
+	}
+	// project_surface gained a per-model attribution column (so each model's map is comparable, not
+	// co-mingled). It is research scratch, so a legacy table without it is dropped and rebuilt fresh
+	// by the schema below rather than migrated — per the brief, we blow it away.
+	if exists, hasModel := surfaceColumns(db); exists && !hasModel {
+		_, _ = db.Exec(`DROP TABLE project_surface`)
 	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -147,6 +155,29 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// surfaceColumns reports whether project_surface exists and whether it already carries the `model`
+// column, so Open can rebuild a legacy table that predates per-model attribution.
+func surfaceColumns(db *sql.DB) (exists, hasModel bool) {
+	rows, err := db.Query(`PRAGMA table_info(project_surface)`)
+	if err != nil {
+		return false, false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return exists, hasModel
+		}
+		exists = true
+		if name == "model" {
+			hasModel = true
+		}
+	}
+	return exists, hasModel
+}
 
 // StartRun inserts the run row and returns its id.
 func (s *Store) StartRun(traceID string, m core.RunMeta) (int64, error) {

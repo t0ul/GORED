@@ -53,6 +53,17 @@ func NewToolbox(ts ...Tool) *Toolbox {
 
 func (b *Toolbox) Get(name string) (Tool, bool) { t, ok := b.tools[name]; return t, ok }
 
+// Add registers more tools after construction — e.g. a run-scoped tool the orchestrator injects
+// (a store-backed recorder). A tool whose name already exists replaces it; order stays stable.
+func (b *Toolbox) Add(ts ...Tool) {
+	for _, t := range ts {
+		if _, ok := b.tools[t.Name()]; !ok {
+			b.order = append(b.order, t.Name())
+		}
+		b.tools[t.Name()] = t
+	}
+}
+
 // Names returns the registered tool names in order (used to render the allowed-tool
 // list into the model prompt).
 func (b *Toolbox) Names() []string { return b.order }
