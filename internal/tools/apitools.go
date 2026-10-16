@@ -45,7 +45,18 @@ func (t APIRequestTool) Call(ctx context.Context, args map[string]any) (string, 
 	if err != nil {
 		return "", fmt.Errorf("api_request: %w", err)
 	}
-	return fmt.Sprintf("HTTP %d\n%s", status, respBody), nil
+	// A short, generic nudge on the statuses that usually mean "close, but adjust one thing", so
+	// the model self-corrects instead of repeating the same call.
+	hint := ""
+	switch status {
+	case 401, 403:
+		hint = "\n(hint: authorize this call — send the session/Authorization header the app documents, or try another identity)"
+	case 404:
+		hint = "\n(hint: no such path — recon with http_request and use a path you actually found)"
+	case 405:
+		hint = "\n(hint: wrong method for this path — try the method the endpoint expects, e.g. GET vs POST/PUT)"
+	}
+	return fmt.Sprintf("HTTP %d\n%s%s", status, respBody, hint), nil
 }
 
 // EgressAuthorities exposes the gate's allowlist, so the loop's egress-denied beacon can log
