@@ -573,7 +573,12 @@ func (s *Server) launchCampaignRun(c *campaign, tg store.Target, stage string, s
 	f.Base = tg.Base
 	f.Model = c.Model
 	f.Ensure = tg.Ensure
-	f.MaxStall = stallBound // stop a flailing run early (campaigns especially, under the loop)
+	// A campaign is an autonomous hunt: give each pass a real step/wall budget and tolerate more
+	// exploration before the stall-kill (a benchmark's 10 steps / 4-stall is far too short to work
+	// a real app). Loop mode then keeps re-running passes, each re-seeding from project memory.
+	f.MaxSteps = campaignMaxSteps
+	f.Wall = campaignWall
+	f.MaxStall = campaignStall
 	f.BasePort += slot * portStep
 	f.Prelude = loginPrelude(tg) // deterministic pre-auth: log in before the model loop
 

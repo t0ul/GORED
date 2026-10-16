@@ -25,9 +25,18 @@ import (
 const portStep = 20
 
 // stallBound stops an EVA run after this many consecutive unproductive steps (a small model
-// flailing — no usable new tool call). EVA sets it on every run it launches; the CLI/CI path
-// (bench.DefaultFlags, MaxStall 0) is unaffected, so the benchmark loop stays byte-for-byte.
+// flailing — no usable new tool call). EVA sets it on interactive runs it launches; the CLI/CI
+// path (bench.DefaultFlags, MaxStall 0) is unaffected, so the benchmark loop stays byte-for-byte.
 const stallBound = 4
+
+// A CAMPAIGN is an autonomous hunt, not a 10-step benchmark: it should work the app for many steps
+// and, under Loop mode, keep re-running. These give a campaign run a real budget (the benchmark /
+// interactive paths keep the smaller defaults). A run still stops early on capture or a done-claim.
+const (
+	campaignMaxSteps = 60               // steps per pass before the run ends (vs the benchmark's 10)
+	campaignWall     = 20 * time.Minute // wall-clock safety cap per pass (vs the benchmark's 240s)
+	campaignStall    = 12               // tolerate more exploration/dead-ends before giving up (vs stallBound=4)
+)
 
 type Server struct {
 	mu        sync.Mutex
