@@ -676,6 +676,40 @@ const exploitEndpointCap = 12
 // scheduler decomposes it into one focused run per endpoint instead of a single whole-surface run.
 func endpointPhase(stage string) bool { return stage == "apiexploit" }
 
+// diverseEndpoints round-robins the (tier-sorted) worklist across attack classes and returns up to
+// cap endpoints. Without this, a surface with many endpoints of one class (e.g. a dozen /api/admin/*
+// routes) would consume the whole cap and starve every other class — so stored-XSS on the single
+// ingest endpoint, injection on a search param, etc. would never get a run. Round-robin keeps the
+// crown-jewel classes leading each round while guaranteeing every class is reached early. Generic:
+// it reasons about classifyEndpoint classes, nothing app-specific.
+func diverseEndpoints(eps []rankedEndpoint, cap int) []rankedEndpoint {
+	order := []string{}
+	byClass := map[string][]rankedEndpoint{}
+	for _, e := range eps {
+		if _, ok := byClass[e.Class]; !ok {
+			order = append(order, e.Class) // first appearance is in tier order (eps is tier-sorted)
+		}
+		byClass[e.Class] = append(byClass[e.Class], e)
+	}
+	var out []rankedEndpoint
+	for round := 0; len(out) < cap; round++ {
+		progressed := false
+		for _, cl := range order {
+			if round < len(byClass[cl]) {
+				out = append(out, byClass[cl][round])
+				progressed = true
+				if len(out) >= cap {
+					return out
+				}
+			}
+		}
+		if !progressed {
+			break
+		}
+	}
+	return out
+}
+
 // runExploitPhase is Phase 2 as separate runs: it pulls the prioritized endpoints out of the mapped
 // surface (the DB, written by the recon phase) and launches ONE focused model run per endpoint, each
 // with a bounded prompt naming just that endpoint. No local model ever has to hold recon+map+exploit
@@ -690,10 +724,8 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		return false
 	}
 	eps, _ := prioritizedEndpoints(rows)
-	if len(eps) > exploitEndpointCap {
-		eps = eps[:exploitEndpointCap]
-	}
-	renderPages := htmlRenderPages(rows) // where a stored payload could execute (for the ingest/upload class)
+	eps = diverseEndpoints(eps, exploitEndpointCap) // spread across classes so one class can't eat the cap
+	renderPages := htmlRenderPages(rows)            // where a stored payload could execute (for the ingest/upload class)
 	for _, ep := range eps {
 		select {
 		case <-ctx.Done():
