@@ -344,6 +344,56 @@ func (s *Server) runTargetZAP(c *campaign, tg store.Target) {
 	s.addScanners(c, tg.Base, ingest.ParseZAPReport(data, tg.Name))
 }
 
+// runTargetRecon maps the target's surface deterministically before the model loop: it logs in each
+// configured identity into a shared jar, then crawls as EACH identity (and anonymously), merging the
+// discovered paths into project memory. Role-based access control means different identities are
+// shown (and redirected to) different pages, each loading different JS bundles — so only a
+// multi-identity crawl enumerates the whole app. The model-loop's KNOWN SURFACE preamble then seeds
+// from this accurate map. Best-effort, read-only (GET), egress-gated.
+func (s *Server) runTargetRecon(ctx context.Context, tg store.Target) {
+	if s.store == nil {
+		return
+	}
+	egress := tools.NewEgress(hostPort(tg.Base))
+	sessions := tools.NewSessions()
+	// Log in each identity into the shared jar (same recipe the model-loop prelude uses).
+	login := tools.NewHTTPRequestTool(tg.Base, egress, nil)
+	login.Sessions = sessions
+	for _, pa := range loginPrelude(tg) {
+		_, _ = login.Call(ctx, pa.Args)
+	}
+	discover := probes.NewDiscoverTool(tg.Base, egress)
+	discover.Sessions = sessions
+	for _, id := range reconIdentities(tg) {
+		out, err := discover.Call(ctx, map[string]any{"path": "/", "session": id})
+		if err != nil {
+			continue
+		}
+		label := "recon:anon"
+		if id != "" {
+			label = "recon:" + id
+		}
+		for _, p := range discoveredPaths(out) {
+			_ = s.store.SaveSurface(tg.Name, "GET", p, label)
+		}
+	}
+}
+
+// reconIdentities lists the session names to crawl as: anonymous plus each creds-login identity, so
+// the recon crawl covers every privilege level's view of the app. Only creds identities are crawled
+// authenticated — the crawler reuses a login's cookie jar, so a static-header identity (no login)
+// would just crawl anonymously, and is left to the anon pass.
+func reconIdentities(tg store.Target) []string {
+	ids := []string{""} // always crawl the unauthenticated surface
+	if tg.PrivCreds != "" {
+		ids = append(ids, "priv")
+	}
+	if tg.LowCreds != "" {
+		ids = append(ids, "low")
+	}
+	return ids
+}
+
 // runTargetFfuf runs a contained ffuf content-discovery scan against the target and caches the hits
 // on the campaign, recording each discovered path into project memory so later passes seed from them.
 // Best-effort: a missing ffuf binary yields no hits. Single-target, gated by the egress allowlist.
@@ -508,6 +558,10 @@ func (s *Server) runCampaign(c *campaign) {
 			if !ok {
 				continue
 			}
+			// Map the surface FIRST, deterministically and from every identity, so the model-loop
+			// starts with an accurate KNOWN SURFACE (role-based redirects mean each identity sees only
+			// its own pages, so a single-identity crawl misses half the app).
+			s.runTargetRecon(ctx, tg)
 			for _, stage := range targetStages(tg) {
 				select {
 				case <-ctx.Done():
