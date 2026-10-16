@@ -254,8 +254,14 @@ func (s *Server) surfacePreamble(target string) string {
 	if err != nil || len(rows) == 0 {
 		return ""
 	}
+	// Prioritize the mapped surface into a ranked attack plan (Phase 2) so the model works the
+	// high-value endpoints first with the right tool, instead of poking the flat list at random.
+	if plan := prioritizedPlan(rows); plan != "" {
+		return "KNOWN SURFACE (discovered in prior passes — start from these, do not re-enumerate).\n" + plan
+	}
+	// No classifiable endpoints yet (e.g. only plain pages): fall back to the flat list.
 	if len(rows) > 40 {
-		rows = rows[:40] // keep the prompt bounded
+		rows = rows[:40]
 	}
 	var b strings.Builder
 	b.WriteString("KNOWN SURFACE (discovered in prior passes — start from these, do not re-enumerate from scratch):\n")
