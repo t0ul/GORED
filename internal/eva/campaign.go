@@ -42,6 +42,7 @@ type campaign struct {
 	ffuf     map[string][]tools.FfufFinding     // target base -> latest ffuf content-discovery hits (in-memory)
 	graphql  map[string]ingest.GraphQLSurface   // target base -> introspected GraphQL surface (in-memory)
 	scanners map[string][]ingest.ScannerFinding // target base -> ingested SCA (osv) + ZAP findings (in-memory)
+	diff     map[string][]probes.DiffFinding    // target base -> deterministic priv-vs-low BAC flags (Phase 2 probe)
 }
 
 func toCampaign(c *campaign) store.Campaign {
@@ -350,20 +351,102 @@ func (s *Server) runTargetZAP(c *campaign, tg store.Target) {
 	s.addScanners(c, tg.Base, ingest.ParseZAPReport(data, tg.Name))
 }
 
-// runTargetRecon maps the target's surface deterministically before the model loop: it logs in each
-// configured identity into a shared jar, then crawls as EACH identity (and anonymously), merging the
-// discovered paths into project memory. Role-based access control means different identities are
-// shown (and redirected to) different pages, each loading different JS bundles — so only a
-// multi-identity crawl enumerates the whole app. The model-loop's KNOWN SURFACE preamble then seeds
-// from this accurate map. Best-effort, read-only (GET), egress-gated.
-func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Target) {
-	if s.store == nil {
+// differentialCap bounds how many crown-jewel endpoints the deterministic differential probes per
+// pass, so a large mapped surface cannot make the read-only sweep unbounded.
+const differentialCap = 40
+
+// differentialTargets selects the crown-jewel reads to run the priv-vs-low differential over: the
+// endpoints the prioritizer tiers as IDOR or admin (object- and function-level authorization — the
+// classes a canary-free differential can actually judge). Every selection is forced to GET (the
+// probe is read-only), deduplicated by path, and capped. Synthetic surface entries (e.g. a GraphQL
+// "POST /graphql query X" row) carry a space and are skipped — they are not plain HTTP paths.
+func differentialTargets(rows []store.SurfaceRow) [][2]string {
+	seen := map[string]bool{}
+	var mps [][2]string
+	for _, r := range rows {
+		if strings.ContainsAny(r.Path, " ") || !strings.HasPrefix(r.Path, "/") {
+			continue
+		}
+		cl := classifyEndpoint(r.Method, r.Path)
+		if cl.tier != 1 || (cl.class != "idor" && cl.class != "admin") {
+			continue
+		}
+		if seen[r.Path] {
+			continue
+		}
+		seen[r.Path] = true
+		mps = append(mps, [2]string{http.MethodGet, r.Path})
+		if len(mps) >= differentialCap {
+			break
+		}
+	}
+	return mps
+}
+
+// runTargetDifferential is the Phase-2 deterministic probe: it replays the priv-vs-low (and
+// anonymous) differential over the crown-jewel endpoints recon mapped, flagging broken access
+// control WITHOUT the model in the loop — so findings land even when the local model is too weak to
+// exploit them. It reads only (GET, egress-gated) and plants nothing, so it is safe against a live
+// app the operator is not mutating. Each flag is pooled into the pentest report, ranked by the
+// oracle's confidence. No-op unless the target declares privileged credentials (the differential
+// needs an authenticated view to compare a low/anonymous view against) and recon mapped a surface.
+func (s *Server) runTargetDifferential(ctx context.Context, c *campaign, tg store.Target) {
+	if s.store == nil || tg.PrivCreds == "" {
+		return
+	}
+	rows, err := s.store.ListSurface(tg.Name)
+	if err != nil {
+		return
+	}
+	mps := differentialTargets(rows)
+	if len(mps) == 0 {
 		return
 	}
 	egress := tools.NewEgress(hostPort(tg.Base))
+	sessions := s.authSessions(ctx, tg, egress)
+	priv := core.Identity{Name: "priv", Session: "priv"}
+	var low core.Identity
+	var anon *core.Identity
+	if tg.LowCreds != "" {
+		// A real low-privilege peer is the sharpest test; anonymous is the public baseline so
+		// content every visitor sees is not mistaken for a privileged disclosure.
+		low = core.Identity{Name: "low", Session: "low"}
+		anon = &core.Identity{Name: "anon"}
+	} else {
+		// No low creds: anonymous is the unprivileged identity (can a signed-out visitor read it?).
+		low = core.Identity{Name: "anon"}
+	}
+	oracle := &probes.DifferentialOracle{
+		Base: tg.Base, Egress: egress, Sessions: sessions,
+		Priv: priv, Low: low, Anon: anon,
+	}
+	findings, err := oracle.Sweep(ctx, mps)
+	if err != nil {
+		return
+	}
+	var flagged []probes.DiffFinding
+	for _, f := range findings {
+		if f.Flagged() {
+			flagged = append(flagged, f)
+		}
+	}
+	if len(flagged) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if c.diff == nil {
+		c.diff = map[string][]probes.DiffFinding{}
+	}
+	c.diff[tg.Base] = flagged
+	s.mu.Unlock()
+}
+
+// authSessions logs every configured identity (priv/low) into a fresh shared cookie jar, CSRF-aware
+// (GET the login page, extract the token, POST the credentials), and returns the jar so a caller can
+// crawl or probe the app as each identity. Anonymous needs no login. Best-effort: a failed login
+// just leaves that identity's jar empty (so it falls back to the anonymous view).
+func (s *Server) authSessions(ctx context.Context, tg store.Target, egress *tools.Egress) *tools.Sessions {
 	sessions := tools.NewSessions()
-	// Log in each creds identity into the shared jar (CSRF-aware: GET the login page, extract the
-	// token, POST the credentials) so the crawl below sees each identity's authenticated surface.
 	login := tools.NewHTTPRequestTool(tg.Base, egress, nil)
 	login.Sessions = sessions
 	for _, id := range reconIdentities(tg) {
@@ -380,6 +463,21 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 			User: user, Pass: pass,
 		})
 	}
+	return sessions
+}
+
+// runTargetRecon maps the target's surface deterministically before the model loop: it logs in each
+// configured identity into a shared jar, then crawls as EACH identity (and anonymously), merging the
+// discovered paths into project memory. Role-based access control means different identities are
+// shown (and redirected to) different pages, each loading different JS bundles — so only a
+// multi-identity crawl enumerates the whole app. The model-loop's KNOWN SURFACE preamble then seeds
+// from this accurate map. Best-effort, read-only (GET), egress-gated.
+func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Target) {
+	if s.store == nil {
+		return
+	}
+	egress := tools.NewEgress(hostPort(tg.Base))
+	sessions := s.authSessions(ctx, tg, egress)
 	discover := probes.NewDiscoverTool(tg.Base, egress)
 	discover.Sessions = sessions
 	seenAPI := false
@@ -628,6 +726,11 @@ func (s *Server) runCampaign(c *campaign) {
 			// the discovered operations into project memory + the report (the REST ingest is blind
 			// to GraphQL). Contained + gated; best-effort (no endpoint = no surface).
 			s.runTargetGraphQL(ctx, c, tg)
+			// Phase-2 deterministic probe: replay the priv-vs-low differential over the crown-jewel
+			// endpoints recon mapped, landing broken-access-control findings read-only without the
+			// model in the loop (the local model is too weak to exploit; the oracle is not). Safe
+			// against a live app: GET-only, nothing planted, egress-gated.
+			s.runTargetDifferential(ctx, c, tg)
 			// Feeders: source-side SCA (osv-scanner over the target's SourceDir) and any ZAP report
 			// the target declares, folded into the pooled scanner findings for the report. Both are
 			// no-ops unless the target is configured for them.

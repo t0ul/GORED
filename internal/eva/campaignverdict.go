@@ -58,6 +58,10 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 	for base, surf := range c.graphql {
 		gql[base] = surf
 	}
+	dff := map[string][]probes.DiffFinding{} // snapshot the deterministic differential BAC flags
+	for base, fs := range c.diff {
+		dff[base] = fs
+	}
 	s.mu.Unlock()
 
 	var proofs []core.Proof
@@ -136,6 +140,32 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 		}
 		for _, f := range fs {
 			if p, ok := probes.ProofFromFfuf(f, app); ok {
+				proofs = append(proofs, p)
+			}
+		}
+	}
+	// Pool the Phase-2 deterministic differential flags: a crown-jewel endpoint whose low-privilege
+	// (or anonymous) view discloses privileged data is broken access control, found read-only by the
+	// oracle without the model. An object (id) path is CWE-639 (object-level), a function/collection
+	// path CWE-862; ProofFromHunt ranks each by the oracle's confidence. Unconfirmed — no model repro
+	// ran — so these stay below the model-loop's executed captures.
+	for base, fs := range dff {
+		app := baseName[base]
+		if app == "" {
+			app = base
+		}
+		for _, f := range fs {
+			cwe := "CWE-862" // function/collection-level missing authorization
+			if reIDSeg.MatchString(f.Path) {
+				cwe = "CWE-639" // an object addressed by id, read across owners (IDOR)
+			}
+			hf := probes.HuntFinding{
+				Method: f.Method, Path: f.Path, CWE: cwe, Verdict: f.Verdict,
+				Confidence: f.Confidence, ConfidenceReason: f.ConfidenceReason,
+				Marker: f.Marker, Evidence: f.Evidence,
+			}
+			if p, ok := probes.ProofFromHunt(hf, app); ok {
+				p.Source = "gored-eva-differential"
 				proofs = append(proofs, p)
 			}
 		}
