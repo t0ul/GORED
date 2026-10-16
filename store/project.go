@@ -112,15 +112,28 @@ func (s *Store) findQuery(q string, args ...any) ([]SurfaceFind, error) {
 	return out, rows.Err()
 }
 
-// SaveFinding records a finding for a target, ignoring an exact repeat (target+type+value).
-func (s *Store) SaveFinding(target, typ, value, runID string) error {
-	_, err := s.db.Exec(
+// SaveFinding records a finding on a target's canonical ledger (deduped by target+type+value, so
+// re-finding the same thing does not bloat memory) AND, when a model reported it (model != ""), a
+// per-model attribution in finding_find — so a researcher can compare which model found which
+// finding on the same target, exactly as the surface map and its attribution do.
+func (s *Store) SaveFinding(target, model, runID, typ, value string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.Exec(
 		`INSERT OR IGNORE INTO project_findings (target, type, value, run_id, ts) VALUES (?,?,?,?,?)`,
-		target, typ, value, runID, time.Now().UTC().Format(time.RFC3339Nano))
+		target, typ, value, runID, now); err != nil {
+		return err
+	}
+	if model == "" {
+		return nil // no model attribution for a non-model source
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO finding_find (target, type, value, model, run_id, ts) VALUES (?,?,?,?,?,?)
+		 ON CONFLICT(target, type, value, model) DO UPDATE SET run_id=excluded.run_id, ts=excluded.ts`,
+		target, typ, value, model, runID, now)
 	return err
 }
 
-// ListFindings returns a target's accumulated findings, most recent first.
+// ListFindings returns a target's canonical findings (every model folded in), most recent first.
 func (s *Store) ListFindings(target string) ([]FindingRow, error) {
 	rows, err := s.db.Query(`SELECT target, type, value, run_id, ts FROM project_findings WHERE target=? ORDER BY ts DESC`, target)
 	if err != nil {
@@ -134,6 +147,38 @@ func (s *Store) ListFindings(target string) ([]FindingRow, error) {
 		if err := rows.Scan(&r.Target, &r.Type, &r.Value, &r.RunID, &ts); err != nil {
 			return nil, err
 		}
+		r.TS, _ = time.Parse(time.RFC3339Nano, ts)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListFindingsByModel returns the findings one model reported on a target, so models can be
+// compared against the same target (the finding-side mirror of ListSurfaceByModel).
+func (s *Store) ListFindingsByModel(target, model string) ([]FindingRow, error) {
+	return s.findingAttrQuery(`SELECT target, type, value, run_id, ts FROM finding_find WHERE target=? AND model=? ORDER BY ts DESC`, target, model)
+}
+
+// ListFindingAttrib returns the whole per-model finding ledger for a target.
+func (s *Store) ListFindingAttrib(target string) ([]FindingRow, error) {
+	return s.findingAttrQuery(`SELECT target, type, value, run_id, ts FROM finding_find WHERE target=? ORDER BY model, ts DESC`, target)
+}
+
+func (s *Store) findingAttrQuery(q string, args ...any) ([]FindingRow, error) {
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FindingRow
+	for rows.Next() {
+		var r FindingRow
+		var runID sql.NullString
+		var ts string
+		if err := rows.Scan(&r.Target, &r.Type, &r.Value, &runID, &ts); err != nil {
+			return nil, err
+		}
+		r.RunID = runID.String
 		r.TS, _ = time.Parse(time.RFC3339Nano, ts)
 		out = append(out, r)
 	}

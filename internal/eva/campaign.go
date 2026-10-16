@@ -287,7 +287,7 @@ func (s *Server) recordProjectMemory(target string, rn *run) {
 		if f.Type == "observation" || f.Value == "" {
 			continue
 		}
-		_ = s.store.SaveFinding(target, string(f.Type), f.Value, rn.ID)
+		_ = s.store.SaveFinding(target, rn.Model, rn.ID, string(f.Type), f.Value)
 	}
 }
 
