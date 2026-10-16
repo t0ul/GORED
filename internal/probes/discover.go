@@ -53,8 +53,12 @@ func (*DiscoverTool) Describe() string {
 var wellKnown = []string{"/robots.txt", "/sitemap.xml", "/openapi.json", "/swagger.json", "/.well-known/", "/api", "/api/"}
 
 var (
-	reAttr  = regexp.MustCompile(`(?i)(?:href|src|action)\s*=\s*["']([^"'#]+)["']`)
-	reJSURL = regexp.MustCompile(`["'` + "`" + `](/[A-Za-z0-9_\-./{}]+)["'` + "`" + `]`)
+	reAttr = regexp.MustCompile(`(?i)(?:href|src|action)\s*=\s*["']([^"'#]+)["']`)
+	// A path literal inside JS: an opening quote/backtick then the path. It deliberately does NOT
+	// require a CLOSING quote, because real client code writes a path as the prefix of a longer
+	// string — fetch('/api/summary?file='+x) or '/api/tickets/'+id — and the path chars stop at the
+	// first non-path byte (?, quote, space, +), so the capture is just the path either way.
+	reJSURL = regexp.MustCompile(`["'` + "`" + `](/[A-Za-z0-9_\-./{}]+)`)
 )
 
 func (t *DiscoverTool) Call(ctx context.Context, args map[string]any) (string, error) {
