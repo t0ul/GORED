@@ -760,7 +760,7 @@ func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string
 	if (ep.Class == "ingest" || ep.Class == "upload") && len(renderPages) > 0 {
 		fmt.Fprintf(&b, "\nRender pages (where stored data is shown — pass these to stored_xss as \"render\"): %s", strings.Join(renderPages, ", "))
 	}
-	b.WriteString("\nSend real values you obtain, never a placeholder. Confirm any finding on the actual response bytes and report it. If this endpoint is not vulnerable, say so plainly and stop — do not wander to other paths.")
+	b.WriteString("\nSend real values you obtain, never a placeholder. SELF-CORRECT: if a tool returns an error or an unexpected status, read it, form a hypothesis about why (wrong body shape, missing field, wrong method or render page), and change your NEXT call accordingly — never send the same failing call twice. Confirm any finding on the actual response bytes and report it. If this endpoint is genuinely not vulnerable after you have adapted, say so plainly and stop — do not wander to other paths.")
 	return b.String()
 }
 

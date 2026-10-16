@@ -70,6 +70,84 @@ func TestStoredXSSLive(t *testing.T) {
 	}
 }
 
+// An app whose write endpoint requires a JSON ARRAY (like RR's /api/ingest) and renders each stored
+// name raw on /feed. It 400s a non-array body, so the simple {field:...} object form is rejected.
+func startArrayIngestApp(t *testing.T) (string, func()) {
+	t.Helper()
+	var mu sync.Mutex
+	var names []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ingest", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+		var arr []map[string]any
+		if json.Unmarshal(b, &arr) != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, "expected array")
+			return
+		}
+		mu.Lock()
+		for _, o := range arr {
+			if n, ok := o["name"].(string); ok {
+				names = append(names, n)
+			}
+		}
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	})
+	mux.HandleFunc("/feed", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, "<!doctype html><html><body>")
+		for _, n := range names {
+			fmt.Fprintf(w, "<div>%s</div>", n) // raw: vulnerable
+		}
+		io.WriteString(w, "</body></html>")
+	})
+	ts := httptest.NewServer(mux)
+	return ts.URL, ts.Close
+}
+
+// The self-correction payoff: a raw body template lets the model express the array shape the
+// endpoint demands, so the stored payload executes — the exact capability RR-H1 needs.
+func TestStoredXSSBodyTemplate(t *testing.T) {
+	chromeOrSkip(t)
+	base, done := startArrayIngestApp(t)
+	defer done()
+	out, err := StoredXSSTool{Gate: demoGate(t, base), Base: base, Sessions: core.NewSessions()}.Call(
+		ctxWithTimeout(t), map[string]any{
+			"method": "POST", "path": "/ingest",
+			"body":   `[{"name":"__PAYLOAD__"}]`,
+			"render": []any{"/feed"},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, DOMXSSSentinel) {
+		t.Fatalf("body-template array should plant + execute; got: %s", out)
+	}
+}
+
+// Self-correction feedback: the simple object form is rejected (the app wants an array), and the
+// tool must return an ACTIONABLE diagnostic (the 400 + body) so the agent knows to fix the body,
+// not a dead-end "no xss".
+func TestStoredXSSRejectFeedback(t *testing.T) {
+	chromeOrSkip(t)
+	base, done := startArrayIngestApp(t)
+	defer done()
+	out, err := StoredXSSTool{Gate: demoGate(t, base), Base: base, Sessions: core.NewSessions()}.Call(
+		ctxWithTimeout(t), map[string]any{
+			"method": "POST", "path": "/ingest", "field": "name", // object, not array -> 400
+			"render": []any{"/feed"},
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "REJECTED") || !strings.Contains(out, "expected array") {
+		t.Fatalf("rejection must be actionable (status + reason) so the model self-corrects; got: %s", out)
+	}
+}
+
 // The hardened build escapes the stored title, so nothing executes — no false positive.
 func TestStoredXSSHardenedNoFP(t *testing.T) {
 	chromeOrSkip(t)
