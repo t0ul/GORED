@@ -113,6 +113,17 @@ CREATE TABLE IF NOT EXISTS project_surface (
   PRIMARY KEY (target, method, path)
 );
 CREATE INDEX IF NOT EXISTS idx_psurface_target ON project_surface(target);
+CREATE TABLE IF NOT EXISTS surface_find (
+  target  TEXT NOT NULL,
+  method  TEXT NOT NULL,
+  path    TEXT NOT NULL,
+  model   TEXT NOT NULL,
+  run_id  TEXT,
+  note    TEXT,
+  ts      TEXT,
+  PRIMARY KEY (target, method, path, model)
+);
+CREATE INDEX IF NOT EXISTS idx_sfind_target_model ON surface_find(target, model);
 CREATE TABLE IF NOT EXISTS project_findings (
   target TEXT NOT NULL,
   type   TEXT,
@@ -122,6 +133,16 @@ CREATE TABLE IF NOT EXISTS project_findings (
 );
 CREATE INDEX IF NOT EXISTS idx_pfindings_target ON project_findings(target);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pfindings_uniq ON project_findings(target, type, value);
+CREATE TABLE IF NOT EXISTS finding_find (
+  target TEXT NOT NULL,
+  type   TEXT NOT NULL,
+  value  TEXT NOT NULL,
+  model  TEXT NOT NULL,
+  run_id TEXT,
+  ts     TEXT,
+  PRIMARY KEY (target, type, value, model)
+);
+CREATE INDEX IF NOT EXISTS idx_ffind_target_model ON finding_find(target, model);
 `
 
 // Open opens (creating if needed) a run store at path.

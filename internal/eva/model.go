@@ -38,6 +38,7 @@ type run struct {
 	queuedHint string             // a mid-run directive, merged into the next checkpoint's hint
 	slot       int                // the concurrency bay / port offset this run holds
 	campaignID string             // the campaign that scheduled this run, empty for an interactive sortie
+	targetName string             // the store target name, so the model's save_surface tool can attribute its map
 	flags      *bench.Flags       // the run's bench flags, carried so a campaign can execute it after building
 }
 

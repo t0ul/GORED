@@ -84,6 +84,7 @@ type options struct {
 	checkpoint       core.Checkpoint
 	skillInstruction string
 	goal             string
+	extraTools       []core.Tool
 }
 
 // WithCheckpoint installs a human-in-the-loop checkpoint on the stage's Runner, so the
@@ -102,6 +103,12 @@ func WithSkillInstruction(s string) Option {
 // WithGoal overrides the stage's objective line for this run. Empty keeps the stage default.
 func WithGoal(s string) Option {
 	return func(o *options) { o.goal = s }
+}
+
+// WithExtraTools injects run-scoped tools into the stage's toolbox — e.g. a store-backed recorder
+// the orchestrator binds to this run's target and model. The stage's own tools are unchanged.
+func WithExtraTools(ts ...core.Tool) Option {
+	return func(o *options) { o.extraTools = append(o.extraTools, ts...) }
 }
 
 // Run executes the named stage as a bench sweep against f.Base and returns the per-trial
@@ -168,8 +175,12 @@ func Run(ctx context.Context, f *bench.Flags, stageName string, opts ...Option) 
 			} else {
 				gate = tools.NewGate(brig.Transport{Bridge: f.Bridge, TraceID: stageName}, egress, onDeny)
 			}
+			tb := st.BuildTools(gate, base)
+			if len(o.extraTools) > 0 {
+				tb.Add(o.extraTools...) // run-scoped injected tools (e.g. the surface recorder)
+			}
 			return &core.Runner{
-				Model: cl, Tools: st.BuildTools(gate, base), Skill: st.Skill, Target: rt.Target,
+				Model: cl, Tools: tb, Skill: st.Skill, Target: rt.Target,
 				Board: core.NewUnscrubbedBlackboard(), Audit: audit, Bounds: f.Bounds(),
 				Detector: st.Detect, Phases: st.Phases(), CanaryURL: canaryBeacon,
 				Checkpoint: o.checkpoint, Prelude: f.Prelude,
