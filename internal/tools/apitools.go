@@ -35,9 +35,16 @@ func (t APIRequestTool) Call(ctx context.Context, args map[string]any) (string, 
 		method = "GET"
 	}
 	headers := map[string]string{}
+	placeholder := ""
 	if h, ok := args["headers"].(map[string]any); ok {
 		for k, v := range h {
-			headers[k] = asString(v)
+			val := asString(v)
+			headers[k] = val
+			// A value like "<token>" or "<session_value>" is an unfilled placeholder, not a real
+			// credential — flag it so the model substitutes the actual value it read from the app.
+			if strings.HasPrefix(strings.TrimSpace(val), "<") && strings.HasSuffix(strings.TrimSpace(val), ">") {
+				placeholder = k
+			}
 		}
 	}
 	body := asString(args["body"])
@@ -55,6 +62,10 @@ func (t APIRequestTool) Call(ctx context.Context, args map[string]any) (string, 
 		hint = "\n(hint: no such path — recon with http_request and use a path you actually found)"
 	case 405:
 		hint = "\n(hint: wrong method for this path — try the method the endpoint expects, e.g. GET vs POST/PUT)"
+	}
+	// A placeholder header value is the likeliest reason for a 401/403, so lead with that fix.
+	if placeholder != "" {
+		hint = fmt.Sprintf("\n(hint: header %q is a placeholder (%s) — substitute the real value you read from the app, not a literal <...>)", placeholder, headers[placeholder]) + hint
 	}
 	return fmt.Sprintf("HTTP %d\n%s%s", status, respBody, hint), nil
 }

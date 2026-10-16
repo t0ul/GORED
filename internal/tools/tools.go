@@ -188,6 +188,15 @@ func NewHTTPRequestTool(base string, e *Egress, onDeny func(string)) *HTTPReques
 	}
 }
 
+// EgressAuthorities exposes the allowlist so the loop can log it and emit the containment beacon
+// (the Runner reads this off the http_request tool, as it does for GetTool).
+func (t *HTTPRequestTool) EgressAuthorities() []string {
+	if t.Egress == nil {
+		return nil
+	}
+	return t.Egress.Authorities()
+}
+
 func (*HTTPRequestTool) Name() string { return "http_request" }
 func (*HTTPRequestTool) Describe() string {
 	return `issue an HTTP request. args: {"method":"GET|POST","path":"/...","headers":{...},"body":"...","session":"name"}. "session" keeps cookies across calls under that name, so log in once and reuse it (use two names like "attacker" and "victim" to compare identities). Returns "HTTP <status>\n<key headers incl set-cookie/location>\n<body>".`
