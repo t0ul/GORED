@@ -49,7 +49,7 @@ type planHTTPTool struct {
 func (planHTTPTool) Name() string { return "http_request" }
 func (planHTTPTool) Describe() string {
 	return `HTTP GET a URL on the target and return the response body. ` +
-		`args: {"url":"http://127.0.0.1:8088/"} or {"path":"/"}. Use it to map the app and read each surface.`
+		`args: {"url":"http://<target>/"} or {"path":"/"}. Use it to map the app and read each surface.`
 }
 func (t planHTTPTool) Call(ctx context.Context, args map[string]any) (string, error) {
 	u, err := resolveURL(args, t.base)
@@ -137,7 +137,7 @@ type planTool struct {
 func (planTool) Name() string { return "plan" }
 func (planTool) Describe() string {
 	return `Decide which vulnerability class to test on each surface you found. ` +
-		`args: {"surfaces":["/","/greeting","/api/greet"]} (paths or URLs). For each, it reads the real ` +
+		`args: {"surfaces":["/","/<page>","/api/<resource>"]} (paths or URLs). For each, it reads the real ` +
 		`response, classifies the surface, and routes the right class and tool: a server-rendered HTML page ` +
 		`-> reflected XSS (tool: xss_scan); a JSON API -> authorization/JWT/mass-assignment (NOT XSS); a ` +
 		`single-page-app shell -> DOM XSS (needs a browser). Call plan after recon/fingerprint, then run ` +
@@ -195,7 +195,7 @@ type planXSSScanTool struct {
 func (planXSSScanTool) Name() string { return "xss_scan" }
 func (planXSSScanTool) Describe() string {
 	return `Scan a URL for reflected cross-site scripting with the dalfox scanner. ` +
-		`args: {"url":"http://127.0.0.1:8088/greeting?name=FUZZ"}. Put FUZZ where a parameter's value goes. ` +
+		`args: {"url":"http://<target>/<path>?name=FUZZ"}. Put FUZZ where a parameter's value goes. ` +
 		`XSS applies to a server-rendered HTML page, NOT a JSON API. A confirmed finding means a real XSS.`
 }
 func (t planXSSScanTool) Call(ctx context.Context, args map[string]any) (string, error) {
