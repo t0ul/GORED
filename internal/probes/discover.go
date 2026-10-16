@@ -38,7 +38,7 @@ func NewDiscoverTool(base string, e *core.Egress) *DiscoverTool {
 	return &DiscoverTool{
 		Base:   strings.TrimRight(base, "/"),
 		Egress: e,
-		Max:    40,
+		Max:    60, // headroom for a multi-page app + its JS bundles
 		Depth:  2,
 		client: &http.Client{Timeout: 8 * time.Second},
 	}
@@ -133,12 +133,18 @@ func (t *DiscoverTool) Call(ctx context.Context, args map[string]any) (string, e
 		cur := queue[0]
 		queue = queue[1:]
 		children := get(cur.path)
-		if cur.depth >= t.Depth {
-			continue
-		}
 		sort.Strings(children) // deterministic crawl order
 		for _, c := range children {
-			if !queued[c] && !fetched[c] && crawlable(c) {
+			if queued[c] || fetched[c] || !crawlable(c) {
+				continue
+			}
+			// A .js bundle is where the API routes hide, so always mine it regardless of crawl
+			// depth (it was often first seen at the depth boundary — recorded but never fetched).
+			// Ordinary pages still respect Depth so the crawl stays bounded.
+			if strings.HasSuffix(c, ".js") {
+				queued[c] = true
+				queue = append(queue, node{c, cur.depth})
+			} else if cur.depth < t.Depth {
 				queued[c] = true
 				queue = append(queue, node{c, cur.depth + 1})
 			}
