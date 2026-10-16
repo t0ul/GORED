@@ -15,6 +15,11 @@ func TestReverseAPIShapes(t *testing.T) {
 	fetch(` + "`" + `/api/admin/users/${uid}` + "`" + `, { method: 'DELETE' });
 	fetch('/api/adapters', { method: 'POST', body: JSON.stringify(data) });
 	fetch('/api/tickets?status=open');
+	axios.post("/api/orders", { sku: s, qty: n });
+	$.post('/api/comments', { text: t });
+	$.ajax({ url: "/api/profile", type: "PUT", data: { role: r } });
+	api.delete(` + "`" + `/api/sessions/${sid}` + "`" + `);
+	const u = params.get("ignore-me");
 	`
 	got := ReverseAPIShapes(js)
 	byPath := map[string]APIShape{}
@@ -32,6 +37,10 @@ func TestReverseAPIShapes(t *testing.T) {
 		{"/api/admin/users/{id}", "DELETE", nil},                  // ${uid} normalized, no body
 		{"/api/adapters", "POST", nil},                            // opaque var body -> method+path only
 		{"/api/tickets", "GET", nil},                              // no method -> GET, query stripped
+		{"/api/orders", "POST", []string{"sku", "qty"}},           // axios.post, positional data arg
+		{"/api/comments", "POST", []string{"text"}},               // jQuery $.post
+		{"/api/profile", "PUT", []string{"role"}},                 // $.ajax config object (type -> method)
+		{"/api/sessions/{id}", "DELETE", nil},                     // wrapped client verb + template id
 	}
 	for _, w := range want {
 		s, ok := byPath[w.path]

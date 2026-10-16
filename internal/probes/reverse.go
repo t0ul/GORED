@@ -20,15 +20,26 @@ type APIShape struct {
 	Fields []string // request-body field names, when the body is an inline object literal
 }
 
+const bt = "`"
+
 var (
-	// a fetch("…"/'…'/`…`) call; the captured group is the URL/path literal.
-	reFetchURL = regexp.MustCompile("fetch\\(\\s*[\"'`]([^\"'`]+)[\"'`]")
-	reMethodJS = regexp.MustCompile(`(?i)method\s*:\s*["'` + "`" + `]?([A-Za-z]+)`)
-	// the request body's inline object literal: JSON.stringify({...}) or body: {...}. [^{}]* keeps it
-	// to a flat object (a nested value just yields no fields, which is fine — we still get method+path).
-	reBodyObj = regexp.MustCompile(`(?s)(?:JSON\.stringify\(\s*|body\s*:\s*)\{([^{}]*)\}`)
-	reFieldJS = regexp.MustCompile(`["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:`)
-	reTplSeg  = regexp.MustCompile(`\$\{[^}]*\}`)
+	// fetch("…"/'…'/`…`, { … }) — the captured group is the URL/path literal.
+	reFetchURL = regexp.MustCompile("fetch\\(\\s*[\"'" + bt + "]([^\"'" + bt + "]+)[\"'" + bt + "]")
+	// a method-verb call on any client: fetch is above; axios.post / $.post / api.put / http.delete /
+	// client.get(…) all read as `.verb("/path"`, so the verb IS the method. Covers axios, jQuery's
+	// $.post/$.get, and any wrapped HTTP client — not just raw fetch.
+	reVerbCall = regexp.MustCompile(`(?i)\.(get|post|put|patch|delete)\(\s*["'` + bt + `](/[^"'` + bt + `]*)`)
+	// a config-object call: axios({url:"/path", method:…, data:{…}}) or $.ajax({url:"/path", type:…,
+	// data:{…}}) — the path rides a url: key.
+	reConfigURL = regexp.MustCompile(`(?i)\burl\s*:\s*["'` + bt + `](/[^"'` + bt + `]*)`)
+	// method/type key (jQuery uses type), for fetch-options and config-object forms.
+	reMethodJS = regexp.MustCompile(`(?i)(?:method|type)\s*:\s*["'` + bt + `]?([A-Za-z]+)`)
+	// a body object under JSON.stringify(...) / body: / data: (the wrapper forms).
+	reBodyObj = regexp.MustCompile(`(?s)(?:JSON\.stringify\(\s*|(?:body|data)\s*:\s*)\{([^{}]*)\}`)
+	// the first flat object literal in a window — the positional data arg of a verb call like .post(url,{…}).
+	reFirstObj = regexp.MustCompile(`(?s)\{([^{}]*)\}`)
+	reFieldJS  = regexp.MustCompile(`["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:`)
+	reTplSeg   = regexp.MustCompile(`\$\{[^}]*\}`)
 )
 
 // skipField drops obvious non-field tokens that the flat-object regex can pick up (scheme words,
@@ -39,37 +50,108 @@ var skipField = map[string]bool{"http": true, "https": true, "headers": true, "m
 // its method, its path (template ids normalized to {id}, query stripped), and the body field names
 // when the call passes an inline object literal.
 func ReverseAPIShapes(js string) []APIShape {
+	type key struct{ m, p string }
+	idx := map[key]int{}
 	var out []APIShape
-	for _, loc := range reFetchURL.FindAllStringSubmatchIndex(js, -1) {
-		raw := js[loc[2]:loc[3]]
-		path := normalizeAPIPath(raw)
+	add := func(method, rawURL, win string, positional bool) {
+		path := normalizeAPIPath(rawURL)
 		if !strings.HasPrefix(path, "/") { // same-origin paths only, not absolute URLs
-			continue
+			return
 		}
-		end := loc[1] + 400
-		if end > len(js) {
-			end = len(js)
+		method = strings.ToUpper(method)
+		if method == "" {
+			method = "GET"
 		}
-		win := js[loc[1]:end] // the options object follows the url within a small window
-		method := "GET"
-		if m := reMethodJS.FindStringSubmatch(win); m != nil {
-			method = strings.ToUpper(m[1])
+		fields := bodyFields(win, positional)
+		k := key{method, path}
+		if i, ok := idx[k]; ok {
+			out[i].Fields = mergeStrings(out[i].Fields, fields)
+			return
 		}
-		var fields []string
-		seen := map[string]bool{}
-		if b := reBodyObj.FindStringSubmatch(win); b != nil {
-			for _, fm := range reFieldJS.FindAllStringSubmatch(b[1], -1) {
-				f := fm[1]
-				if skipField[strings.ToLower(f)] || seen[f] {
-					continue
-				}
-				seen[f] = true
-				fields = append(fields, f)
-			}
-		}
+		idx[k] = len(out)
 		out = append(out, APIShape{Method: method, Path: path, Fields: fields})
 	}
+	// fetch(url, { method, headers, body }) — method is in the options object.
+	for _, loc := range reFetchURL.FindAllStringSubmatchIndex(js, -1) {
+		win := windowAt(js, loc[1], 400)
+		add(methodIn(win), js[loc[2]:loc[3]], win, false)
+	}
+	// client.verb("/path", {data}) — axios / $.post / wrapped clients. The verb is the method and the
+	// body is the positional object arg.
+	for _, loc := range reVerbCall.FindAllStringSubmatchIndex(js, -1) {
+		win := windowAt(js, loc[1], 220)
+		add(js[loc[2]:loc[3]], js[loc[4]:loc[5]], win, true)
+	}
+	// axios({url, method, data}) / $.ajax({url, type, data}) — path on a url: key, body under data:.
+	for _, loc := range reConfigURL.FindAllStringSubmatchIndex(js, -1) {
+		win := windowAt(js, loc[0], 400) // include the surrounding config object
+		add(methodIn(win), js[loc[2]:loc[3]], win, false)
+	}
 	return out
+}
+
+// windowAt returns the text of the current statement following start: up to n chars, but cut at the
+// first ';' so one call's window never bleeds into the next statement (which would mis-attribute a
+// neighbouring call's method/body to this one).
+func windowAt(s string, start, n int) string {
+	if start < 0 {
+		start = 0
+	}
+	end := start + n
+	if end > len(s) {
+		end = len(s)
+	}
+	w := s[start:end]
+	if i := strings.IndexByte(w, ';'); i >= 0 {
+		w = w[:i]
+	}
+	return w
+}
+
+func methodIn(win string) string {
+	if m := reMethodJS.FindStringSubmatch(win); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// bodyFields extracts the request-body field names from a window. positional=true reads the first
+// object literal (a verb call's data arg); otherwise it reads the body:/data:/JSON.stringify object
+// (so a fetch options wrapper's method/headers/body keys are not mistaken for body fields).
+func bodyFields(win string, positional bool) []string {
+	re := reBodyObj
+	if positional {
+		re = reFirstObj
+	}
+	m := re.FindStringSubmatch(win)
+	if m == nil {
+		return nil
+	}
+	var fields []string
+	seen := map[string]bool{}
+	for _, fm := range reFieldJS.FindAllStringSubmatch(m[1], -1) {
+		f := fm[1]
+		if skipField[strings.ToLower(f)] || seen[f] {
+			continue
+		}
+		seen[f] = true
+		fields = append(fields, f)
+	}
+	return fields
+}
+
+func mergeStrings(a, b []string) []string {
+	seen := map[string]bool{}
+	for _, s := range a {
+		seen[s] = true
+	}
+	for _, s := range b {
+		if !seen[s] {
+			seen[s] = true
+			a = append(a, s)
+		}
+	}
+	return a
 }
 
 // normalizeAPIPath turns a JS URL literal into a stable surface path: a ${...} template segment
