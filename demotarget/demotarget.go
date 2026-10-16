@@ -218,6 +218,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
 	s.mux.HandleFunc("GET /search", s.handleSearch)
+	s.mux.HandleFunc("GET /backup.zip", s.handleBackup)
+	s.mux.HandleFunc("POST /graphql", s.handleGraphQL)
 	s.mux.HandleFunc("GET /api/profile", s.handleGetProfile)
 	s.mux.HandleFunc("PUT /api/profile", s.handleUpdateProfile)
 	s.mux.HandleFunc("POST /api/token", s.handleIssueToken)
@@ -232,7 +234,14 @@ func (s *Server) routes() {
 // crawler (the discover tool) can enumerate it the way it would a real app. The
 // user's own notes (1-3) are linked; the admin note (1000) is NOT — reaching it is
 // the IDOR the exploit agent must discover by changing the id.
-func (s *Server) handleIndex(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	// The "GET /" pattern is a catch-all in Go's ServeMux, so guard it: a real app returns 404 for
+	// an unknown path, which is what makes content discovery (ffuf) meaningful — only genuinely
+	// served paths come back 200.
+	if r.URL.Path != "/" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
 	const page = `<!doctype html>
 <html><head><title>Notes</title></head><body>
 <h1>Notes</h1>
@@ -440,6 +449,62 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprintf(w, `<!doctype html><html><body><h1>Results</h1><p>You searched for: %s</p></body></html>`, q)
+}
+
+// handleBackup is the content-discovery surface (CWE-530 sensitive-file exposure). The vulnerable
+// build serves a leftover backup archive at an UNLINKED path — the index never links /backup.zip,
+// so only forced-browsing content discovery (ffuf) finds it. The hardened build does not serve it
+// (404), closing the exposure. It carries no flag; the finding is that a sensitive file is reachable.
+func (s *Server) handleBackup(w http.ResponseWriter, _ *http.Request) {
+	if s.hardened {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("PK\x03\x04 demo backup archive (leftover, not linked from the app)\n"))
+}
+
+// graphqlSchema is the canned introspection response for the demo GraphQL endpoint: a query that
+// takes an id (note(id:ID) — the IDOR/BAC candidate the probe looks for), a list query, and a
+// mutation. It is the schema an attacker learns when introspection is left enabled.
+const graphqlSchema = `{"data":{"__schema":{` +
+	`"queryType":{"name":"Query","fields":[` +
+	`{"name":"note","args":[{"name":"id","type":{"kind":"SCALAR","name":"ID","ofType":null}}],"type":{"kind":"OBJECT","name":"Note","ofType":null}},` +
+	`{"name":"notes","args":[],"type":{"kind":"LIST","name":null,"ofType":{"kind":"OBJECT","name":"Note"}}}` +
+	`]},` +
+	`"mutationType":{"name":"Mutation","fields":[` +
+	`{"name":"createNote","args":[{"name":"title","type":{"kind":"SCALAR","name":"String","ofType":null}},{"name":"body","type":{"kind":"SCALAR","name":"String","ofType":null}}],"type":{"kind":"OBJECT","name":"Note","ofType":null}}` +
+	`]}` +
+	`}}}`
+
+// handleGraphQL is the GraphQL ingestion surface. The vulnerable build leaves schema introspection
+// enabled — a common GraphQL misconfiguration (CWE-200 information disclosure) — so a POST of the
+// introspection query returns the full schema, handing an attacker every operation (including the
+// id-taking note(id) query, a GraphQL IDOR candidate). The hardened build disables introspection,
+// so the schema is not disclosed and the ingestion probe finds no surface. Only introspection is
+// wired here; exploiting a discovered operation is driven through api_request.
+func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	var in struct {
+		Query string `json:"query"`
+	}
+	_ = json.Unmarshal(body, &in)
+	if strings.Contains(in.Query, "__schema") {
+		if s.hardened {
+			// The control: introspection is disabled, so the schema is never disclosed.
+			writeJSON(w, http.StatusOK, map[string]any{"errors": []map[string]string{{"message": "GraphQL introspection is disabled"}}})
+			return
+		}
+		// The bug: introspection is enabled, disclosing the full attackable surface.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(graphqlSchema))
+		return
+	}
+	// Non-introspection operations are not resolved by this demo endpoint; the agent exploits a
+	// discovered operation via api_request against the real app, not this fixture.
+	writeJSON(w, http.StatusOK, map[string]any{"errors": []map[string]string{{"message": "only introspection is wired in this demo endpoint"}}})
 }
 
 // handleGetProfile returns the caller's own account record. It is correctly scoped to the
