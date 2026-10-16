@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/t0ul/GORED/internal/core"
+	"github.com/t0ul/GORED/internal/ingest"
 	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/internal/report"
 	"github.com/t0ul/GORED/internal/tools"
@@ -21,6 +22,7 @@ var sentinelProof = []struct{ sentinel, cwe, kind string }{
 	{"JWT-FORGE-CONFIRMED", "CWE-347", "JWT forgery (a forged token was accepted)"},
 	{"BOLA-CONFIRMED", "CWE-639", "broken object-level authorization"},
 	{"NOSQLI-CONFIRMED", "CWE-943", "NoSQL injection (operator-injection auth bypass)"},
+	{"DOMXSS-CONFIRMED", "CWE-79", "DOM/reflected XSS (payload executed in the browser)"},
 }
 
 // campaignProofs builds core.Proofs from the campaign's child-run traces: every probe-tool
@@ -47,6 +49,14 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 	nuc := map[string][]tools.NucleiFinding{} // snapshot the breadth findings under the lock
 	for base, fs := range c.nuclei {
 		nuc[base] = fs
+	}
+	ffz := map[string][]tools.FfufFinding{} // snapshot the content-discovery hits
+	for base, fs := range c.ffuf {
+		ffz[base] = fs
+	}
+	gql := map[string]ingest.GraphQLSurface{} // snapshot the introspected GraphQL surfaces
+	for base, surf := range c.graphql {
+		gql[base] = surf
 	}
 	s.mu.Unlock()
 
@@ -115,6 +125,30 @@ func (s *Server) campaignProofs(c *campaign) []core.Proof {
 			if p, ok := probes.ProofFromNuclei(f, app); ok {
 				proofs = append(proofs, p)
 			}
+		}
+	}
+	// Pool the ffuf content-discovery hits (unlinked endpoints, leftover backups, exposed config /
+	// VCS files) so the report covers the forced-browsing surface the model-loop and nuclei miss.
+	for base, fs := range ffz {
+		app := baseName[base]
+		if app == "" {
+			app = base
+		}
+		for _, f := range fs {
+			if p, ok := probes.ProofFromFfuf(f, app); ok {
+				proofs = append(proofs, p)
+			}
+		}
+	}
+	// Pool the GraphQL ingestion findings: an introspectable endpoint is a schema-disclosure
+	// misconfiguration whose id-taking operations are the IDOR/BAC candidates for the report.
+	for base, surf := range gql {
+		app := baseName[base]
+		if app == "" {
+			app = base
+		}
+		if p, ok := probes.ProofFromGraphQL(surf, app, "/graphql"); ok {
+			proofs = append(proofs, p)
 		}
 	}
 	return proofs
