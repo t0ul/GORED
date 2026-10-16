@@ -45,6 +45,9 @@ type Flags struct {
 	JSONOut  string
 	Trace    string
 	Wall     time.Duration
+	// Prelude are deterministic setup tool calls (e.g. logins) the Runner performs before the model
+	// loop, so the model starts already-authenticated. Built by the campaign from the target's creds.
+	Prelude []core.PreludeAction
 }
 
 // DefaultFlags returns the defaults the stage-sweeps share.

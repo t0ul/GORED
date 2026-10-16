@@ -177,16 +177,14 @@ func authPreamble(t store.Target) string {
 	var b strings.Builder
 	switch {
 	case t.PrivCreds != "" || t.LowCreds != "":
-		b.WriteString("AUTHENTICATION — do this FIRST (this target requires a login):\n")
+		b.WriteString("AUTHENTICATION — you are ALREADY logged in (the harness authenticated for you); do not log in again:\n")
 		if t.PrivCreds != "" {
-			body, ct := loginBody(t, t.PrivCreds)
-			fmt.Fprintf(&b, "- Privileged identity: http_request POST %q with header Content-Type: %s and body %s, carrying \"session\":\"priv\". Keep \"session\":\"priv\" on later calls to act as the privileged user.\n", t.LoginPath, ct, body)
+			b.WriteString("- Privileged identity: send \"session\":\"priv\" on your http_request calls to act as the privileged user (its login cookie is already set).\n")
 		}
 		if t.LowCreds != "" {
-			body, ct := loginBody(t, t.LowCreds)
-			fmt.Fprintf(&b, "- Low-privilege identity: http_request POST %q with header Content-Type: %s and body %s, carrying \"session\":\"low\". Use \"session\":\"low\" to compare access across identities.\n", t.LoginPath, ct, body)
+			b.WriteString("- Low-privilege identity: send \"session\":\"low\" to act as the low-privilege user.\n")
 		}
-		b.WriteString("A resource the privileged user can read but the low-privilege user must not is a broken-access-control finding.")
+		b.WriteString("Start by exploring the authenticated surface with \"session\":\"priv\". A resource the privileged user can read but the low-privilege user must not (compare \"session\":\"priv\" vs \"session\":\"low\" on the same path) is a broken-access-control finding.")
 	case t.PrivHeader != "" || t.LowHeader != "":
 		b.WriteString("AUTHENTICATION — two identities are provided as static headers:\n")
 		if t.PrivHeader != "" {
@@ -417,6 +415,37 @@ func loginBody(t store.Target, creds string) (body, contentType string) {
 	return fmt.Sprintf("{%q:%q,%q:%q}", uf, user, pf, pass), "application/json"
 }
 
+// loginPrelude builds the deterministic pre-auth: for each identity the target declares creds for,
+// a POST to the login path carrying session:"priv"/"low", run before the model loop so the model
+// starts already-authenticated (the session cookie is in the jar). Empty when the target has no
+// creds/login path — a header- or no-auth target needs no prelude.
+func loginPrelude(t store.Target) []core.PreludeAction {
+	if t.LoginPath == "" {
+		return nil
+	}
+	var out []core.PreludeAction
+	add := func(creds, session string) {
+		if creds == "" {
+			return
+		}
+		body, ct := loginBody(t, creds)
+		out = append(out, core.PreludeAction{
+			Label: "login as " + session,
+			Tool:  "http_request",
+			Args: map[string]any{
+				"method":  "POST",
+				"path":    t.LoginPath,
+				"body":    body,
+				"headers": map[string]any{"Content-Type": ct},
+				"session": session,
+			},
+		})
+	}
+	add(t.PrivCreds, "priv")
+	add(t.LowCreds, "low")
+	return out
+}
+
 // targetStages returns the stages to run for a target. A campaign points at a real app's URL,
 // which only the DIRECT-transport stages hit (apiexploit, llmattack) — the brig-transport stages
 // (recon/map/exploit) run against the sandboxed in-bridge vulnapp, not an arbitrary base URL, so
@@ -546,6 +575,7 @@ func (s *Server) launchCampaignRun(c *campaign, tg store.Target, stage string, s
 	f.Ensure = tg.Ensure
 	f.MaxStall = stallBound // stop a flailing run early (campaigns especially, under the loop)
 	f.BasePort += slot * portStep
+	f.Prelude = loginPrelude(tg) // deterministic pre-auth: log in before the model loop
 
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
 	f.Trace = filepath.Join(s.traces, "gored-eva-"+id+"-trace.jsonl")
