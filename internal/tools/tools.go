@@ -177,6 +177,10 @@ type HTTPRequestTool struct {
 	// Sessions holds the per-identity cookie jars. Share one registry with a
 	// DiscoverTool (WebRecon does this) so a login made here is reused by discovery.
 	Sessions *Sessions
+	// DefaultSession is the session used when a call omits one. When the harness has pre-authenticated
+	// (e.g. logged in as "priv"), setting this to that name means the agent's plain calls carry the
+	// login cookie automatically — like a tester's browser — instead of silently going out unauthenticated.
+	DefaultSession string
 }
 
 func NewHTTPRequestTool(base string, e *Egress, onDeny func(string)) *HTTPRequestTool {
@@ -240,7 +244,11 @@ func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string
 			req.Header.Set(k, asString(v))
 		}
 	}
-	resp, err := t.Sessions.Client(asString(args["session"])).Do(req)
+	sess := asString(args["session"])
+	if sess == "" {
+		sess = t.DefaultSession // carry the pre-authenticated session when the agent omits one
+	}
+	resp, err := t.Sessions.Client(sess).Do(req)
 	if err != nil {
 		// A transport failure is retryable; label it so the agent backs off and
 		// retries rather than treating it as a verdict about the target.
