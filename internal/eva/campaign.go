@@ -606,6 +606,16 @@ func (s *Server) runCampaign(c *campaign) {
 					goto done
 				default:
 				}
+				// The exploit phase is decomposed into one focused model run per prioritized
+				// endpoint (pulled from the mapped surface), so no single run carries the whole
+				// loop — the reason the full-surface run overflowed the model's context. Other
+				// direct stages (e.g. llmattack) are not endpoint-enumeration attacks and run once.
+				if endpointPhase(stage) {
+					if s.runExploitPhase(ctx, c, tg, stage) {
+						goto done
+					}
+					continue
+				}
 				// Claim the shared bay (blocking): one model boots at a time, and interactive
 				// sorties compete for the same token, so a campaign yields the lab politely.
 				var slot int
@@ -658,7 +668,101 @@ done:
 
 // launchCampaignRun builds and registers one autonomous child run for a (target, stage) and
 // returns it ready to execute. It mirrors the interactive launch, minus the pilot dial.
+// exploitEndpointCap bounds how many prioritized endpoints the exploit phase works per pass, so a
+// large surface cannot spawn an unbounded number of model runs in one pass (later passes re-walk).
+const exploitEndpointCap = 12
+
+// endpointPhase reports whether a stage attacks the mapped surface endpoint-by-endpoint, so the
+// scheduler decomposes it into one focused run per endpoint instead of a single whole-surface run.
+func endpointPhase(stage string) bool { return stage == "apiexploit" }
+
+// runExploitPhase is Phase 2 as separate runs: it pulls the prioritized endpoints out of the mapped
+// surface (the DB, written by the recon phase) and launches ONE focused model run per endpoint, each
+// with a bounded prompt naming just that endpoint. No local model ever has to hold recon+map+exploit
+// in one context — the reason the whole-surface run overflowed. Findings persist per model. Returns
+// true if the campaign was cancelled mid-phase.
+func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Target, stage string) bool {
+	if s.store == nil {
+		return false
+	}
+	rows, err := s.store.ListSurface(tg.Name)
+	if err != nil {
+		return false
+	}
+	eps, _ := prioritizedEndpoints(rows)
+	if len(eps) > exploitEndpointCap {
+		eps = eps[:exploitEndpointCap]
+	}
+	for _, ep := range eps {
+		select {
+		case <-ctx.Done():
+			return true
+		default:
+		}
+		// Claim the shared bay per endpoint run (blocking), same politeness as a whole-stage run.
+		var slot int
+		select {
+		case slot = <-s.slots:
+		case <-ctx.Done():
+			return true
+		}
+		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep))
+		s.execute(rn, rn.flags, stage)
+		s.recordProjectMemory(tg.Name, rn)
+	}
+	return false
+}
+
+// exploitInstruction builds the FOCUSED prompt for one exploit run: attack a single, already-mapped
+// endpoint, no crawling. It stays small on purpose (one endpoint + the auth note + the fitting
+// technique), so the model's context never grows to the whole surface.
+func exploitInstruction(tg store.Target, ep rankedEndpoint) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are an authorized red-team agent. The app at %s is ALREADY MAPPED — do NOT crawl, fingerprint, or hunt for other paths.\n", tg.Base)
+	if ap := authPreamble(tg); ap != "" {
+		b.WriteString(ap + "\n")
+	}
+	fmt.Fprintf(&b, "\nAttack EXACTLY this one endpoint:\n  %s %s   [%s — %s]\n\n", ep.Method, ep.Path, ep.Class, ep.Why)
+	b.WriteString(exploitHint(ep))
+	b.WriteString("\nSend real values you obtain, never a placeholder. Confirm any finding on the actual response bytes and report it. If this endpoint is not vulnerable, say so plainly and stop — do not wander to other paths.")
+	return b.String()
+}
+
+// exploitHint gives the class-specific technique + tool for the one endpoint, so the model reaches
+// for the right primitive instead of re-deriving an approach.
+func exploitHint(ep rankedEndpoint) string {
+	switch ep.Class {
+	case "idor":
+		return "This is an object/collection addressed by id. Read your own record, then request OTHER ids (adjacent numbers, and round numbers like 100/1000) with api_request; a record you do not own served without an ownership check is the finding. The bola tool automates the comparison."
+	case "admin":
+		return "This is an admin / function-level path. With the bola tool (or http_request as session:\"low\" vs session:\"priv\" on the same path), test whether the low-privilege identity can reach it; a low identity receiving privileged data or function is the finding."
+	case "auth":
+		return "This is an auth endpoint. Try the nosqli tool for operator-injection authentication bypass, or jwt_forge on a token the app issued and replay the escalated token on a protected path."
+	case "upload", "ingest":
+		return "This ingests data. Probe for unrestricted upload / path traversal / injection on the parsed input with api_request."
+	case "export":
+		return "This produces a document/report. Test for document IDOR / path traversal / info leak by varying its id or path parameter with api_request."
+	case "search":
+		return "This takes a query parameter. Test injection (nosqli) and reflected/DOM XSS (dom_xss, put the marker FUZZ where the value goes) on that parameter."
+	case "ssrf":
+		return "This fetches a URL / webhook. Test server-side request forgery by pointing it at an off-target host; containment denies the off-target request and it appears in the trace."
+	case "write":
+		return "This is a write. Use the mass_assign tool to set a privileged field (e.g. role=admin); stay self-scoped."
+	case "info":
+		return "This may disclose config / status / secrets. Read it with api_request and report any secret or internal data exposed."
+	default:
+		return "Use the tool that fits this endpoint's class (api_request / bola / nosqli / jwt_forge / mass_assign / dom_xss)."
+	}
+}
+
 func (s *Server) launchCampaignRun(c *campaign, tg store.Target, stage string, slot int) *run {
+	return s.launchCampaignRunInst(c, tg, stage, slot, s.campaignInstruction(tg, stage))
+}
+
+// launchCampaignRunInst is launchCampaignRun with the model instruction supplied by the caller — so
+// the exploit phase can hand each run a tiny, FOCUSED prompt (one endpoint pulled from the mapped
+// surface) instead of the whole-surface preamble, keeping each run's context bounded.
+func (s *Server) launchCampaignRunInst(c *campaign, tg store.Target, stage string, slot int, inst string) *run {
 	f := bench.DefaultFlags()
 	f.Base = tg.Base
 	f.Model = c.Model
@@ -674,7 +778,6 @@ func (s *Server) launchCampaignRun(c *campaign, tg store.Target, stage string, s
 
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
 	f.Trace = filepath.Join(s.traces, "gored-eva-"+id+"-trace.jsonl")
-	inst := s.campaignInstruction(tg, stage)
 
 	rn := &run{
 		ID: id, Stage: stage, Base: tg.Base, Model: c.Model, Trials: 1,
