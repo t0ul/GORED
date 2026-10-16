@@ -207,7 +207,9 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 
 	msgs := []Message{{Role: RoleSystem, Content: r.systemPrompt(obj)}}
 
-	lastKey := "" // anti-repetition: break loops where the model repeats one call
+	const repeatWindow = 6          // steps: a call seen again within this window is thrash, not progress
+	recentKeys := map[string]int{} // anti-repetition: last step each exact call was made, to break
+	// not just A-A but A-B-A-B thrash within a short window (a weak model alternates two useless calls)
 	phaseIdx := 0 // staged loop: which Phase we are in (0 when there are no phases)
 	stall := 0    // consecutive unproductive steps (no usable new tool call); see Bounds.MaxStall
 	// bail counts one unproductive step and reports whether the run has stalled out. The caller
@@ -259,11 +261,11 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 			}
 			continue
 		}
-		// A reply may carry a whole plan; take the first step that is not a verbatim
-		// repeat of the last executed one, so the agent progresses through its plan.
+		// A reply may carry a whole plan; take the first step that is not a recent repeat, so the
+		// agent progresses through its plan instead of re-leading with a call it just made.
 		act := acts[0]
 		for _, a := range acts {
-			if actionKey(a) != lastKey {
+			if last := recentKeys[actionKey(a)]; last == 0 || step-last > repeatWindow {
 				act = a
 				break
 			}
@@ -288,18 +290,17 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 			}
 			continue
 		}
-		// Anti-repetition: a small model often repeats the exact same call. Refuse a
-		// verbatim repeat and nudge it onward instead of burning the budget.
-		if key := actionKey(act); key == lastKey {
+		// Anti-repetition: a weak model repeats the same call, or alternates two useless ones. Refuse
+		// a call seen within the recent window and nudge it onward instead of burning the budget.
+		if key := actionKey(act); recentKeys[key] > 0 && step-recentKeys[key] <= repeatWindow {
 			r.emit(traceID, "tool", "repeat_skipped", gledger.F{"step": step, "tool": resolved})
 			r.Board.Add(FindObservation, "already did "+describeAction(act)+" — do NOT send the same call again; READ the last tool result/error and CHANGE your arguments (fix the body shape, fields, method, or path), or move to the next step", step)
 			if bail(step) {
 				break
 			}
 			continue
-		} else {
-			lastKey = key
 		}
+		recentKeys[actionKey(act)] = step // a genuinely new call; remember it to catch a later repeat
 		stall = 0 // a real, new tool call: the run is making progress
 		r.emit(traceID, "tool", "tool_call", gledger.F{"step": step, "tool": resolved, "args": act.Args})
 		res.ToolCalls++
