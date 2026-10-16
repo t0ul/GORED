@@ -350,7 +350,7 @@ func (s *Server) runTargetZAP(c *campaign, tg store.Target) {
 // shown (and redirected to) different pages, each loading different JS bundles — so only a
 // multi-identity crawl enumerates the whole app. The model-loop's KNOWN SURFACE preamble then seeds
 // from this accurate map. Best-effort, read-only (GET), egress-gated.
-func (s *Server) runTargetRecon(ctx context.Context, tg store.Target) {
+func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Target) {
 	if s.store == nil {
 		return
 	}
@@ -376,6 +376,7 @@ func (s *Server) runTargetRecon(ctx context.Context, tg store.Target) {
 	}
 	discover := probes.NewDiscoverTool(tg.Base, egress)
 	discover.Sessions = sessions
+	seenAPI := false
 	for _, id := range reconIdentities(tg) {
 		out, err := discover.Call(ctx, map[string]any{"path": "/", "session": id})
 		if err != nil {
@@ -387,8 +388,51 @@ func (s *Server) runTargetRecon(ctx context.Context, tg store.Target) {
 		}
 		for _, p := range discoveredPaths(out) {
 			_ = s.store.SaveSurface(tg.Name, "GET", p, label)
+			if strings.HasPrefix(p, "/api") {
+				seenAPI = true
+			}
 		}
 	}
+	// Content discovery (ffuf fusion): the crawl only finds LINKED paths, so forced-browse the common
+	// unlinked ones (admin, backups, .git, .env, common /api/<word>), authenticated with the priv
+	// session cookie so it reaches the signed-in surface too. Fuzz the root and any /api prefix.
+	s.reconContentDisc(ctx, c, tg, sessions, egress, seenAPI)
+}
+
+// reconContentDisc forced-browses the target for unlinked endpoints (ffuf), carrying the priv
+// session cookie, and folds the hits into the surface map + the report. Best-effort (missing ffuf
+// binary = no-op). It complements the crawl: the crawl finds what is linked, this finds the rest
+// that matches a generic wordlist (it will not guess bespoke route names).
+func (s *Server) reconContentDisc(ctx context.Context, c *campaign, tg store.Target, sessions *tools.Sessions, egress *tools.Egress, seenAPI bool) {
+	var hdrs []string
+	if cookie := sessions.CookieHeader("priv", tg.Base); cookie != "" {
+		hdrs = []string{"Cookie: " + cookie} // fuzz the authenticated surface
+	}
+	gate := tools.NewGate(tools.DirectTransport{}, egress, nil)
+	targets := []string{tg.Base}
+	if seenAPI {
+		targets = append(targets, strings.TrimRight(tg.Base, "/")+"/api")
+	}
+	var hits []tools.FfufFinding
+	for _, tgt := range targets {
+		fs, err := (tools.FfufScanTool{Gate: gate, Base: tg.Base, Headers: hdrs}).Scan(ctx, tgt)
+		if err != nil {
+			continue
+		}
+		for _, f := range fs {
+			_ = s.store.SaveSurface(tg.Name, "GET", urlPath(f.URL), "ffuf")
+			hits = append(hits, f)
+		}
+	}
+	if len(hits) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if c.ffuf == nil {
+		c.ffuf = map[string][]tools.FfufFinding{}
+	}
+	c.ffuf[tg.Base] = hits
+	s.mu.Unlock()
 }
 
 // reconIdentities lists the session names to crawl as: anonymous plus each creds-login identity, so
@@ -404,28 +448,6 @@ func reconIdentities(tg store.Target) []string {
 		ids = append(ids, "low")
 	}
 	return ids
-}
-
-// runTargetFfuf runs a contained ffuf content-discovery scan against the target and caches the hits
-// on the campaign, recording each discovered path into project memory so later passes seed from them.
-// Best-effort: a missing ffuf binary yields no hits. Single-target, gated by the egress allowlist.
-func (s *Server) runTargetFfuf(ctx context.Context, c *campaign, tg store.Target) {
-	gate := tools.NewGate(tools.DirectTransport{}, tools.NewEgress(hostPort(tg.Base)), nil)
-	fs, err := tools.FfufScanTool{Gate: gate, Base: tg.Base}.Scan(ctx, tg.Base)
-	if err != nil || len(fs) == 0 {
-		return
-	}
-	s.mu.Lock()
-	if c.ffuf == nil {
-		c.ffuf = map[string][]tools.FfufFinding{}
-	}
-	c.ffuf[tg.Base] = fs
-	s.mu.Unlock()
-	if s.store != nil {
-		for _, f := range fs {
-			_ = s.store.SaveSurface(tg.Name, "GET", "/"+f.Path, "ffuf")
-		}
-	}
 }
 
 // runTargetGraphQL introspects the target's GraphQL endpoint (if any) and caches the surface on the
@@ -571,7 +593,7 @@ func (s *Server) runCampaign(c *campaign) {
 			// Map the surface FIRST, deterministically and from every identity, so the model-loop
 			// starts with an accurate KNOWN SURFACE (role-based redirects mean each identity sees only
 			// its own pages, so a single-identity crawl misses half the app).
-			s.runTargetRecon(ctx, tg)
+			s.runTargetRecon(ctx, c, tg)
 			for _, stage := range targetStages(tg) {
 				select {
 				case <-ctx.Done():
@@ -594,10 +616,8 @@ func (s *Server) runCampaign(c *campaign) {
 			// exposure / CVE classes the model-loop depth probes do not (headers, host-header,
 			// error leak, dir listing). Contained + gated; results feed the pentest report.
 			s.runTargetNuclei(ctx, c, tg)
-			// Content discovery once per target per pass: ffuf finds unlinked endpoints, leftover
-			// backups, and config/secret files the route ingestion and crawl cannot see. Contained
-			// + gated; hits feed project memory and the pentest report.
-			s.runTargetFfuf(ctx, c, tg)
+			// (content discovery / ffuf now runs inside runTargetRecon, authenticated + prefix-aware,
+			// so its hits also seed the model-loop's KNOWN SURFACE — see reconContentDisc.)
 			// Surface ingestion once per target per pass: introspect any GraphQL endpoint and fold
 			// the discovered operations into project memory + the report (the REST ingest is blind
 			// to GraphQL). Contained + gated; best-effort (no endpoint = no surface).
