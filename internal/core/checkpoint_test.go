@@ -12,8 +12,8 @@ import (
 // exploit tools are verified live in internal/probes.
 type namedTool struct{ n string }
 
-func (t namedTool) Name() string                                     { return t.n }
-func (namedTool) Describe() string                                   { return "" }
+func (t namedTool) Name() string                                       { return t.n }
+func (namedTool) Describe() string                                     { return "" }
 func (namedTool) Call(context.Context, map[string]any) (string, error) { return "", nil }
 
 // These are pure-logic tests of the checkpoint's proposal plumbing: no model, no network.
@@ -83,6 +83,29 @@ func TestRouteByPathExploitTools(t *testing.T) {
 		{"/api/profile", "json-api", "mass_assign"},
 		{"/api/memos", "json-api", "api_request"},
 		{"/api/notes/1000", "json-api", "api_request"},
+	}
+	for _, c := range cases {
+		s, tl := routeByPath(c.path, tb)
+		if s != c.surface || tl != c.tool {
+			t.Errorf("routeByPath(%q) = (%q,%q), want (%q,%q)", c.path, s, tl, c.surface, c.tool)
+		}
+	}
+}
+
+func TestRouteByPathNewTools(t *testing.T) {
+	// A box carrying the newer depth tools: routing should prefer them by surface.
+	tb := NewToolbox(
+		namedTool{"http_request"}, namedTool{"api_request"},
+		namedTool{"nosqli"}, namedTool{"dom_xss"}, namedTool{"graphql_introspect"},
+	)
+	cases := []struct {
+		path, surface, tool string
+	}{
+		{"/graphql", "json-api", "graphql_introspect"},
+		{"/api/login", "json-api", "nosqli"},
+		{"/auth/signin", "json-api", "nosqli"},
+		{"/search?q=x", "html-page", "dom_xss"},   // no xss_scan carried -> dom_xss
+		{"/api/token", "json-api", "api_request"}, // no jwt_forge carried -> floor to api_request
 	}
 	for _, c := range cases {
 		s, tl := routeByPath(c.path, tb)

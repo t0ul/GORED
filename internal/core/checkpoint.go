@@ -147,7 +147,13 @@ func parseMoves(reply string) []Move {
 func routeByPath(p string, tb *Toolbox) (surface, tool string) {
 	lp := strings.ToLower(p)
 	switch {
-	case strings.Contains(lp, "token") || strings.Contains(lp, "jwt") || strings.Contains(lp, "/auth") || strings.Contains(lp, "login"):
+	case strings.Contains(lp, "graphql"):
+		// a GraphQL endpoint: introspect the schema (then exploit an operation with api_request)
+		return "json-api", preferTool(tb, "graphql_introspect", "api_request", "http_request")
+	case strings.Contains(lp, "login") || strings.Contains(lp, "signin") || strings.Contains(lp, "sign-in") || strings.Contains(lp, "authenticate"):
+		// a credential-submission surface: try an operator-injection auth bypass
+		return "json-api", preferTool(tb, "nosqli", "api_request", "http_request")
+	case strings.Contains(lp, "token") || strings.Contains(lp, "jwt") || strings.Contains(lp, "/auth"):
 		// an auth/token surface: forge a token if the box carries the tool
 		return "json-api", preferTool(tb, "jwt_forge", "api_request", "http_request")
 	case strings.Contains(lp, "profile") || strings.Contains(lp, "account") || strings.Contains(lp, "/users") || strings.Contains(lp, "settings"):
@@ -158,7 +164,8 @@ func routeByPath(p string, tb *Toolbox) (surface, tool string) {
 		return "json-api", preferTool(tb, "api_request", "bola", "probe_endpoint", "http_request")
 	case strings.Contains(lp, "?") || strings.Contains(lp, "search") || strings.Contains(lp, "greet") ||
 		strings.Contains(lp, "echo") || strings.Contains(lp, "q=") || strings.Contains(lp, "name="):
-		return "html-page", preferTool(tb, "xss_scan", "http_request")
+		// a reflected-parameter surface: reflected XSS (dalfox), else browser-confirmed DOM XSS
+		return "html-page", preferTool(tb, "xss_scan", "dom_xss", "http_request")
 	default:
 		return "unknown", preferTool(tb, "http_request")
 	}
