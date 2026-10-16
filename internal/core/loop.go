@@ -130,6 +130,20 @@ type Runner struct {
 	// type form). Nil means fully autonomous — the loop never pauses, byte-for-byte the
 	// behaviour the CI/ADD gate depends on. See Checkpoint.
 	Checkpoint Checkpoint
+	// Prelude runs deterministically BEFORE the model loop: setup tool calls the harness
+	// performs on the agent's behalf because it already knows them, so the model does not
+	// have to infer them. The canonical use is authentication — a human tester logs in
+	// first, then hunts — so the harness logs in (populating a session cookie jar) and the
+	// model starts already-authenticated. Each action is run through the real toolbox, so
+	// its side effects (cookies) and its trace record are identical to a model-issued call.
+	Prelude []PreludeAction
+}
+
+// PreludeAction is one deterministic setup tool call run before the model loop (e.g. a login).
+type PreludeAction struct {
+	Label string         // a short human label for the trace (e.g. "login as priv")
+	Tool  string         // the tool name to invoke (must be in the toolbox)
+	Args  map[string]any // the tool arguments
 }
 
 // Phase is one stage of a staged discovery loop. Brief is the methodology shown to the
@@ -186,6 +200,10 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 	// prove the egress gate denies it. This appears in the trace regardless of
 	// what the model does.
 	res.EgressDenied = r.containmentBeacon(ctx, traceID)
+
+	// Deterministic setup (e.g. authentication) the harness performs for the agent, so the model
+	// starts from an already-prepared state (logged in) instead of having to infer multi-step setup.
+	r.runPrelude(ctx, traceID)
 
 	msgs := []Message{{Role: RoleSystem, Content: r.systemPrompt(obj)}}
 
@@ -367,6 +385,34 @@ func (r *Runner) Run(ctx context.Context, obj Objective) (RunResult, error) {
 		})
 	}
 	return res, nil
+}
+
+// runPrelude executes the deterministic setup actions (e.g. logins) before the model loop. Each is
+// run through the real toolbox so a login's cookie lands in the shared session jar the model's later
+// calls reuse. It is best-effort: a failed setup call is recorded and the run continues (the model
+// then sees the unauthenticated responses), so a bad credential never aborts the run.
+func (r *Runner) runPrelude(ctx context.Context, traceID string) {
+	for _, p := range r.Prelude {
+		tool, _, ok := r.Tools.Resolve(p.Tool)
+		if !ok {
+			r.emit(traceID, "prelude", "skipped", gledger.F{"label": p.Label, "tool": p.Tool, "reason": "tool not in toolbox"})
+			continue
+		}
+		out, err := tool.Call(ctx, p.Args)
+		if err != nil {
+			r.emit(traceID, "prelude", "error", gledger.F{"label": p.Label, "tool": p.Tool, "error": errStr(err)})
+			continue
+		}
+		r.emit(traceID, "prelude", "done", gledger.F{"label": p.Label, "tool": p.Tool, "result": clipPrelude(out)})
+	}
+}
+
+// clipPrelude bounds a prelude result for the trace (a login response can be large).
+func clipPrelude(s string) string {
+	if len(s) > 240 {
+		return s[:240] + "…"
+	}
+	return s
 }
 
 // containmentBeacon fires a beacon to a non-target host and reports whether the

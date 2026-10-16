@@ -172,7 +172,7 @@ func Run(ctx context.Context, f *bench.Flags, stageName string, opts ...Option) 
 				Model: cl, Tools: st.BuildTools(gate, base), Skill: st.Skill, Target: rt.Target,
 				Board: core.NewUnscrubbedBlackboard(), Audit: audit, Bounds: f.Bounds(),
 				Detector: st.Detect, Phases: st.Phases(), CanaryURL: canaryBeacon,
-				Checkpoint: o.checkpoint,
+				Checkpoint: o.checkpoint, Prelude: f.Prelude,
 			}, nil
 		},
 	}
