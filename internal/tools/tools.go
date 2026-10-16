@@ -258,7 +258,34 @@ func (t *HTTPRequestTool) Call(ctx context.Context, args map[string]any) (string
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	// Prefix the status with an error class + what to do next, so the agent branches
 	// on the class instead of guessing from a bare status (jp3g's retryable-flag idea).
-	return fmt.Sprintf("HTTP %d [%s]\n%s%s", resp.StatusCode, classifyStatus(resp.StatusCode), headerLines(resp.Header), string(data)), nil
+	note := apiShellNote(resp.StatusCode, req.URL.Path, string(data))
+	return fmt.Sprintf("HTTP %d [%s]%s\n%s%s", resp.StatusCode, classifyStatus(resp.StatusCode), note, headerLines(resp.Header), string(data)), nil
+}
+
+// apiShellNote flags the dead-end that makes a client-rendered app waste an agent's steps: an API
+// path that answers 2xx/3xx with an HTML DOCUMENT (the app's SPA/landing shell) instead of data.
+// That almost always means the path or method is not actually served, so the agent should move to a
+// different endpoint rather than re-requesting this one. It sniffs the body, so it works whether or
+// not the tool surfaces a Content-Type. Empty note for real data, non-API paths, or error statuses.
+func apiShellNote(status int, path, body string) string {
+	if status < 200 || status >= 400 {
+		return "" // the status class already tells the agent what to do
+	}
+	lp := strings.ToLower(path)
+	apiish := strings.HasPrefix(lp, "/api") || strings.HasSuffix(lp, ".json")
+	if apiish && looksLikeHTML(body) {
+		return "\n[classifier] this is the app's HTML shell, not API data — this path/method is likely not served. Try a DIFFERENT endpoint; do not re-request this one."
+	}
+	return ""
+}
+
+// looksLikeHTML reports whether a response body is an HTML document (vs JSON/text data).
+func looksLikeHTML(body string) bool {
+	b := strings.ToLower(strings.TrimSpace(body))
+	if len(b) > 256 {
+		b = b[:256]
+	}
+	return strings.HasPrefix(b, "<!doctype") || strings.HasPrefix(b, "<html") || strings.Contains(b, "<html")
 }
 
 // classifyStatus maps an HTTP status to an action class for the agent: whether the

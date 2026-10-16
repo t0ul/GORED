@@ -67,6 +67,8 @@ func (t APIRequestTool) Call(ctx context.Context, args map[string]any) (string, 
 	if placeholder != "" {
 		hint = fmt.Sprintf("\n(hint: header %q is a placeholder (%s) — substitute the real value you read from the app, not a literal <...>)", placeholder, headers[placeholder]) + hint
 	}
+	// Flag an API path that returned the app's HTML shell instead of data (a dead-end to move off).
+	hint += apiShellNote(status, asString(args["path"]), respBody)
 	return fmt.Sprintf("HTTP %d\n%s%s", status, respBody, hint), nil
 }
 
