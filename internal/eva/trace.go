@@ -63,6 +63,18 @@ func parseRunTrace(path string) (events []traceEvt, findings []core.Finding, tar
 				}
 			}
 		}
+		if rec.Span == "tool" && rec.Event == "tool_result" {
+			// A discover result lists the paths the crawl FOUND (not just what the agent requested):
+			// fold them into the surface map, so it reflects the enumerated surface and project memory
+			// persists it for later passes.
+			for _, p := range discoveredPaths(asStr(rec.Fields["result"])) {
+				k := "GET " + p
+				if _, ok := seen[k]; !ok {
+					seen[k] = len(targets)
+					targets = append(targets, targetNode{Method: "GET", Path: p, Last: "(discovered by crawl)"})
+				}
+			}
+		}
 		if rec.Span == "tool" && rec.Event == "tool_result" && lastKey != "" {
 			if idx, ok := seen[lastKey]; ok {
 				if res := asStr(rec.Fields["result"]); res != "" {
@@ -139,7 +151,21 @@ func traceSitemap(path string) []targetNode {
 	seen := map[string]bool{}
 	var nodes []targetNode
 	for _, rec := range recs {
-		if rec.Span != "tool" || rec.Event != "tool_call" {
+		if rec.Span != "tool" {
+			continue
+		}
+		// A discover result enumerated paths the crawl FOUND — draw them on the map too, not just
+		// the paths the agent then requested (so the map fills as discovery happens, live).
+		if rec.Event == "tool_result" {
+			for _, p := range discoveredPaths(asStr(rec.Fields["result"])) {
+				if key := "GET " + p; !seen[key] {
+					seen[key] = true
+					nodes = append(nodes, targetNode{Method: "GET", Path: p, Last: "(discovered by crawl)"})
+				}
+			}
+			continue
+		}
+		if rec.Event != "tool_call" {
 			continue
 		}
 		args, ok := rec.Fields["args"].(map[string]any)
@@ -172,6 +198,26 @@ func traceSitemap(path string) []targetNode {
 }
 
 func asStr(v any) string { s, _ := v.(string); return s }
+
+// discoveredPaths extracts the paths a discover (crawl) tool result enumerated, so the surface map
+// and project memory reflect what the crawl FOUND, not only what the agent went on to request. It
+// only parses a discover result (prefix "discovered "), so it never scrapes "/..." tokens out of an
+// ordinary HTTP response body.
+func discoveredPaths(result string) []string {
+	if !strings.HasPrefix(result, "discovered ") {
+		return nil
+	}
+	var out []string
+	for _, tok := range strings.Fields(result) {
+		if strings.HasPrefix(tok, "/") {
+			if len(tok) > 80 {
+				tok = tok[:80] + "…"
+			}
+			out = append(out, tok)
+		}
+	}
+	return out
+}
 
 // urlPath returns the path portion of a full URL, or "" if it has no path.
 func urlPath(u string) string {
