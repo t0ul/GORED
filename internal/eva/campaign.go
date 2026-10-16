@@ -383,6 +383,7 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 	discover := probes.NewDiscoverTool(tg.Base, egress)
 	discover.Sessions = sessions
 	seenAPI := false
+	jsPaths := map[string]bool{}
 	for _, id := range reconIdentities(tg) {
 		out, err := discover.Call(ctx, map[string]any{"path": "/", "session": id})
 		if err != nil {
@@ -397,12 +398,50 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 			if strings.HasPrefix(p, "/api") {
 				seenAPI = true
 			}
+			if strings.HasSuffix(strings.ToLower(p), ".js") {
+				jsPaths[p] = true
+			}
 		}
 	}
+	// Reverse-engineer the API from the app's OWN client code: fetch each discovered script and record
+	// the method + request-body shape of every fetch/XHR it makes, so the exploit phase sends a body
+	// that matches instead of guessing. Pure recon of the app's JS — no app-specific strings.
+	s.reconAPIShapes(ctx, tg, sessions, egress, jsPaths)
 	// Content discovery (ffuf fusion): the crawl only finds LINKED paths, so forced-browse the common
 	// unlinked ones (admin, backups, .git, .env, common /api/<word>), authenticated with the priv
 	// session cookie so it reaches the signed-in surface too. Fuzz the root and any /api prefix.
 	s.reconContentDisc(ctx, c, tg, sessions, egress, seenAPI)
+}
+
+// reconAPIShapes reverse-engineers the API from the app's client JS: it GETs each discovered script
+// (as the privileged identity) and records, for every fetch/XHR it finds, the endpoint's method and
+// body field names into project memory — so a later write/stored-XSS probe can build a body in the
+// shape the endpoint actually wants. Best-effort, read-only, egress-gated.
+func (s *Server) reconAPIShapes(ctx context.Context, tg store.Target, sessions *tools.Sessions, egress *tools.Egress, jsPaths map[string]bool) {
+	client := sessions.Client("priv") // authed jar; an empty jar just fetches the public scripts
+	for jp := range jsPaths {
+		raw := strings.TrimRight(tg.Base, "/") + jp
+		if !egress.Allowed(raw) {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+		resp.Body.Close()
+		for _, sh := range probes.ReverseAPIShapes(string(body)) {
+			note := "clientshape"
+			if len(sh.Fields) > 0 {
+				note = "clientshape fields=" + strings.Join(sh.Fields, ",")
+			}
+			_ = s.store.SaveSurface(tg.Name, "", "", sh.Method, sh.Path, note)
+		}
+	}
 }
 
 // reconContentDisc forced-browses the target for unlinked endpoints (ffuf), carrying the priv
@@ -774,6 +813,9 @@ func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string
 	}
 	fmt.Fprintf(&b, "\nAttack EXACTLY this one endpoint:\n  %s %s   [%s — %s]\n\n", ep.Method, ep.Path, ep.Class, ep.Why)
 	b.WriteString(exploitHint(ep))
+	if ep.Shape != "" {
+		fmt.Fprintf(&b, "\nThe app's own client calls this endpoint with body fields: %s — build your request body with those fields (object or array as the endpoint requires).", ep.Shape)
+	}
 	if (ep.Class == "ingest" || ep.Class == "upload") && len(renderPages) > 0 {
 		fmt.Fprintf(&b, "\nRender pages (where stored data is shown — pass these to stored_xss as \"render\"): %s", strings.Join(renderPages, ", "))
 	}

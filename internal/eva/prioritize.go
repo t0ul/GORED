@@ -79,7 +79,8 @@ type rankedEndpoint struct {
 	Method, Path     string
 	Class, Tool, Why string
 	Tier             int
-	Difficulty       int // 1 easy .. 3 hard; the exploit phase works easiest-first
+	Difficulty       int    // 1 easy .. 3 hard; the exploit phase works easiest-first
+	Shape            string // body field names reverse-engineered from the client JS, when known
 }
 
 // prioritizedEndpoints classifies the mapped surface and returns the tiered endpoints, crown jewels
@@ -98,7 +99,7 @@ func prioritizedEndpoints(rows []store.SurfaceRow) (eps []rankedEndpoint, untier
 			untiered++
 			continue
 		}
-		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty})
+		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty, Shape: shapeHint(r.Last)})
 	}
 	sort.SliceStable(eps, func(i, j int) bool {
 		if eps[i].Tier != eps[j].Tier {
@@ -133,6 +134,16 @@ func htmlRenderPages(rows []store.SurfaceRow) []string {
 		}
 	}
 	return out
+}
+
+// shapeHint pulls the reverse-engineered body field list out of a surface row's label (recorded by
+// reconAPIShapes as "clientshape fields=a,b,c"); "" when the row is not a client-shape note.
+func shapeHint(last string) string {
+	const pre = "clientshape fields="
+	if strings.HasPrefix(last, pre) {
+		return strings.TrimPrefix(last, pre)
+	}
+	return ""
 }
 
 func isStaticAsset(p string) bool {
