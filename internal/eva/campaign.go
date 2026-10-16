@@ -15,6 +15,8 @@ import (
 	"github.com/t0ul/GORED/internal/appsweep"
 	"github.com/t0ul/GORED/internal/bench"
 	"github.com/t0ul/GORED/internal/core"
+	"github.com/t0ul/GORED/internal/ingest"
+	"github.com/t0ul/GORED/internal/probes"
 	"github.com/t0ul/GORED/internal/tools"
 	"github.com/t0ul/GORED/store"
 )
@@ -38,6 +40,7 @@ type campaign struct {
 	cancel  context.CancelFunc
 	nuclei  map[string][]tools.NucleiFinding // target base -> latest nuclei breadth findings (in-memory)
 	ffuf    map[string][]tools.FfufFinding   // target base -> latest ffuf content-discovery hits (in-memory)
+	graphql map[string]ingest.GraphQLSurface // target base -> introspected GraphQL surface (in-memory)
 }
 
 func toCampaign(c *campaign) store.Campaign {
@@ -53,8 +56,9 @@ func fromCampaign(sc store.Campaign) *campaign {
 		ID: sc.ID, Name: sc.Name, Targets: splitCSV(sc.Targets), Model: sc.Model,
 		Status: sc.Status, Started: sc.Started, Elapsed: sc.Elapsed,
 		RunIDs: splitCSV(sc.RunIDs), Cur: sc.Cur, Loop: sc.Loop, Pass: sc.Pass,
-		nuclei: map[string][]tools.NucleiFinding{},
-		ffuf:   map[string][]tools.FfufFinding{},
+		nuclei:  map[string][]tools.NucleiFinding{},
+		ffuf:    map[string][]tools.FfufFinding{},
+		graphql: map[string]ingest.GraphQLSurface{},
 	}
 }
 
@@ -321,6 +325,29 @@ func (s *Server) runTargetFfuf(ctx context.Context, c *campaign, tg store.Target
 	}
 }
 
+// runTargetGraphQL introspects the target's GraphQL endpoint (if any) and caches the surface on the
+// campaign, recording the discovered operations into project memory as POST /graphql surface so later
+// passes seed from them. Best-effort: a target with no GraphQL endpoint or introspection disabled
+// yields no surface. Single-target, gated by the egress allowlist.
+func (s *Server) runTargetGraphQL(ctx context.Context, c *campaign, tg store.Target) {
+	gate := tools.NewGate(tools.DirectTransport{}, tools.NewEgress(hostPort(tg.Base)), nil)
+	surf, err := (&probes.GraphQLIntrospectProbe{Base: tg.Base, Egress: gate.Egress()}).Introspect(ctx)
+	if err != nil || len(surf.Ops) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if c.graphql == nil {
+		c.graphql = map[string]ingest.GraphQLSurface{}
+	}
+	c.graphql[tg.Base] = surf
+	s.mu.Unlock()
+	if s.store != nil {
+		for _, o := range surf.Ops {
+			_ = s.store.SaveSurface(tg.Name, "POST", "/graphql "+o.Kind+" "+o.Name, "introspected")
+		}
+	}
+}
+
 // hostPort extracts host:port from a base URL for the egress allowlist (target-only).
 func hostPort(base string) string {
 	h := strings.TrimPrefix(strings.TrimPrefix(base, "http://"), "https://")
@@ -374,7 +401,7 @@ func targetStages(t store.Target) []string {
 // startCampaign registers a campaign and launches its scheduler goroutine.
 func (s *Server) startCampaign(name, model string, targets []string, loop bool) *campaign {
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
-	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop, nuclei: map[string][]tools.NucleiFinding{}, ffuf: map[string][]tools.FfufFinding{}}
+	c := &campaign{ID: id, Name: name, Model: model, Targets: targets, Status: "running", Started: time.Now(), Loop: loop, nuclei: map[string][]tools.NucleiFinding{}, ffuf: map[string][]tools.FfufFinding{}, graphql: map[string]ingest.GraphQLSurface{}}
 	s.mu.Lock()
 	s.campaigns[id] = c
 	s.corder = append([]string{id}, s.corder...)
@@ -435,6 +462,10 @@ func (s *Server) runCampaign(c *campaign) {
 			// backups, and config/secret files the route ingestion and crawl cannot see. Contained
 			// + gated; hits feed project memory and the pentest report.
 			s.runTargetFfuf(ctx, c, tg)
+			// Surface ingestion once per target per pass: introspect any GraphQL endpoint and fold
+			// the discovered operations into project memory + the report (the REST ingest is blind
+			// to GraphQL). Contained + gated; best-effort (no endpoint = no surface).
+			s.runTargetGraphQL(ctx, c, tg)
 		}
 		if !c.Loop {
 			break
