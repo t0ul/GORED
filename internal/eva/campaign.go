@@ -440,9 +440,24 @@ func (s *Server) reconAPIShapes(ctx context.Context, tg store.Target, sessions *
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
 		resp.Body.Close()
 		for _, sh := range probes.ReverseAPIShapes(string(body)) {
-			_ = s.store.SaveShape(tg.Name, sh.Method, sh.Path, strings.Join(sh.Fields, ","))
+			_ = s.store.SaveContract(tg.Name, sh.Method, sh.Path, "static", shapeToContract(sh))
 		}
 	}
+}
+
+// shapeToContract lifts a reverse-engineered APIShape (method/path/field names) into an
+// EndpointContract. Field types stay unknown here — the OpenAPI ingest and typed static RE fill
+// them; GET fields are recorded as query params, others as body fields.
+func shapeToContract(sh probes.APIShape) store.EndpointContract {
+	in := "body"
+	if sh.Method == http.MethodGet || sh.Method == "" {
+		in = "query"
+	}
+	var fs []store.FieldSpec
+	for _, f := range sh.Fields {
+		fs = append(fs, store.FieldSpec{Name: f, In: in})
+	}
+	return store.EndpointContract{Fields: fs}
 }
 
 // reconActiveProbe drives the mapped HTML pages in a real browser (as the priv identity), submits
@@ -464,7 +479,7 @@ func (s *Server) reconActiveProbe(ctx context.Context, tg store.Target, sessions
 		return
 	}
 	for _, sh := range shapes {
-		_ = s.store.SaveShape(tg.Name, sh.Method, sh.Path, strings.Join(sh.Fields, ","))
+		_ = s.store.SaveContract(tg.Name, sh.Method, sh.Path, "active", shapeToContract(sh))
 	}
 }
 
@@ -865,6 +880,7 @@ func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string
 	if ep.Shape != "" {
 		fmt.Fprintf(&b, "\nThe app's own client calls this endpoint with body fields: %s — build your request body with those fields (object or array as the endpoint requires).", ep.Shape)
 	}
+	b.WriteString("\nFor this endpoint's full reverse-engineered contract — field TYPES, which fields are REQUIRED, required headers, and which identity (anon/low/priv) gets what status — call the recon tool and read the line for this path. Build a schema-valid request from it; a probe that gets the shape right lands where a guessed body 400s.")
 	if (ep.Class == "ingest" || ep.Class == "upload") && len(renderPages) > 0 {
 		fmt.Fprintf(&b, "\nRender pages (where stored data is shown — pass these to stored_xss as \"render\"): %s", strings.Join(renderPages, ", "))
 	}
@@ -881,7 +897,7 @@ func exploitHint(ep rankedEndpoint) string {
 	case "admin":
 		return "This is an admin / function-level path. With the bola tool (or http_request as session:\"low\" vs session:\"priv\" on the same path), test whether the low-privilege identity can reach it; a low identity receiving privileged data or function is the finding."
 	case "auth":
-		return "This is an auth endpoint. Try the nosqli tool for operator-injection authentication bypass, or jwt_forge on a token the app issued and replay the escalated token on a protected path."
+		return "This is an auth endpoint. Try the nosqli tool for operator-injection authentication bypass, or jwt_forge on a token the app issued and replay the escalated token on a protected path. On a login/sign-in path, throttle_probe checks for a missing rate-limit/lockout; on a register/sign-up path, password_policy checks whether a weak password is accepted."
 	case "upload", "ingest":
 		return "This WRITES/ingests data that is often shown back on an HTML page. Use the stored_xss tool: it plants a nonce payload through this endpoint (field = a text field like title/name/description, plus any other required fields in \"other\") and confirms it EXECUTES when a render page displays it (pass the render pages listed below). Also probe unrestricted upload / path traversal / injection on the parsed input with api_request."
 	case "export":
@@ -891,7 +907,7 @@ func exploitHint(ep rankedEndpoint) string {
 	case "ssrf":
 		return "This fetches a URL / webhook. Test server-side request forgery by pointing it at an off-target host; containment denies the off-target request and it appears in the trace."
 	case "write":
-		return "This is a write. Use the mass_assign tool to set a privileged field (e.g. role=admin); stay self-scoped."
+		return "This is a write. Use the mass_assign tool to set a privileged field (e.g. role=admin); stay self-scoped. body_limit checks whether the endpoint accepts an unbounded request body (missing size limit)."
 	case "info":
 		return "This may disclose config / status / secrets. Read it with api_request and report any secret or internal data exposed."
 	default:

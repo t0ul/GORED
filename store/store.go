@@ -16,6 +16,9 @@ import (
 // Store is a SQLite-backed core.RunStore.
 type Store struct {
 	db *sql.DB
+	// Classify, when set by the eva layer (which owns classifyEndpoint), tags each surface row with
+	// its attack class so the recon tool can filter/rank on it. Left nil the class column stays "".
+	Classify func(method, path string) string
 }
 
 const schema = `
@@ -108,10 +111,15 @@ CREATE TABLE IF NOT EXISTS project_surface (
   target        TEXT NOT NULL,
   method        TEXT NOT NULL,
   path          TEXT NOT NULL,
-  last          TEXT,
+  last          TEXT,              -- last note/label from a crawl/ffuf/graphql write
   ts            TEXT,
-  shape         TEXT,              -- reverse-engineered request body shape (fields=…); its own column so a crawl/ffuf label never clobbers it
-  attempts      INTEGER DEFAULT 0, -- how many times the exploit phase has worked this endpoint (so later passes advance the frontier, not restart)
+  class         TEXT,              -- classifyEndpoint class (auth/write/upload/…), precomputed for the recon tool's filter/rank
+  source        TEXT,              -- best-confidence provenance seen: openapi|active|static|graphql|ffuf|crawl
+  has_body      INTEGER DEFAULT 0, -- derived from the contract: has body fields
+  needs_auth    INTEGER DEFAULT 0, -- derived: an anonymous caller gets 401/403
+  reach_low     INTEGER DEFAULT 0, -- derived: a low-privilege identity gets a 2xx (a BAC/IDOR candidate)
+  contract      TEXT,              -- JSON EndpointContract: typed fields, required flags, query/path params, headers, per-identity auth
+  attempts      INTEGER DEFAULT 0, -- exploit frontier: how many times the exploit phase has worked this endpoint (so later passes advance, not restart)
   captured      INTEGER DEFAULT 0, -- 1 once a finding landed here (never re-attacked)
   last_attacked TEXT,
   PRIMARY KEY (target, method, path)
@@ -168,12 +176,9 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE targets ADD COLUMN zap_report TEXT`)
 	_, _ = db.Exec(`ALTER TABLE campaigns ADD COLUMN loop INTEGER`)
 	_, _ = db.Exec(`ALTER TABLE campaigns ADD COLUMN pass INTEGER`)
-	// Per-endpoint durable state: the reverse-engineered body shape, and the exploit-progress counters
-	// so a later run picks up the frontier instead of restarting from the first endpoint every pass.
-	_, _ = db.Exec(`ALTER TABLE project_surface ADD COLUMN shape TEXT`)
-	_, _ = db.Exec(`ALTER TABLE project_surface ADD COLUMN attempts INTEGER DEFAULT 0`)
-	_, _ = db.Exec(`ALTER TABLE project_surface ADD COLUMN captured INTEGER DEFAULT 0`)
-	_, _ = db.Exec(`ALTER TABLE project_surface ADD COLUMN last_attacked TEXT`)
+	// project_surface carries the full endpoint contract in the baseline above; the eva db is
+	// reprovisioned rather than migrated (persistence is not a requirement while building), so no
+	// forward-compat ALTERs are needed for it.
 	return &Store{db: db}, nil
 }
 
