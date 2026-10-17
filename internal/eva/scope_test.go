@@ -27,6 +27,28 @@ func TestToolNamesParsesClassHints(t *testing.T) {
 	}
 }
 
+// primaryTool refines the few-shot tool by path within the broad "auth" class (a register/reset
+// path is a weak-password target, not an injection target), and examplePath fills a concrete id so
+// the example is runnable.
+func TestPrimaryToolRefinesAuthSubtype(t *testing.T) {
+	const authHint = "nosqli / jwt_forge / throttle_probe / password_policy"
+	login := rankedEndpoint{Class: "auth", Path: "/api/auth/login", Tool: authHint}
+	if got := primaryTool(login); got != "nosqli" {
+		t.Errorf("login few-shot tool = %q, want nosqli", got)
+	}
+	reg := rankedEndpoint{Class: "auth", Path: "/api/auth/register", Tool: authHint}
+	if got := primaryTool(reg); got != "password_policy" {
+		t.Errorf("register few-shot tool = %q, want password_policy", got)
+	}
+	write := rankedEndpoint{Class: "write", Path: "/api/adapters", Tool: "mass_assign / body_limit"}
+	if got := primaryTool(write); got != "mass_assign" {
+		t.Errorf("write few-shot tool = %q, want mass_assign (class default)", got)
+	}
+	if examplePath("/api/tickets/{id}") != "/api/tickets/1" {
+		t.Errorf("examplePath should fill {id} with a concrete id, got %q", examplePath("/api/tickets/{id}"))
+	}
+}
+
 // Every class classifyEndpoint can emit must route to a non-empty tool set (otherwise a scoped run
 // for that class would have no tools). Walk a representative path per class.
 func TestEveryClassHasScopableTools(t *testing.T) {

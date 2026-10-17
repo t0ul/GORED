@@ -38,6 +38,16 @@ func TestExploitInstructionRendersContract(t *testing.T) {
 	}
 }
 
+// The focused prompt few-shots the exact first call for the endpoint's primary class tool, so a
+// weak model imitates the right call instead of casting about.
+func TestExploitInstructionFewShot(t *testing.T) {
+	ep := rankedEndpoint{Method: "POST", Path: "/api/adapters", Class: "write", Tool: "mass_assign / body_limit", Why: "mass assignment", Tier: 2}
+	inst := exploitInstruction(store.Target{Base: "http://target"}, ep, nil)
+	if !strings.Contains(inst, "Start with this call") || !strings.Contains(inst, `mass_assign {"path":"/api/adapters"}`) {
+		t.Errorf("instruction should few-shot the primary class tool's call; got:\n%s", inst)
+	}
+}
+
 // With no contract it falls back to the legacy flat body-field line, so an un-reconned endpoint
 // still gets a usable hint.
 func TestExploitInstructionFallsBackToShape(t *testing.T) {
