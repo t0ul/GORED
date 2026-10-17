@@ -65,6 +65,28 @@ func TestSurfaceMapAndAttribution(t *testing.T) {
 	}
 }
 
+// A row created ONLY by SaveShape (shape-discovery, no prior crawl) has a NULL last — ListSurface
+// must still return it, not error out. This is the bug that silently emptied the surface and stalled
+// the exploit phase on the live RR rerun.
+func TestSaveShapeOnlyRowListable(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	// no SaveSurface first — only a shape, so last stays NULL
+	if err := st.SaveShape("app", "POST", "/api/ingest/{id}", "source,asset,title"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := st.ListSurface("app")
+	if err != nil {
+		t.Fatalf("ListSurface must tolerate a NULL last from a shape-only row, got: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Path != "/api/ingest/{id}" || rows[0].Shape != "source,asset,title" {
+		t.Fatalf("shape-only row not returned correctly: %+v", rows)
+	}
+}
+
 // The reverse-engineered shape lives in its own column (a later crawl/ffuf label must NOT clobber
 // it), and attack state accumulates so a later pass can skip what's done and work the frontier.
 func TestShapeAndAttackState(t *testing.T) {
