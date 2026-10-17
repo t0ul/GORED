@@ -962,7 +962,7 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		case <-ctx.Done():
 			return true
 		}
-		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep, renderPages))
+		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep, renderPages), toolNames(ep.Tool))
 		s.execute(rn, rn.flags, stage)
 		s.recordProjectMemory(tg.Name, rn)
 		// Mark the endpoint worked (and captured if a finding landed) so the next pass does not redo it
@@ -991,6 +991,24 @@ func runMadeToolCall(events []traceEvt) bool {
 // exploitInstruction builds the FOCUSED prompt for one exploit run: attack a single, already-mapped
 // endpoint, no crawling. It stays small on purpose (one endpoint + the auth note + the fitting
 // technique), so the model's context never grows to the whole surface.
+// toolNames extracts the tool identifiers from a classifyEndpoint tool hint (e.g.
+// "nosqli / jwt_forge / throttle_probe / password_policy" -> those four), so a focused exploit run
+// is scoped to exactly its endpoint class's tools. Any separator works; duplicates are dropped.
+// Unknown tokens are harmless — Toolbox.Restrict ignores names it does not hold.
+func toolNames(hint string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, tok := range strings.FieldsFunc(hint, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || r == '_')
+	}) {
+		if !seen[tok] {
+			seen[tok] = true
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
 func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are an authorized red-team agent. The app at %s is ALREADY MAPPED — do NOT crawl, fingerprint, or hunt for other paths.\n", tg.Base)
@@ -1044,13 +1062,13 @@ func exploitHint(ep rankedEndpoint) string {
 }
 
 func (s *Server) launchCampaignRun(c *campaign, tg store.Target, stage string, slot int) *run {
-	return s.launchCampaignRunInst(c, tg, stage, slot, s.campaignInstruction(tg, stage))
+	return s.launchCampaignRunInst(c, tg, stage, slot, s.campaignInstruction(tg, stage), nil)
 }
 
 // launchCampaignRunInst is launchCampaignRun with the model instruction supplied by the caller — so
 // the exploit phase can hand each run a tiny, FOCUSED prompt (one endpoint pulled from the mapped
 // surface) instead of the whole-surface preamble, keeping each run's context bounded.
-func (s *Server) launchCampaignRunInst(c *campaign, tg store.Target, stage string, slot int, inst string) *run {
+func (s *Server) launchCampaignRunInst(c *campaign, tg store.Target, stage string, slot int, inst string, allowed []string) *run {
 	f := bench.DefaultFlags()
 	f.Base = tg.Base
 	f.Model = c.Model
@@ -1071,7 +1089,7 @@ func (s *Server) launchCampaignRunInst(c *campaign, tg store.Target, stage strin
 		ID: id, Stage: stage, Base: tg.Base, Model: c.Model, Trials: 1,
 		Autonomy: "autonomous", Status: "running", Started: time.Now(),
 		Trace: f.Trace, Prompt: inst, slot: slot, campaignID: c.ID, flags: f,
-		targetName: tg.Name,
+		targetName: tg.Name, allowedTools: allowed,
 	}
 	s.mu.Lock()
 	s.runs[id] = rn

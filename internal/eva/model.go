@@ -29,6 +29,10 @@ type run struct {
 	Trace    string
 	Prompt   string // skill-instruction override for this run, empty = stage default
 
+	// allowedTools phase-scopes a focused exploit run to one endpoint class's tools (nil = full
+	// toolbox). Set per endpoint in runExploitPhase; passed to appsweep.WithAllowedTools.
+	allowedTools []string
+
 	// Pending is the open checkpoint awaiting the pilot, nil when none. cp relays the
 	// pilot's decision back to the blocked Runner goroutine. Both are guarded by the
 	// Server mutex.

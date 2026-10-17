@@ -230,6 +230,13 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 			reconTool{store: s.store, target: rn.targetName, attemptCap: exploitAttemptCap},
 		))
 	}
+	// Phase-scope a focused exploit run to its endpoint class's tools (set per endpoint in
+	// runExploitPhase): the run then carries only those attack tools, so a weak model has no generic
+	// request or crawl tool to default to. Applied after WithExtraTools, so the recorder/recon tools
+	// are trimmed too unless the class allows them.
+	if len(rn.allowedTools) > 0 {
+		opts = append(opts, appsweep.WithAllowedTools(rn.allowedTools...))
+	}
 
 	results, err := appsweep.Run(ctx, f, stage, opts...)
 
