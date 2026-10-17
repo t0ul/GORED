@@ -440,11 +440,7 @@ func (s *Server) reconAPIShapes(ctx context.Context, tg store.Target, sessions *
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
 		resp.Body.Close()
 		for _, sh := range probes.ReverseAPIShapes(string(body)) {
-			note := "clientshape"
-			if len(sh.Fields) > 0 {
-				note = "clientshape fields=" + strings.Join(sh.Fields, ",")
-			}
-			_ = s.store.SaveSurface(tg.Name, "", "", sh.Method, sh.Path, note)
+			_ = s.store.SaveShape(tg.Name, sh.Method, sh.Path, strings.Join(sh.Fields, ","))
 		}
 	}
 }
@@ -468,11 +464,7 @@ func (s *Server) reconActiveProbe(ctx context.Context, tg store.Target, sessions
 		return
 	}
 	for _, sh := range shapes {
-		note := "clientshape"
-		if len(sh.Fields) > 0 {
-			note = "clientshape fields=" + strings.Join(sh.Fields, ",")
-		}
-		_ = s.store.SaveSurface(tg.Name, "", "", sh.Method, sh.Path, note)
+		_ = s.store.SaveShape(tg.Name, sh.Method, sh.Path, strings.Join(sh.Fields, ","))
 	}
 }
 
@@ -743,6 +735,10 @@ done:
 // large surface cannot spawn an unbounded number of model runs in one pass (later passes re-walk).
 const exploitEndpointCap = 12
 
+// exploitAttemptCap bounds how many times a looping campaign re-works one endpoint that never yields
+// a finding, so the loop advances the frontier instead of grinding the same endpoints every pass.
+const exploitAttemptCap = 2
+
 // endpointPhase reports whether a stage attacks the mapped surface endpoint-by-endpoint, so the
 // scheduler decomposes it into one focused run per endpoint instead of a single whole-surface run.
 func endpointPhase(stage string) bool { return stage == "apiexploit" }
@@ -800,18 +796,20 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		return false
 	}
 	eps, _ := prioritizedEndpoints(rows)
-	if !appsweep.BolaEnabled() {
-		// bola is the hardest class and false-positives on shared resources, so unless opted in it is
-		// out of the loop: drop the idor/admin endpoints it owns so they are not even routed.
-		kept := eps[:0]
-		for _, e := range eps {
-			if e.Class == "idor" || e.Class == "admin" {
-				continue
-			}
-			kept = append(kept, e)
+	// Work the FRONTIER, not the start: skip endpoints already captured, and ones already worked
+	// exploitAttemptCap times with nothing, so a looping campaign advances through the surface instead
+	// of re-attacking the first endpoints every pass. bola's classes stay out unless opted in.
+	kept := eps[:0]
+	for _, e := range eps {
+		if e.Captured || e.Attempts >= exploitAttemptCap {
+			continue
 		}
-		eps = kept
+		if !appsweep.BolaEnabled() && (e.Class == "idor" || e.Class == "admin") {
+			continue
+		}
+		kept = append(kept, e)
 	}
+	eps = kept
 	eps = diverseEndpoints(eps, exploitEndpointCap) // spread across classes so one class can't eat the cap
 	renderPages := htmlRenderPages(rows)            // where a stored payload could execute (for the ingest/upload class)
 	for _, ep := range eps {
@@ -830,6 +828,9 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep, renderPages))
 		s.execute(rn, rn.flags, stage)
 		s.recordProjectMemory(tg.Name, rn)
+		// Mark the endpoint worked (and captured if a finding landed) so the next pass does not redo it.
+		_, _, _, _, breached := parseRunTrace(rn.Trace)
+		_ = s.store.MarkAttacked(tg.Name, ep.Method, ep.Path, breached)
 	}
 	return false
 }

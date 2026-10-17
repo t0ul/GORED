@@ -80,7 +80,9 @@ type rankedEndpoint struct {
 	Class, Tool, Why string
 	Tier             int
 	Difficulty       int    // 1 easy .. 3 hard; the exploit phase works easiest-first
-	Shape            string // body field names reverse-engineered from the client JS, when known
+	Shape            string // reverse-engineered request body fields, when known
+	Attempts         int    // times the exploit phase already worked this endpoint (frontier tracking)
+	Captured         bool   // a finding already landed here
 }
 
 // prioritizedEndpoints classifies the mapped surface and returns the tiered endpoints, crown jewels
@@ -99,7 +101,7 @@ func prioritizedEndpoints(rows []store.SurfaceRow) (eps []rankedEndpoint, untier
 			untiered++
 			continue
 		}
-		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty, Shape: shapeHint(r.Last)})
+		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty, Shape: r.Shape, Attempts: r.Attempts, Captured: r.Captured})
 	}
 	sort.SliceStable(eps, func(i, j int) bool {
 		if eps[i].Tier != eps[j].Tier {
@@ -136,16 +138,6 @@ func htmlRenderPages(rows []store.SurfaceRow) []string {
 	return out
 }
 
-// shapeHint pulls the reverse-engineered body field list out of a surface row's label (recorded by
-// reconAPIShapes as "clientshape fields=a,b,c"); "" when the row is not a client-shape note.
-func shapeHint(last string) string {
-	const pre = "clientshape fields="
-	if strings.HasPrefix(last, pre) {
-		return strings.TrimPrefix(last, pre)
-	}
-	return ""
-}
-
 func isStaticAsset(p string) bool {
 	lp := strings.ToLower(p)
 	for _, ext := range []string{".js", ".css", ".png", ".jpg", ".jpeg", ".svg", ".ico", ".woff", ".woff2", ".map", ".gif"} {
@@ -175,7 +167,14 @@ func prioritizedPlan(rows []store.SurfaceRow) string {
 			cur = e.Tier
 			fmt.Fprintf(&b, "%s:\n", tierName[cur])
 		}
-		fmt.Fprintf(&b, "- [%s] %s %s -> %s (%s)\n", e.Class, e.Method, e.Path, e.Tool, e.Why)
+		line := fmt.Sprintf("- [%s] %s %s -> %s (%s)", e.Class, e.Method, e.Path, e.Tool, e.Why)
+		if e.Shape != "" {
+			line += " body=[" + e.Shape + "]"
+		}
+		if e.Captured {
+			line += " [done: finding here]"
+		}
+		b.WriteString(line + "\n")
 	}
 	if untiered > 0 {
 		fmt.Fprintf(&b, "(+ %d other mapped paths — plain pages/assets, lower value)\n", untiered)

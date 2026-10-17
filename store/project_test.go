@@ -65,6 +65,53 @@ func TestSurfaceMapAndAttribution(t *testing.T) {
 	}
 }
 
+// The reverse-engineered shape lives in its own column (a later crawl/ffuf label must NOT clobber
+// it), and attack state accumulates so a later pass can skip what's done and work the frontier.
+func TestShapeAndAttackState(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	const tgt = "app"
+	must := func(e error) {
+		t.Helper()
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	must(st.SaveSurface(tgt, "", "", "POST", "/api/x", "recon:priv")) // mapped by the crawl
+	must(st.SaveShape(tgt, "POST", "/api/x", "email,note"))           // shape reverse-engineered
+	must(st.SaveSurface(tgt, "", "", "POST", "/api/x", "ffuf"))       // a LATER label write to the same row
+
+	get := func() store.SurfaceRow {
+		rows, _ := st.ListSurface(tgt)
+		for _, r := range rows {
+			if r.Path == "/api/x" {
+				return r
+			}
+		}
+		t.Fatal("row missing")
+		return store.SurfaceRow{}
+	}
+	if r := get(); r.Shape != "email,note" {
+		t.Fatalf("shape was clobbered by a later label write: %q", r.Shape) // the fragility fix
+	}
+
+	// Attack progress accumulates and sticks captured once a finding lands.
+	must(st.MarkAttacked(tgt, "POST", "/api/x", false))
+	if r := get(); r.Attempts != 1 || r.Captured {
+		t.Fatalf("after 1 miss: attempts=%d captured=%v", r.Attempts, r.Captured)
+	}
+	must(st.MarkAttacked(tgt, "POST", "/api/x", true))
+	if r := get(); r.Attempts != 2 || !r.Captured {
+		t.Fatalf("after a capture: attempts=%d captured=%v", r.Attempts, r.Captured)
+	}
+	if r := get(); r.Shape != "email,note" { // shape untouched by attack marking
+		t.Fatalf("shape lost after MarkAttacked: %q", r.Shape)
+	}
+}
+
 // Findings mirror surface: the target is the unit of memory (one canonical finding per
 // target+type+value), and which model reported it is a per-model attribution — so models can be
 // compared on the same target without duplicating the finding.

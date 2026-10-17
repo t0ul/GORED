@@ -9,11 +9,14 @@ import (
 // model. The target is the unit of memory: one row per endpoint, so any later run (any model) seeds
 // from the whole map and never starts over. Who found it is recorded separately in SurfaceFind.
 type SurfaceRow struct {
-	Target string
-	Method string
-	Path   string
-	Last   string
-	TS     time.Time
+	Target   string
+	Method   string
+	Path     string
+	Last     string
+	TS       time.Time
+	Shape    string // reverse-engineered request body shape (fields=…); "" when unknown
+	Attempts int    // times the exploit phase has worked this endpoint
+	Captured bool   // a finding landed here; never re-attack
 }
 
 // SurfaceFind attributes a map endpoint to a model that reported it (and the run it was in), so a
@@ -59,9 +62,10 @@ func (s *Store) SaveSurface(target, model, runID, method, path, last string) err
 }
 
 // ListSurface returns a target's canonical map — one row per endpoint, every model's discoveries
-// folded in — which is what a run seeds from.
+// folded in, with the reverse-engineered shape and the exploit-progress counters — which is what a
+// run seeds from (so it can skip what is done and work the frontier).
 func (s *Store) ListSurface(target string) ([]SurfaceRow, error) {
-	rows, err := s.db.Query(`SELECT target, method, path, last, ts FROM project_surface WHERE target=? ORDER BY path, method`, target)
+	rows, err := s.db.Query(`SELECT target, method, path, last, ts, COALESCE(shape,''), COALESCE(attempts,0), COALESCE(captured,0) FROM project_surface WHERE target=? ORDER BY path, method`, target)
 	if err != nil {
 		return nil, err
 	}
@@ -70,13 +74,41 @@ func (s *Store) ListSurface(target string) ([]SurfaceRow, error) {
 	for rows.Next() {
 		var r SurfaceRow
 		var ts string
-		if err := rows.Scan(&r.Target, &r.Method, &r.Path, &r.Last, &ts); err != nil {
+		var cap int
+		if err := rows.Scan(&r.Target, &r.Method, &r.Path, &r.Last, &ts, &r.Shape, &r.Attempts, &cap); err != nil {
 			return nil, err
 		}
 		r.TS, _ = time.Parse(time.RFC3339Nano, ts)
+		r.Captured = cap != 0
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// SaveShape records the reverse-engineered request body shape for an endpoint on the canonical map,
+// in its own column so a later crawl/ffuf write to the same row cannot clobber it. Upserts the row
+// if the endpoint is not yet present. Does not touch the attempt counters.
+func (s *Store) SaveShape(target, method, path, shape string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO project_surface (target, method, path, shape, ts) VALUES (?,?,?,?,?)
+		 ON CONFLICT(target, method, path) DO UPDATE SET shape=excluded.shape`,
+		target, method, path, shape, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// MarkAttacked records that the exploit phase worked an endpoint: it bumps the attempt count, sets
+// captured if a finding landed, and stamps the time — so a later run (or pass) advances the frontier
+// instead of re-attacking the same endpoints from the start.
+func (s *Store) MarkAttacked(target, method, path string, captured bool) error {
+	cap := 0
+	if captured {
+		cap = 1
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO project_surface (target, method, path, attempts, captured, last_attacked) VALUES (?,?,?,1,?,?)
+		 ON CONFLICT(target, method, path) DO UPDATE SET attempts=COALESCE(attempts,0)+1, captured=MAX(COALESCE(captured,0), excluded.captured), last_attacked=excluded.last_attacked`,
+		target, method, path, cap, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 // ListSurfaceByModel returns the endpoints one model found on a target (pass "" for deterministic
