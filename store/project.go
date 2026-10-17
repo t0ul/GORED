@@ -65,7 +65,10 @@ func (s *Store) SaveSurface(target, model, runID, method, path, last string) err
 // folded in, with the reverse-engineered shape and the exploit-progress counters — which is what a
 // run seeds from (so it can skip what is done and work the frontier).
 func (s *Store) ListSurface(target string) ([]SurfaceRow, error) {
-	rows, err := s.db.Query(`SELECT target, method, path, last, ts, COALESCE(shape,''), COALESCE(attempts,0), COALESCE(captured,0) FROM project_surface WHERE target=? ORDER BY path, method`, target)
+	// COALESCE every nullable column: a row created only by SaveShape (shape-discovery, no crawl) has
+	// a NULL last, and scanning NULL into a Go string errors the whole query — which would silently
+	// empty the surface and stall the exploit phase.
+	rows, err := s.db.Query(`SELECT target, method, path, COALESCE(last,''), COALESCE(ts,''), COALESCE(shape,''), COALESCE(attempts,0), COALESCE(captured,0) FROM project_surface WHERE target=? ORDER BY path, method`, target)
 	if err != nil {
 		return nil, err
 	}
