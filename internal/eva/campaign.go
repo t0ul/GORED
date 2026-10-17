@@ -828,9 +828,25 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep, renderPages))
 		s.execute(rn, rn.flags, stage)
 		s.recordProjectMemory(tg.Name, rn)
-		// Mark the endpoint worked (and captured if a finding landed) so the next pass does not redo it.
-		_, _, _, _, breached := parseRunTrace(rn.Trace)
-		_ = s.store.MarkAttacked(tg.Name, ep.Method, ep.Path, breached)
+		// Mark the endpoint worked (and captured if a finding landed) so the next pass does not redo it
+		// — but ONLY if the run actually executed (made a tool call). A run that died at boot/context
+		// with zero tool calls did not attack the endpoint, so it must not burn its attempt budget
+		// (else the frontier would skip endpoints that were never really tried).
+		events, _, _, _, breached := parseRunTrace(rn.Trace)
+		if runMadeToolCall(events) {
+			_ = s.store.MarkAttacked(tg.Name, ep.Method, ep.Path, breached)
+		}
+	}
+	return false
+}
+
+// runMadeToolCall reports whether a run reached the loop and issued at least one tool call — the
+// signal that the endpoint was actually worked (vs a run that failed to boot or died immediately).
+func runMadeToolCall(events []traceEvt) bool {
+	for _, e := range events {
+		if e.Span == "tool" && e.Event == "tool_call" {
+			return true
+		}
 	}
 	return false
 }
