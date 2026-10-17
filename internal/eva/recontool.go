@@ -47,6 +47,11 @@ func (t reconTool) Call(ctx context.Context, args map[string]any) (string, error
 	if len(rows) == 0 {
 		return "no endpoints match: the target may not be reconned yet, or the whole frontier is exercised (try {\"exercised\": true} or a different class).", nil
 	}
+	// Rank easiest-first by attack difficulty (the store can't: difficulty is an eva concept). Stable,
+	// so QueryEndpoints' secondary order (fewest attempts) is preserved within a difficulty tier.
+	sort.SliceStable(rows, func(i, j int) bool {
+		return classifyEndpoint(rows[i].Method, rows[i].Path).difficulty < classifyEndpoint(rows[j].Method, rows[j].Path).difficulty
+	})
 	var b strings.Builder
 	scope := "frontier (not yet exercised)"
 	if argBool(args["exercised"]) {

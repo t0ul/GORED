@@ -1,11 +1,42 @@
 package store_test
 
 import (
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/t0ul/GORED/store"
 )
+
+// SaveContract's read-merge-write must not lose an update under concurrency: many writers folding
+// a distinct field into the same endpoint must all survive (run with -race).
+func TestSaveContractConcurrent(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "c.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	const tgt, n = "app", 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_ = st.SaveContract(tgt, "POST", "/api/x", "static", store.EndpointContract{
+				Fields: []store.FieldSpec{{Name: fmt.Sprintf("f%d", i), In: "body"}},
+			})
+		}(i)
+	}
+	wg.Wait()
+	rows, _ := st.ListSurface(tgt)
+	if len(rows) != 1 || rows[0].Contract == nil {
+		t.Fatalf("want one merged row with a contract, got %+v", rows)
+	}
+	if got := len(rows[0].Contract.Fields); got != n {
+		t.Fatalf("concurrent merges lost fields: got %d want %d", got, n)
+	}
+}
 
 // The target is the unit of memory: the same endpoint found by two models is ONE row on the
 // canonical map (so any later run seeds from the whole map and never starts over), while who found

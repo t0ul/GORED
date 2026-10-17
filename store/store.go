@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/t0ul/GORED/internal/core"
@@ -16,6 +17,10 @@ import (
 // Store is a SQLite-backed core.RunStore.
 type Store struct {
 	db *sql.DB
+	// contractMu serializes SaveContract's read-merge-write so two writers on the same endpoint
+	// cannot lose a merge (a single-statement UPSERT would be atomic, but the contract merge needs
+	// read-then-write). Only SaveContract holds it; other writers are single atomic statements.
+	contractMu sync.Mutex
 	// Classify, when set by the eva layer (which owns classifyEndpoint), tags each surface row with
 	// its attack class so the recon tool can filter/rank on it. Left nil the class column stays "".
 	Classify func(method, path string) string

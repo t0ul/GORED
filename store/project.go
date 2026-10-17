@@ -197,6 +197,9 @@ func (s *Store) QueryEndpoints(target string, o QueryOpts) ([]SurfaceRow, error)
 	if limit <= 0 {
 		limit = 20
 	}
+	if limit > 50 {
+		limit = 50 // the recon tool returns a SLICE, never the whole map — cap an over-eager request
+	}
 	q := `SELECT target, method, path, COALESCE(last,''), COALESCE(ts,''),
 		COALESCE(class,''), COALESCE(source,''), COALESCE(has_body,0), COALESCE(needs_auth,0),
 		COALESCE(reach_low,0), COALESCE(contract,''), COALESCE(attempts,0), COALESCE(captured,0)
@@ -224,6 +227,8 @@ func (s *Store) QueryEndpoints(target string, o QueryOpts) ([]SurfaceRow, error)
 // promoted columns (class/has_body/needs_auth/reach_low) are recomputed from the merged contract so
 // the recon tool can filter on them. Upserts the row; does not touch the attempt counters.
 func (s *Store) SaveContract(target, method, path, source string, c EndpointContract) error {
+	s.contractMu.Lock() // the read-merge-write below must be atomic against a concurrent SaveContract
+	defer s.contractMu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var existing string
 	_ = s.db.QueryRow(`SELECT COALESCE(contract,'') FROM project_surface WHERE target=? AND method=? AND path=?`,
