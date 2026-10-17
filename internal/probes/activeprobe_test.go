@@ -50,4 +50,12 @@ func TestActiveProbeFormSubmit(t *testing.T) {
 	if !has["email"] || !has["note"] {
 		t.Errorf("captured body fields = %v, want email+note", got.Fields)
 	}
+	// The control types are recovered from the page's own inputs (type=email / type=text), so a
+	// server-rendered form with no OpenAPI spec still yields typed fields.
+	if got.Types["email"] != "email" {
+		t.Errorf("email input should be typed email, got %q (types=%v)", got.Types["email"], got.Types)
+	}
+	if got.Types["note"] != "string" {
+		t.Errorf("text input note should be typed string, got %q (types=%v)", got.Types["note"], got.Types)
+	}
 }

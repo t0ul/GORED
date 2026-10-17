@@ -8,8 +8,8 @@
 <div class="report">
   <section class="role lens" style="margin-bottom:16px">
     <div class="rolehdr">◉ DISCOVERED SURFACE · <span class="count">{{len .Surface}}</span></div>
-    {{if .Surface}}<div class="tblwrap"><table><thead><tr><th>method</th><th>path</th><th>last response</th></tr></thead><tbody>
-      {{range .Surface}}<tr><td class="c">{{.Method}}</td><td>{{.Path}}</td><td class="dim">{{trunc .Last 140}}</td></tr>{{end}}
+    {{if .Surface}}<div class="tblwrap"><table><thead><tr><th>method</th><th>path</th><th>class</th><th>body fields</th><th>auth</th><th>tried</th></tr></thead><tbody>
+      {{range .Surface}}<tr><td class="c">{{.Method}}</td><td>{{.Path}}</td><td class="dim">{{.Class}}</td><td class="dim">{{.Shape}}</td><td class="dim">{{with .Contract}}{{range $k, $v := .Auth}}{{$k}}={{$v}} {{end}}{{end}}</td><td class="c">{{.Attempts}}{{if .Captured}} ✓{{end}}</td></tr>{{end}}
     </tbody></table></div>
     <p class="hint" style="margin-top:8px">Later passes seed from this surface — the model starts here instead of re-enumerating.</p>
     {{else}}<p class="muted">no surface discovered yet — run a campaign against this target.</p>{{end}}

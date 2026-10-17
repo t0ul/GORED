@@ -77,3 +77,40 @@ func TestReconOpenAPIIngestToStore(t *testing.T) {
 		t.Errorf("qty should be an optional number from the spec, got %+v", byName["qty"])
 	}
 }
+
+// reconOpenAPI must skip a well-known path that returns a non-spec (an HTML 404 page) and fall
+// through to the next location that serves a real spec — not ingest garbage and not give up early.
+func TestReconOpenAPISkipsNonSpecAndFallsThrough(t *testing.T) {
+	const swagger = `{"swagger":"2.0","paths":{"/api/login":{"post":{"parameters":[
+      {"name":"body","in":"body","schema":{"type":"object","required":["user"],"properties":{"user":{"type":"string"}}}}
+    ]}}}}`
+	mux := http.NewServeMux()
+	mux.HandleFunc("/openapi.json", func(w http.ResponseWriter, r *http.Request) { // an SPA catch-all HTML page
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<!doctype html><html><body>not a spec</body></html>")
+	})
+	mux.HandleFunc("/swagger.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, swagger)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "f.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	st.Classify = func(m, p string) string { return classifyEndpoint(m, p).class }
+
+	s := &Server{store: st}
+	s.reconOpenAPI(context.Background(), store.Target{Name: "app", Base: ts.URL}, tools.NewSessions(), tools.NewEgress(strings.TrimPrefix(ts.URL, "http://")))
+
+	rows, _ := st.ListSurface("app")
+	if len(rows) != 1 || rows[0].Method != "POST" || rows[0].Path != "/api/login" {
+		t.Fatalf("should ingest only the real spec from the fallthrough location; got %+v", rows)
+	}
+	if rows[0].Contract == nil || len(rows[0].Contract.Fields) != 1 || rows[0].Contract.Fields[0].Name != "user" {
+		t.Errorf("fallthrough spec's field should be ingested, got %+v", rows[0].Contract)
+	}
+}
