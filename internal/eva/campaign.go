@@ -999,10 +999,16 @@ func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string
 	}
 	fmt.Fprintf(&b, "\nAttack EXACTLY this one endpoint:\n  %s %s   [%s — %s]\n\n", ep.Method, ep.Path, ep.Class, ep.Why)
 	b.WriteString(exploitHint(ep))
-	if ep.Shape != "" {
+	if blk := contractBlock(ep.Contract); blk != "" {
+		// Hand the model the reconned contract directly (field:type, ! = required, plus headers and
+		// per-identity reachability), so it builds a schema-valid request instead of guessing a body
+		// that 400s — recon ground truth in the prompt, the model still constructs the call.
+		b.WriteString("\nThe app's own client calls this endpoint with (field:type, ! = required):" + blk +
+			"\nBuild a schema-valid request with EXACTLY these fields and types; send real values, never placeholders.")
+	} else if ep.Shape != "" {
 		fmt.Fprintf(&b, "\nThe app's own client calls this endpoint with body fields: %s — build your request body with those fields (object or array as the endpoint requires).", ep.Shape)
 	}
-	b.WriteString("\nFor this endpoint's full reverse-engineered contract — field TYPES, which fields are REQUIRED, required headers, and which identity (anon/low/priv) gets what status — call the recon tool and read the line for this path. Build a schema-valid request from it; a probe that gets the shape right lands where a guessed body 400s.")
+	b.WriteString("\nFor OTHER mapped endpoints and their contracts, call the recon tool.")
 	if (ep.Class == "ingest" || ep.Class == "upload") && len(renderPages) > 0 {
 		fmt.Fprintf(&b, "\nRender pages (where stored data is shown — pass these to stored_xss as \"render\"): %s", strings.Join(renderPages, ", "))
 	}
