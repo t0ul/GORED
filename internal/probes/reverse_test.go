@@ -62,3 +62,50 @@ func TestReverseAPIShapes(t *testing.T) {
 		}
 	}
 }
+
+// With LITERAL body values the static parser also infers field types, and query-string keys are
+// captured as query params (not dropped) — the typed-RE + query enrichment. Variable/expression
+// values stay untyped (OpenAPI fills those when a spec is served).
+func TestReverseAPIShapesTypesAndQuery(t *testing.T) {
+	js := `
+	fetch("/api/signup", { method: "POST", body: JSON.stringify({ email: "a@b.com", age: 30, admin: false, name: n }) });
+	fetch("/api/search?term=x&limit=10&term=y");
+	`
+	got := ReverseAPIShapes(js)
+	byPath := map[string]APIShape{}
+	for _, s := range got {
+		byPath[s.Path] = s
+	}
+
+	signup, ok := byPath["/api/signup"]
+	if !ok {
+		t.Fatalf("missing /api/signup shape; got %+v", got)
+	}
+	if signup.Types["email"] != "string" { // a string literal: static can't know it's an email, only a string
+		t.Errorf("email literal should infer string, got %q", signup.Types["email"])
+	}
+	if signup.Types["age"] != "number" {
+		t.Errorf("age literal should infer number, got %q", signup.Types["age"])
+	}
+	if signup.Types["admin"] != "bool" {
+		t.Errorf("admin literal should infer bool, got %q", signup.Types["admin"])
+	}
+	if _, typed := signup.Types["name"]; typed {
+		t.Errorf("name is a variable; it must stay untyped, got %q", signup.Types["name"])
+	}
+
+	search, ok := byPath["/api/search"]
+	if !ok {
+		t.Fatalf("missing /api/search shape; got %+v", got)
+	}
+	gotQ := map[string]bool{}
+	for _, q := range search.Query {
+		gotQ[q] = true
+	}
+	if !gotQ["term"] || !gotQ["limit"] {
+		t.Errorf("query keys term+limit should be captured, got %v", search.Query)
+	}
+	if len(search.Query) != 2 {
+		t.Errorf("duplicate query key must dedup to 2 keys, got %v", search.Query)
+	}
+}

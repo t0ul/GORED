@@ -1,6 +1,7 @@
 package eva
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -412,6 +413,10 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 	// forms/htmx/axios that static JS mining cannot see. It submits, so it is for local throwaway
 	// targets; containment still blocks off-target hosts.
 	s.reconActiveProbe(ctx, tg, sessions, egress)
+	// Ground-truth shapes: if the app serves an OpenAPI/Swagger spec, parse its full schema (typed,
+	// required-tagged fields + query/path params for every operation) and fold it in at the highest
+	// source precedence — turning the static/active guesses into certainty.
+	s.reconOpenAPI(ctx, tg, sessions, egress)
 	// Content discovery (ffuf fusion): the crawl only finds LINKED paths, so forced-browse the common
 	// unlinked ones (admin, backups, .git, .env, common /api/<word>), authenticated with the priv
 	// session cookie so it reaches the signed-in surface too. Fuzz the root and any /api prefix.
@@ -445,17 +450,16 @@ func (s *Server) reconAPIShapes(ctx context.Context, tg store.Target, sessions *
 	}
 }
 
-// shapeToContract lifts a reverse-engineered APIShape (method/path/field names) into an
-// EndpointContract. Field types stay unknown here — the OpenAPI ingest and typed static RE fill
-// them; GET fields are recorded as query params, others as body fields.
+// shapeToContract lifts a reverse-engineered APIShape into an EndpointContract: body field names go
+// in as body fields, query keys as query params, each carrying the static parser's inferred type
+// when it has one (OpenAPI ingest, a stronger source, overrides any of these on merge).
 func shapeToContract(sh probes.APIShape) store.EndpointContract {
-	in := "body"
-	if sh.Method == http.MethodGet || sh.Method == "" {
-		in = "query"
-	}
 	var fs []store.FieldSpec
 	for _, f := range sh.Fields {
-		fs = append(fs, store.FieldSpec{Name: f, In: in})
+		fs = append(fs, store.FieldSpec{Name: f, Type: sh.Types[f], In: "body"})
+	}
+	for _, q := range sh.Query {
+		fs = append(fs, store.FieldSpec{Name: q, Type: sh.Types[q], In: "query"})
 	}
 	return store.EndpointContract{Fields: fs}
 }
@@ -481,6 +485,58 @@ func (s *Server) reconActiveProbe(ctx context.Context, tg store.Target, sessions
 	for _, sh := range shapes {
 		_ = s.store.SaveContract(tg.Name, sh.Method, sh.Path, "active", shapeToContract(sh))
 	}
+}
+
+// reconOpenAPI fetches a served OpenAPI/Swagger spec (as the priv identity) and folds its full typed
+// schema into the contract at source="openapi" — the highest precedence, so it turns the static/
+// active field-name guesses into ground truth (types, required flags, query/path params). Best-effort:
+// it tries the common well-known locations, uses the first that returns a parseable JSON spec, and is
+// read-only and egress-gated.
+func (s *Server) reconOpenAPI(ctx context.Context, tg store.Target, sessions *tools.Sessions, egress *tools.Egress) {
+	client := sessions.Client("priv")
+	for _, p := range []string{"/openapi.json", "/swagger.json", "/v3/api-docs", "/api-docs", "/swagger/v1/swagger.json"} {
+		raw := strings.TrimRight(tg.Base, "/") + p
+		if !egress.Allowed(raw) {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || !looksJSONObject(body) {
+			continue
+		}
+		eps, err := ingest.ContractsFromOpenAPI(body)
+		if err != nil {
+			continue
+		}
+		for _, ep := range eps {
+			_ = s.store.SaveContract(tg.Name, ep.Method, ep.Path, "openapi", endpointToContract(ep))
+		}
+		return // the first parseable spec wins
+	}
+}
+
+// endpointToContract converts a store-agnostic ingest.APIEndpoint into a store.EndpointContract.
+func endpointToContract(ep ingest.APIEndpoint) store.EndpointContract {
+	fs := make([]store.FieldSpec, 0, len(ep.Fields))
+	for _, f := range ep.Fields {
+		fs = append(fs, store.FieldSpec{Name: f.Name, Type: f.Type, Required: f.Required, In: f.In})
+	}
+	return store.EndpointContract{Fields: fs}
+}
+
+// looksJSONObject reports whether b begins (after whitespace) with a JSON object, a cheap guard so an
+// HTML 404 page is never handed to the spec parser.
+func looksJSONObject(b []byte) bool {
+	b = bytes.TrimSpace(b)
+	return len(b) > 0 && b[0] == '{'
 }
 
 // reconContentDisc forced-browses the target for unlinked endpoints (ffuf), carrying the priv

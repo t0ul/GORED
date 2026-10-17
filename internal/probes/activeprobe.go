@@ -154,18 +154,18 @@ func shapesFromCaptures(caps []capturedReq) []APIShape {
 			method = "GET"
 		}
 		fields := bodyFieldNames(c.body)
-		if method == "GET" && len(fields) == 0 {
-			for k := range u.Query() {
-				fields = append(fields, k)
-			}
+		var query []string
+		for k := range u.Query() {
+			query = append(query, k)
 		}
 		k := key{method, path}
 		if i, ok := idx[k]; ok {
 			out[i].Fields = mergeStrings(out[i].Fields, fields)
+			out[i].Query = mergeStrings(out[i].Query, query)
 			continue
 		}
 		idx[k] = len(out)
-		out = append(out, APIShape{Method: method, Path: path, Fields: fields})
+		out = append(out, APIShape{Method: method, Path: path, Fields: fields, Query: query})
 	}
 	return out
 }
