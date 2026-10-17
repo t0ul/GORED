@@ -2,6 +2,7 @@ package probes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -38,7 +39,8 @@ type BodyLimitProbe struct {
 	Egress    *core.Egress
 	Sessions  *core.Sessions // the run's cookie jar; nil -> a fresh one (header-only auth)
 	Identity  core.Identity  // the authenticated caller (cookie session and/or static headers)
-	SizeBytes int            // default 2 MiB
+	Fields    []string       // the endpoint's reverse-engineered body fields; the oversized value goes in the most text-like one and the rest get benign values, so a strict schema still reaches its handler. Empty -> a generic {"data":...} body.
+	SizeBytes int            // default 11 MiB (clears the common 10 MiB framework default so a generous-but-present limit is not mistaken for none)
 	Timeout   time.Duration
 }
 
@@ -49,15 +51,13 @@ func (p *BodyLimitProbe) Probe(ctx context.Context, method, path string) (BodyLi
 	}
 	size := p.SizeBytes
 	if size <= 0 {
-		size = 2 << 20 // 2 MiB — well past any sane limit, small enough not to hurt the target
+		size = 11 << 20 // 11 MiB — past the common 10 MiB default, small enough not to hurt a local target
 	}
 	raw := urlJoin(p.Base, path)
 	if !p.Egress.Allowed(raw) {
 		return BodyLimitFinding{}, fmt.Errorf("%w: %s", core.ErrEgressDenied, raw)
 	}
-	// A generic valid-JSON body: a decoder ignoring the unknown "data" field still has to read the
-	// whole request, so the oversized body exercises the size limit regardless of the endpoint schema.
-	body := `{"data":"` + strings.Repeat("A", size) + `"}`
+	body := p.buildBody(size)
 	status := p.send(ctx, method, raw, body)
 
 	f := BodyLimitFinding{Method: method, Path: path, Status: status, SizeBytes: size, CWE: "CWE-770"}
@@ -66,10 +66,45 @@ func (p *BodyLimitProbe) Probe(ctx context.Context, method, path string) (BodyLi
 		// enforced a limit — defended, not flagged
 	case ok2xx(status):
 		f.flagged = true
-		f.Evidence = fmt.Sprintf("%s %s accepted a %d-byte request body (HTTP %d) with no size limit — unbounded request body (CWE-770): an attacker can exhaust server memory",
-			method, path, size, status)
+		f.Evidence = fmt.Sprintf("%s %s accepted a %d-byte request body (HTTP %d) with no size limit at or below %d bytes — unbounded request body (CWE-770): an attacker can exhaust server memory",
+			method, path, size, status, size)
 	}
 	return f, nil
+}
+
+// buildBody constructs the oversized request body. With a known schema (Fields) it fills the most
+// text-like field with the oversized value and every other field with a short benign value, so a
+// strict decoder still reaches its handler; with no schema it falls back to a generic object whose
+// unknown field a lenient decoder ignores but still has to read in full.
+func (p *BodyLimitProbe) buildBody(size int) string {
+	pad := strings.Repeat("A", size)
+	if len(p.Fields) == 0 {
+		return `{"data":"` + pad + `"}`
+	}
+	padField := pickTextField(p.Fields)
+	obj := make(map[string]any, len(p.Fields))
+	for _, f := range p.Fields {
+		if f == padField {
+			obj[f] = pad
+		} else {
+			obj[f] = "gored"
+		}
+	}
+	b, _ := json.Marshal(obj)
+	return string(b)
+}
+
+// pickTextField chooses the field most likely to accept a long free-text string (so the oversized
+// value is not rejected by a type/format validator), falling back to the first field.
+func pickTextField(fields []string) string {
+	for _, want := range []string{"body", "comment", "description", "desc", "note", "content", "text", "message", "title", "data"} {
+		for _, f := range fields {
+			if strings.Contains(strings.ToLower(f), want) {
+				return f
+			}
+		}
+	}
+	return fields[0]
 }
 
 func (p *BodyLimitProbe) send(ctx context.Context, method, raw, body string) int {
@@ -112,14 +147,15 @@ type BodyLimitTool struct {
 func (BodyLimitTool) Name() string { return "body_limit" }
 func (BodyLimitTool) Describe() string {
 	return `Test a write endpoint for a missing request body-size limit (CWE-770). ` +
-		`args: {"path":"/<write-path>","method":"POST"}. ` +
+		`args: {"path":"/<write-path>","method":"POST","fields":"field1,field2"}. ` +
+		`Pass "fields" = the endpoint's request-body field names you discovered (comma-separated) so the oversized request is schema-valid and reaches the handler; omit it only if unknown. ` +
 		`By default it uses the privileged session you are already logged into (do NOT pass credentials as a header); for a header-auth app add {"session_header":"<Header>","session_value":"<token>"}. ` +
 		`Use a write path you actually discovered. It sends one multi-megabyte body; a 2xx acceptance instead of 413 is the finding.`
 }
 
 func (t BodyLimitTool) Call(ctx context.Context, args map[string]any) (string, error) {
 	id := bolaIdentity(args, "priv", "session", "session_header", "session_value")
-	p := &BodyLimitProbe{Base: t.Base, Egress: t.Gate.Egress(), Sessions: t.Sessions, Identity: id}
+	p := &BodyLimitProbe{Base: t.Base, Egress: t.Gate.Egress(), Sessions: t.Sessions, Identity: id, Fields: splitFields(tools.AsString(args["fields"]))}
 	method := strings.ToUpper(tools.AsString(args["method"]))
 	f, err := p.Probe(ctx, method, tools.AsString(args["path"]))
 	if err != nil {

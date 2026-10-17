@@ -26,10 +26,24 @@ type ThrottleFinding struct {
 	Evidence   string
 }
 
-// Flagged reports a missing throttle: every planned attempt completed and none was blocked.
-// Requiring all attempts to complete keeps a flaky/half-reachable endpoint from being flagged.
+// Flagged reports a missing throttle: every planned attempt completed, none was blocked with a
+// 429/lockout, AND the whole burst returned the SAME status. Requiring all attempts to complete
+// keeps a flaky endpoint from being flagged; requiring a uniform status keeps a non-429 defense
+// (a lockout that switches the response to 403, a challenge page, etc.) from reading as "no
+// throttle" — a mid-burst status change means something stateful kicked in, so stay conservative.
+// This is status-based detection: a purely timing/tarpit throttle (same status, just slower) is
+// NOT caught here and is a known blind spot.
 func (f ThrottleFinding) Flagged() bool {
-	return f.Attempts > 0 && f.Sent >= f.Attempts && !f.Blocked
+	if f.Attempts == 0 || f.Sent < f.Attempts || f.Blocked {
+		return false
+	}
+	distinct := 0
+	for st := range f.StatusHist {
+		if st != 0 {
+			distinct++
+		}
+	}
+	return distinct == 1
 }
 
 // ThrottleProbe fires a burst of wrong-credential login attempts at an auth endpoint and
@@ -196,4 +210,16 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// splitFields parses a comma-separated field list (as the model passes a discovered body shape)
+// into trimmed, non-empty names; "" yields nil.
+func splitFields(s string) []string {
+	var out []string
+	for _, f := range strings.Split(s, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }

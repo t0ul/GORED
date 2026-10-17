@@ -272,6 +272,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 </ul>
 <p>Memos: <a href="/api/memos">/api/memos</a> (all) and <a href="/api/memos/mine">/api/memos/mine</a> (yours).</p>
 <p>Your account: <a href="/api/profile">/api/profile</a> (GET to view, PUT to update your name and bio).</p>
+<p>Accounts: POST /api/register to sign up (fields username, password), POST /api/login to authenticate.</p>
 <p>API tokens: POST /api/token for a bearer JWT, then <a href="/api/whoami">/api/whoami</a> with it.</p>
 <p>Link preview tool: <a href="/api/fetch?url=">/api/fetch</a></p>
 <p>Oracle status: <a href="/oracle/status">/oracle/status</a></p>

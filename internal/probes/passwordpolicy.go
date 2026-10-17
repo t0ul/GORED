@@ -2,6 +2,7 @@ package probes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -34,23 +35,22 @@ func (f PasswordPolicyFinding) Flagged() bool { return f.flagged }
 type PasswordPolicyProbe struct {
 	Base      string
 	Egress    *core.Egress
-	UserField string // default "username"
-	PassField string // default "password"
-	WeakPass  string // default "123"
+	UserField string   // default "username"
+	PassField string   // default "password"
+	WeakPass  string   // default "123"
+	Fields    []string // the endpoint's reverse-engineered body fields; every field gets a benign value, the password-like one gets the weak password, so a multi-field registration still validates. Empty -> a {user,pass} body.
 	Timeout   time.Duration
 }
 
 // Probe POSTs a weak-password registration to path and classifies the response.
 func (p *PasswordPolicyProbe) Probe(ctx context.Context, path string) (PasswordPolicyFinding, error) {
-	uf := firstNonEmpty(p.UserField, "username")
-	pf := firstNonEmpty(p.PassField, "password")
 	weak := firstNonEmpty(p.WeakPass, "123")
 	raw := urlJoin(p.Base, path)
 	if !p.Egress.Allowed(raw) {
 		return PasswordPolicyFinding{}, fmt.Errorf("%w: %s", core.ErrEgressDenied, raw)
 	}
 	user := fmt.Sprintf("gored_probe_%d", time.Now().UnixNano())
-	body := fmt.Sprintf(`{%q:%q,%q:%q}`, uf, user, pf, weak)
+	body := p.buildBody(user, weak)
 	status := p.send(ctx, raw, body)
 
 	f := PasswordPolicyFinding{Path: path, Status: status, Weak: weak, CWE: "CWE-521"}
@@ -60,6 +60,39 @@ func (p *PasswordPolicyProbe) Probe(ctx context.Context, path string) (PasswordP
 			path, weak, status)
 	}
 	return f, nil
+}
+
+// buildBody constructs the registration body. With a known schema (Fields) every field gets a
+// benign value except the password-like field, which gets the weak password (and an email-like
+// field gets an address-shaped value), so a multi-field registration still passes format checks
+// and the only thing under test is the password policy. With no schema it sends {user, pass}.
+func (p *PasswordPolicyProbe) buildBody(user, weak string) string {
+	uf := firstNonEmpty(p.UserField, "username")
+	pf := firstNonEmpty(p.PassField, "password")
+	if len(p.Fields) == 0 {
+		return fmt.Sprintf(`{%q:%q,%q:%q}`, uf, user, pf, weak)
+	}
+	obj := make(map[string]any, len(p.Fields))
+	hasPass := false
+	for _, f := range p.Fields {
+		lf := strings.ToLower(f)
+		switch {
+		case strings.Contains(lf, "pass") || strings.Contains(lf, "pwd"):
+			obj[f] = weak
+			hasPass = true
+		case strings.Contains(lf, "email"):
+			obj[f] = user + "@example.com"
+		case strings.Contains(lf, "user") || strings.Contains(lf, "login") || lf == "name":
+			obj[f] = user
+		default:
+			obj[f] = "gored"
+		}
+	}
+	if !hasPass { // the schema named no obvious password field; add the default so the policy is still exercised
+		obj[pf] = weak
+	}
+	b, _ := json.Marshal(obj)
+	return string(b)
 }
 
 func (p *PasswordPolicyProbe) send(ctx context.Context, raw, body string) int {
@@ -94,9 +127,9 @@ type PasswordPolicyTool struct {
 func (PasswordPolicyTool) Name() string { return "password_policy" }
 func (PasswordPolicyTool) Describe() string {
 	return `Test a registration / sign-up endpoint for a missing password-strength policy (CWE-521). ` +
-		`args: {"path":"/<register-path>","user_field":"username","pass_field":"password"}. ` +
-		`Use a register/sign-up path you actually discovered. user_field/pass_field are optional (default username/password; for an email sign-up pass "user_field":"email"). ` +
-		`It creates one throwaway account with a trivially weak password; a 2xx acceptance is the finding.`
+		`args: {"path":"/<register-path>","user_field":"username","pass_field":"password","fields":"field1,field2"}. ` +
+		`Pass "fields" = the endpoint's request-body field names you discovered (comma-separated) so a multi-field sign-up still validates; user_field/pass_field are optional (default username/password; for an email sign-up pass "user_field":"email"). ` +
+		`Use a register/sign-up path you actually discovered. It creates one throwaway account with a trivially weak password; a 2xx acceptance is the finding.`
 }
 
 func (t PasswordPolicyTool) Call(ctx context.Context, args map[string]any) (string, error) {
@@ -105,6 +138,7 @@ func (t PasswordPolicyTool) Call(ctx context.Context, args map[string]any) (stri
 		Egress:    t.Gate.Egress(),
 		UserField: tools.AsString(args["user_field"]),
 		PassField: tools.AsString(args["pass_field"]),
+		Fields:    splitFields(tools.AsString(args["fields"])),
 	}
 	f, err := p.Probe(ctx, tools.AsString(args["path"]))
 	if err != nil {
