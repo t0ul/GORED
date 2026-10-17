@@ -83,7 +83,7 @@ type rankedEndpoint struct {
 	Shape            string                  // reverse-engineered request body fields, when known
 	Contract         *store.EndpointContract // the full typed contract (types/required/headers/auth), when reconned
 	Attempts         int                     // times the exploit phase already worked this endpoint (frontier tracking)
-	Captured         bool                    // a finding already landed here
+	Found            bool                    // a finding already landed here
 }
 
 // prioritizedEndpoints classifies the mapped surface and returns the tiered endpoints, crown jewels
@@ -102,7 +102,7 @@ func prioritizedEndpoints(rows []store.SurfaceRow) (eps []rankedEndpoint, untier
 			untiered++
 			continue
 		}
-		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty, Shape: r.Shape(), Contract: r.Contract, Attempts: r.Attempts, Captured: r.Captured})
+		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty, Shape: r.Shape(), Contract: r.Contract, Attempts: r.Attempts, Found: r.Found})
 	}
 	sort.SliceStable(eps, func(i, j int) bool {
 		if eps[i].Tier != eps[j].Tier {
@@ -172,7 +172,7 @@ func prioritizedPlan(rows []store.SurfaceRow) string {
 		if e.Shape != "" {
 			line += " body=[" + e.Shape + "]"
 		}
-		if e.Captured {
+		if e.Found {
 			line += " [done: finding here]"
 		}
 		b.WriteString(line + "\n")

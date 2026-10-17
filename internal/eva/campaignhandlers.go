@@ -10,12 +10,12 @@ import (
 
 // campaignChild is one child run of a campaign, for the detail view.
 type campaignChild struct {
-	ID       string
-	Stage    string
-	Base     string
-	Status   string
-	Model    string
-	Captured bool
+	ID     string
+	Stage  string
+	Base   string
+	Status string
+	Model  string
+	Found  bool
 }
 
 // campaignView is a campaign rendered for the console/detail pages.
@@ -30,7 +30,7 @@ type campaignView struct {
 	Loop     bool
 	Pass     int
 	NumRuns  int
-	Captures int
+	Findings int
 	Children []campaignChild
 }
 
@@ -47,12 +47,12 @@ func (s *Server) viewCampaign(c *campaign) campaignView {
 		if rn == nil {
 			continue
 		}
-		isCap := captured(rn.Sums)
-		if isCap {
-			v.Captures++
+		isFound := captured(rn.Sums) // helper reads the run's confirmed-finding outcome
+		if isFound {
+			v.Findings++
 		}
 		v.Children = append(v.Children, campaignChild{
-			ID: rn.ID, Stage: rn.Stage, Base: rn.Base, Status: rn.Status, Model: rn.Model, Captured: isCap,
+			ID: rn.ID, Stage: phaseLabel(rn.Stage), Base: rn.Base, Status: rn.Status, Model: rn.Model, Found: isFound,
 		})
 	}
 	return v

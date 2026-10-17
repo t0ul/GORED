@@ -157,14 +157,14 @@ func TestContractAndAttackState(t *testing.T) {
 		t.Fatalf("contract was clobbered by a later label write: %q", r.Shape()) // the fragility fix
 	}
 
-	// Attack progress accumulates and sticks captured once a finding lands.
+	// Attack progress accumulates and sticks found once a finding lands.
 	must(st.MarkAttacked(tgt, "POST", "/api/x", false))
-	if r := get(); r.Attempts != 1 || r.Captured {
-		t.Fatalf("after 1 miss: attempts=%d captured=%v", r.Attempts, r.Captured)
+	if r := get(); r.Attempts != 1 || r.Found {
+		t.Fatalf("after 1 miss: attempts=%d found=%v", r.Attempts, r.Found)
 	}
 	must(st.MarkAttacked(tgt, "POST", "/api/x", true))
-	if r := get(); r.Attempts != 2 || !r.Captured {
-		t.Fatalf("after a capture: attempts=%d captured=%v", r.Attempts, r.Captured)
+	if r := get(); r.Attempts != 2 || !r.Found {
+		t.Fatalf("after a finding: attempts=%d found=%v", r.Attempts, r.Found)
 	}
 	if r := get(); r.Shape() != "email,note" { // contract untouched by attack marking
 		t.Fatalf("contract lost after MarkAttacked: %q", r.Shape())

@@ -8,12 +8,13 @@ import (
 )
 
 // reportChild is one child run's account, recovered from its trace: coverage (tool calls +
-// distinct tools + discovered paths), evidence (findings + repro), and whether it captured.
+// distinct tools + discovered paths), evidence (candidate findings + repro), and whether a finding
+// was oracle-confirmed.
 type reportChild struct {
 	ID        string
 	Stage     string
 	Status    string
-	Captured  bool
+	Found     bool
 	Breached  bool
 	ToolCalls int
 	Tools     []string
@@ -31,7 +32,7 @@ type reportTarget struct {
 	Stages    []string
 	PathCount int
 	FindCount int
-	Captures  int
+	Findings  int
 }
 
 // campaignReport is the whole morning report: the campaign envelope plus per-target coverage.
@@ -43,7 +44,7 @@ type campaignReport struct {
 	Started       time.Time
 	Elapsed       string
 	Targets       []reportTarget
-	TotalCaptures int
+	TotalFindings int
 	TotalFinds    int
 	TotalPaths    int
 }
@@ -95,14 +96,14 @@ func (s *Server) buildReport(c *campaign) campaignReport {
 		rt.Stages = addDistinct(rt.Stages, r.stage)
 		rt.PathCount += len(child.Paths)
 		rt.FindCount += len(child.Findings)
-		if child.Captured {
-			rt.Captures++
+		if child.Found {
+			rt.Findings++
 		}
 	}
 	for _, base := range order {
 		rt := byBase[base]
 		rep.Targets = append(rep.Targets, *rt)
-		rep.TotalCaptures += rt.Captures
+		rep.TotalFindings += rt.Findings
 		rep.TotalFinds += rt.FindCount
 		rep.TotalPaths += rt.PathCount
 	}
@@ -110,13 +111,13 @@ func (s *Server) buildReport(c *campaign) campaignReport {
 }
 
 // childReport reads one run's trace into a reportChild.
-func childReport(id, stage, status, tracePath string, isCap, hasSums bool) reportChild {
-	// Captured is the oracle's aggregated verdict (captured(Sums)), same as the live counter.
+func childReport(id, stage, status, tracePath string, isFound, hasSums bool) reportChild {
+	// Found is the oracle's aggregated verdict (captured(Sums)), same as the live counter.
 	// We deliberately do NOT fold in parseRunTrace's breached flag: that also matches
-	// egress_breach (a containment failure), which is not a flag capture.
+	// egress_breach (a containment failure), which is not an oracle-confirmed finding.
 	events, findings, targets, repro, breached := parseRunTrace(tracePath)
 	ch := reportChild{
-		ID: id, Stage: stage, Status: status, Captured: isCap, Breached: breached,
+		ID: id, Stage: phaseLabel(stage), Status: status, Found: isFound, Breached: breached,
 		Paths: targets, Findings: findings, Repro: repro, HasSums: hasSums,
 	}
 	for _, ev := range events {

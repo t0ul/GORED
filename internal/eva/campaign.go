@@ -361,6 +361,9 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 	if s.store == nil {
 		return
 	}
+	s.mu.Lock()
+	c.Cur = fmt.Sprintf("pass %d · %s · recon", c.Pass, tg.Name) // phase readout: mapping before the model loop
+	s.mu.Unlock()
 	egress := tools.NewEgress(hostPort(tg.Base))
 	sessions := tools.NewSessions()
 	// Log in each creds identity into the shared jar (CSRF-aware: GET the login page, extract the
@@ -889,6 +892,16 @@ const (
 // scheduler decomposes it into one focused run per endpoint instead of a single whole-surface run.
 func endpointPhase(stage string) bool { return stage == "apiexploit" }
 
+// phaseLabel turns an internal stage key into the phase name shown in the cockpit, so a run reads as
+// its PHASE ("exploit") rather than the internal stage id ("apiexploit"). Recon is a deterministic
+// pre-step surfaced through the campaign's Cur line, not a child run, so it needs no key of its own.
+func phaseLabel(stage string) string {
+	if stage == "apiexploit" {
+		return "exploit"
+	}
+	return stage
+}
+
 // diverseEndpoints round-robins the (tier-sorted) worklist across attack classes and returns up to
 // cap endpoints. Without this, a surface with many endpoints of one class (e.g. a dozen /api/admin/*
 // routes) would consume the whole cap and starve every other class — so stored-XSS on the single
@@ -942,12 +955,12 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		return false
 	}
 	eps, _ := prioritizedEndpoints(rows)
-	// Work the FRONTIER, not the start: skip endpoints already captured, and ones already worked
+	// Work the FRONTIER, not the start: skip endpoints where a finding already landed, and ones already worked
 	// exploitAttemptCap times with nothing, so a looping campaign advances through the surface instead
 	// of re-attacking the first endpoints every pass. bola's classes stay out unless opted in.
 	kept := eps[:0]
 	for _, e := range eps {
-		if e.Captured || e.Attempts >= exploitAttemptCap {
+		if e.Found || e.Attempts >= exploitAttemptCap {
 			continue
 		}
 		if !appsweep.BolaEnabled() && (e.Class == "idor" || e.Class == "admin") {
@@ -972,9 +985,12 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 			return true
 		}
 		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep, renderPages), toolNames(ep.Tool))
+		s.mu.Lock()
+		c.Cur = fmt.Sprintf("pass %d · %s · exploit · %s %s", c.Pass, tg.Name, ep.Method, ep.Path) // which endpoint is in flight
+		s.mu.Unlock()
 		s.execute(rn, rn.flags, stage)
 		s.recordProjectMemory(tg.Name, rn)
-		// Mark the endpoint worked (and captured if a finding landed) so the next pass does not redo it
+		// Mark the endpoint worked (and found if a finding landed) so the next pass does not redo it
 		// — but ONLY if the run actually executed (made a tool call). A run that died at boot/context
 		// with zero tool calls did not attack the endpoint, so it must not burn its attempt budget
 		// (else the frontier would skip endpoints that were never really tried).
@@ -1139,7 +1155,7 @@ func (s *Server) launchCampaignRunInst(c *campaign, tg store.Target, stage strin
 	s.runs[id] = rn
 	s.order = append([]string{id}, s.order...)
 	c.RunIDs = append(c.RunIDs, id)
-	c.Cur = fmt.Sprintf("pass %d · %s · %s", c.Pass, tg.Name, stage)
+	c.Cur = fmt.Sprintf("pass %d · %s · %s", c.Pass, tg.Name, phaseLabel(stage))
 	s.mu.Unlock()
 	s.persist(rn)
 	s.persistCampaign(c)

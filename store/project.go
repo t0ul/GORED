@@ -72,7 +72,7 @@ type SurfaceRow struct {
 	ReachLow  bool              // a low-privilege identity gets a 2xx (a BAC/IDOR candidate)
 	Contract  *EndpointContract // the structured request contract; nil when only the path is known
 	Attempts  int               // times the exploit phase has worked this endpoint
-	Captured  bool              // a finding landed here; never re-attack
+	Found     bool              // a finding landed here; never re-attack
 }
 
 // Shape derives the legacy flat body-field list (comma-joined names) from the contract, so existing
@@ -146,7 +146,7 @@ func (s *Store) ListSurface(target string) ([]SurfaceRow, error) {
 // with only a contract (NULL last) does not error the whole query.
 const surfaceSelectCols = `target, method, path, COALESCE(last,''), COALESCE(ts,''),
 	COALESCE(class,''), COALESCE(source,''), COALESCE(has_body,0), COALESCE(needs_auth,0),
-	COALESCE(reach_low,0), COALESCE(contract,''), COALESCE(attempts,0), COALESCE(captured,0)`
+	COALESCE(reach_low,0), COALESCE(contract,''), COALESCE(attempts,0), COALESCE(found,0)`
 
 // scanSurface runs a project_surface SELECT (whose column order must match below) and decodes each
 // row, including the structured contract JSON. COALESCE every nullable column: a row created with
@@ -162,13 +162,13 @@ func (s *Store) scanSurface(query string, args ...any) ([]SurfaceRow, error) {
 	for rows.Next() {
 		var r SurfaceRow
 		var ts, contract string
-		var hasBody, needsAuth, reachLow, captured int
+		var hasBody, needsAuth, reachLow, found int
 		if err := rows.Scan(&r.Target, &r.Method, &r.Path, &r.Last, &ts, &r.Class, &r.Source,
-			&hasBody, &needsAuth, &reachLow, &contract, &r.Attempts, &captured); err != nil {
+			&hasBody, &needsAuth, &reachLow, &contract, &r.Attempts, &found); err != nil {
 			return nil, err
 		}
 		r.TS, _ = time.Parse(time.RFC3339Nano, ts)
-		r.HasBody, r.NeedsAuth, r.ReachLow, r.Captured = hasBody != 0, needsAuth != 0, reachLow != 0, captured != 0
+		r.HasBody, r.NeedsAuth, r.ReachLow, r.Found = hasBody != 0, needsAuth != 0, reachLow != 0, found != 0
 		if contract != "" {
 			var c EndpointContract
 			if json.Unmarshal([]byte(contract), &c) == nil {
@@ -207,14 +207,14 @@ func (s *Store) QueryEndpoints(target string, o QueryOpts) ([]SurfaceRow, error)
 	q := `SELECT ` + surfaceSelectCols + ` FROM project_surface WHERE target=?`
 	args := []any{target}
 	if !o.Exercised {
-		q += ` AND COALESCE(captured,0)=0 AND COALESCE(attempts,0)<?`
+		q += ` AND COALESCE(found,0)=0 AND COALESCE(attempts,0)<?`
 		args = append(args, attemptCap)
 	}
 	if o.Class != "" {
 		q += ` AND class=?`
 		args = append(args, o.Class)
 	}
-	q += ` ORDER BY COALESCE(captured,0) ASC, COALESCE(attempts,0) ASC, path ASC LIMIT ?`
+	q += ` ORDER BY COALESCE(found,0) ASC, COALESCE(attempts,0) ASC, path ASC LIMIT ?`
 	args = append(args, limit)
 	return s.scanSurface(q, args...)
 }
@@ -359,17 +359,17 @@ func (s *Store) classOf(method, path string) string {
 }
 
 // MarkAttacked records that the exploit phase worked an endpoint: it bumps the attempt count, sets
-// captured if a finding landed, and stamps the time — so a later run (or pass) advances the frontier
+// found if a finding landed, and stamps the time — so a later run (or pass) advances the frontier
 // instead of re-attacking the same endpoints from the start.
-func (s *Store) MarkAttacked(target, method, path string, captured bool) error {
-	capturedInt := 0
-	if captured {
-		capturedInt = 1
+func (s *Store) MarkAttacked(target, method, path string, found bool) error {
+	foundInt := 0
+	if found {
+		foundInt = 1
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO project_surface (target, method, path, attempts, captured, last_attacked) VALUES (?,?,?,1,?,?)
-		 ON CONFLICT(target, method, path) DO UPDATE SET attempts=COALESCE(attempts,0)+1, captured=MAX(COALESCE(captured,0), excluded.captured), last_attacked=excluded.last_attacked`,
-		target, method, path, capturedInt, time.Now().UTC().Format(time.RFC3339Nano))
+		`INSERT INTO project_surface (target, method, path, attempts, found, last_attacked) VALUES (?,?,?,1,?,?)
+		 ON CONFLICT(target, method, path) DO UPDATE SET attempts=COALESCE(attempts,0)+1, found=MAX(COALESCE(found,0), excluded.found), last_attacked=excluded.last_attacked`,
+		target, method, path, foundInt, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
