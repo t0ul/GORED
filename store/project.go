@@ -138,11 +138,15 @@ func (s *Store) SaveSurface(target, model, runID, method, path, last string) err
 // folded in, with the reverse-engineered shape and the exploit-progress counters — which is what a
 // run seeds from (so it can skip what is done and work the frontier).
 func (s *Store) ListSurface(target string) ([]SurfaceRow, error) {
-	return s.scanSurface(`SELECT target, method, path, COALESCE(last,''), COALESCE(ts,''),
-		COALESCE(class,''), COALESCE(source,''), COALESCE(has_body,0), COALESCE(needs_auth,0),
-		COALESCE(reach_low,0), COALESCE(contract,''), COALESCE(attempts,0), COALESCE(captured,0)
-		FROM project_surface WHERE target=? ORDER BY path, method`, target)
+	return s.scanSurface(`SELECT `+surfaceSelectCols+` FROM project_surface WHERE target=? ORDER BY path, method`, target)
 }
+
+// surfaceSelectCols is the project_surface projection shared by ListSurface and QueryEndpoints; its
+// column order MUST match scanSurface's Scan. Every nullable column is COALESCEd so a row created
+// with only a contract (NULL last) does not error the whole query.
+const surfaceSelectCols = `target, method, path, COALESCE(last,''), COALESCE(ts,''),
+	COALESCE(class,''), COALESCE(source,''), COALESCE(has_body,0), COALESCE(needs_auth,0),
+	COALESCE(reach_low,0), COALESCE(contract,''), COALESCE(attempts,0), COALESCE(captured,0)`
 
 // scanSurface runs a project_surface SELECT (whose column order must match below) and decodes each
 // row, including the structured contract JSON. COALESCE every nullable column: a row created with
@@ -158,13 +162,13 @@ func (s *Store) scanSurface(query string, args ...any) ([]SurfaceRow, error) {
 	for rows.Next() {
 		var r SurfaceRow
 		var ts, contract string
-		var hasBody, needsAuth, reachLow, cap int
+		var hasBody, needsAuth, reachLow, captured int
 		if err := rows.Scan(&r.Target, &r.Method, &r.Path, &r.Last, &ts, &r.Class, &r.Source,
-			&hasBody, &needsAuth, &reachLow, &contract, &r.Attempts, &cap); err != nil {
+			&hasBody, &needsAuth, &reachLow, &contract, &r.Attempts, &captured); err != nil {
 			return nil, err
 		}
 		r.TS, _ = time.Parse(time.RFC3339Nano, ts)
-		r.HasBody, r.NeedsAuth, r.ReachLow, r.Captured = hasBody != 0, needsAuth != 0, reachLow != 0, cap != 0
+		r.HasBody, r.NeedsAuth, r.ReachLow, r.Captured = hasBody != 0, needsAuth != 0, reachLow != 0, captured != 0
 		if contract != "" {
 			var c EndpointContract
 			if json.Unmarshal([]byte(contract), &c) == nil {
@@ -179,8 +183,8 @@ func (s *Store) scanSurface(query string, args ...any) ([]SurfaceRow, error) {
 // QueryOpts scopes a QueryEndpoints call so the model (via the recon tool) pulls a slice, never the
 // whole map.
 type QueryOpts struct {
-	Exercised bool   // include endpoints already worked (attempts>0 / found); default false = frontier only
-	AttemptCap int   // when Exercised is false, the attempts ceiling below which an endpoint is still "frontier" (0 -> 1)
+	Exercised  bool   // include endpoints already worked (attempts>0 / found); default false = frontier only
+	AttemptCap int    // when Exercised is false, the attempts ceiling below which an endpoint is still "frontier" (0 -> 1)
 	Class      string // restrict to one classifyEndpoint class
 	Limit      int    // cap the result (0 -> 20)
 }
@@ -189,9 +193,9 @@ type QueryOpts struct {
 // default only the not-yet-exhausted frontier (so the model advances instead of re-reading done
 // work), optionally filtered to one class, ordered easiest-first (not found, fewest attempts), capped.
 func (s *Store) QueryEndpoints(target string, o QueryOpts) ([]SurfaceRow, error) {
-	cap := o.AttemptCap
-	if cap <= 0 {
-		cap = 1
+	attemptCap := o.AttemptCap
+	if attemptCap <= 0 {
+		attemptCap = 1
 	}
 	limit := o.Limit
 	if limit <= 0 {
@@ -200,14 +204,11 @@ func (s *Store) QueryEndpoints(target string, o QueryOpts) ([]SurfaceRow, error)
 	if limit > 50 {
 		limit = 50 // the recon tool returns a SLICE, never the whole map — cap an over-eager request
 	}
-	q := `SELECT target, method, path, COALESCE(last,''), COALESCE(ts,''),
-		COALESCE(class,''), COALESCE(source,''), COALESCE(has_body,0), COALESCE(needs_auth,0),
-		COALESCE(reach_low,0), COALESCE(contract,''), COALESCE(attempts,0), COALESCE(captured,0)
-		FROM project_surface WHERE target=?`
+	q := `SELECT ` + surfaceSelectCols + ` FROM project_surface WHERE target=?`
 	args := []any{target}
 	if !o.Exercised {
 		q += ` AND COALESCE(captured,0)=0 AND COALESCE(attempts,0)<?`
-		args = append(args, cap)
+		args = append(args, attemptCap)
 	}
 	if o.Class != "" {
 		q += ` AND class=?`
@@ -361,14 +362,14 @@ func (s *Store) classOf(method, path string) string {
 // captured if a finding landed, and stamps the time — so a later run (or pass) advances the frontier
 // instead of re-attacking the same endpoints from the start.
 func (s *Store) MarkAttacked(target, method, path string, captured bool) error {
-	cap := 0
+	capturedInt := 0
 	if captured {
-		cap = 1
+		capturedInt = 1
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO project_surface (target, method, path, attempts, captured, last_attacked) VALUES (?,?,?,1,?,?)
 		 ON CONFLICT(target, method, path) DO UPDATE SET attempts=COALESCE(attempts,0)+1, captured=MAX(COALESCE(captured,0), excluded.captured), last_attacked=excluded.last_attacked`,
-		target, method, path, cap, time.Now().UTC().Format(time.RFC3339Nano))
+		target, method, path, capturedInt, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
