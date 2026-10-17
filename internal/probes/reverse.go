@@ -15,11 +15,12 @@ import (
 
 // APIShape is one reverse-engineered client→API call: how the app itself calls the endpoint.
 type APIShape struct {
-	Method string            // GET/POST/PUT/PATCH/DELETE (GET when the call omits method)
-	Path   string            // same-origin path, with a ${...} template segment normalized to {id}
-	Fields []string          // request-body field names, when the body is an inline object literal
-	Query  []string          // query-string parameter keys observed on the URL
-	Types  map[string]string // best-effort inferred type per field (string|number|bool); absent when unknown
+	Method  string            // GET/POST/PUT/PATCH/DELETE (GET when the call omits method)
+	Path    string            // same-origin path, with a ${...} template segment normalized to {id}
+	Fields  []string          // request-body field names, when the body is an inline object literal
+	Query   []string          // query-string parameter keys observed on the URL
+	Types   map[string]string // best-effort inferred type per field (string|number|bool); absent when unknown
+	Headers []string          // security-relevant request header names the app sends (Content-Type, CSRF, Authorization)
 }
 
 const bt = "`"

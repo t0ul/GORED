@@ -86,7 +86,7 @@ func (p *ActiveProbe) Probe(ctx context.Context, pages []string) ([]APIShape, er
 		}
 		if u, err := url.Parse(e.Request.URL); err == nil && u.Host == allowHost {
 			mu.Lock()
-			caps = append(caps, capturedReq{e.Request.Method, e.Request.URL, postDataOf(e.Request)})
+			caps = append(caps, capturedReq{e.Request.Method, e.Request.URL, postDataOf(e.Request), interestingHeaders(e.Request.Headers)})
 			mu.Unlock()
 		}
 	})
@@ -113,8 +113,26 @@ func (p *ActiveProbe) Probe(ctx context.Context, pages []string) ([]APIShape, er
 	return shapesFromCaptures(caps), nil
 }
 
-// capturedReq is one request the browser fired while being driven (method, full URL, body).
-type capturedReq struct{ method, url, body string }
+// capturedReq is one request the browser fired while being driven (method, full URL, body, and the
+// security-relevant request header names).
+type capturedReq struct {
+	method, url, body string
+	headers           []string
+}
+
+// interestingHeaders pulls the security-relevant request header NAMES (never values) out of a
+// captured request: the content type the endpoint expects, and any auth/CSRF header the app sends —
+// so a probe knows it must carry them or be rejected with a 400/403.
+func interestingHeaders(h network.Headers) []string {
+	var out []string
+	for k := range h {
+		lk := strings.ToLower(k)
+		if lk == "content-type" || lk == "authorization" || strings.Contains(lk, "csrf") || strings.Contains(lk, "xsrf") {
+			out = append(out, k)
+		}
+	}
+	return out
+}
 
 // postDataOf reconstructs a request body from the CDP post-data entries (each a base64 chunk). The
 // network.Request has no flat PostData field in this cdproto; the body is split into entries.
@@ -162,10 +180,11 @@ func shapesFromCaptures(caps []capturedReq) []APIShape {
 		if i, ok := idx[k]; ok {
 			out[i].Fields = mergeStrings(out[i].Fields, fields)
 			out[i].Query = mergeStrings(out[i].Query, query)
+			out[i].Headers = mergeStrings(out[i].Headers, c.headers)
 			continue
 		}
 		idx[k] = len(out)
-		out = append(out, APIShape{Method: method, Path: path, Fields: fields, Query: query})
+		out = append(out, APIShape{Method: method, Path: path, Fields: fields, Query: query, Headers: c.headers})
 	}
 	return out
 }

@@ -421,6 +421,10 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 	// unlinked ones (admin, backups, .git, .env, common /api/<word>), authenticated with the priv
 	// session cookie so it reaches the signed-in surface too. Fuzz the root and any /api prefix.
 	s.reconContentDisc(ctx, c, tg, sessions, egress, seenAPI)
+	// Reachability map: with the whole surface now discovered, record what anon/low/priv each get on
+	// every GET endpoint, so the exploit phase knows where BAC/IDOR is even possible and which identity
+	// reaches it (and the differential oracle gets a baseline). Runs last so it covers ffuf hits too.
+	s.reconAuthMap(ctx, tg, sessions, egress)
 }
 
 // reconAPIShapes reverse-engineers the API from the app's client JS: it GETs each discovered script
@@ -461,7 +465,7 @@ func shapeToContract(sh probes.APIShape) store.EndpointContract {
 	for _, q := range sh.Query {
 		fs = append(fs, store.FieldSpec{Name: q, Type: sh.Types[q], In: "query"})
 	}
-	return store.EndpointContract{Fields: fs}
+	return store.EndpointContract{Fields: fs, Headers: sh.Headers}
 }
 
 // reconActiveProbe drives the mapped HTML pages in a real browser (as the priv identity), submits
@@ -537,6 +541,68 @@ func endpointToContract(ep ingest.APIEndpoint) store.EndpointContract {
 func looksJSONObject(b []byte) bool {
 	b = bytes.TrimSpace(b)
 	return len(b) > 0 && b[0] == '{'
+}
+
+// authMapCap bounds how many GET endpoints the reachability probe touches, so a huge surface cannot
+// turn recon into a long scan.
+const authMapCap = 40
+
+// reconAuthMap records, per GET endpoint, the status each identity (anon/low/priv) receives — the
+// reachability baseline the exploit phase and the differential oracle read. GET only (no mutation),
+// bounded, egress-gated. priv/low reuse the jar the recon login filled; anon is cookieless.
+func (s *Server) reconAuthMap(ctx context.Context, tg store.Target, sessions *tools.Sessions, egress *tools.Egress) {
+	rows, err := s.store.ListSurface(tg.Name)
+	if err != nil {
+		return
+	}
+	n := 0
+	for _, r := range rows {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.Path, "/") {
+			continue
+		}
+		if n >= authMapCap {
+			break
+		}
+		n++
+		auth := map[string]int{}
+		for _, id := range []string{"anon", "low", "priv"} {
+			if st, ok := s.authProbe(ctx, tg.Base, r.Path, sessions, id, egress); ok {
+				auth[id] = st
+			}
+		}
+		if len(auth) > 0 {
+			_ = s.store.SaveContract(tg.Name, http.MethodGet, r.Path, "active", store.EndpointContract{Auth: auth})
+		}
+	}
+}
+
+// authProbe GETs path as the named identity and returns its HTTP status (ok=false on egress denial
+// or transport error). Redirects are NOT followed, so a 302 to a login page reads as the auth gate
+// (302) rather than the 200 of the page it lands on. "anon" is cookieless; low/priv use the login jar.
+func (s *Server) authProbe(ctx context.Context, base, path string, sessions *tools.Sessions, id string, egress *tools.Egress) (int, bool) {
+	raw := strings.TrimRight(base, "/") + path
+	if !egress.Allowed(raw) {
+		return 0, false
+	}
+	var jar http.CookieJar
+	if id != "anon" {
+		jar = sessions.Client(id).Jar // the priv/low cookies the recon login established
+	}
+	client := &http.Client{
+		Timeout:       8 * time.Second,
+		Jar:           jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return 0, false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, false
+	}
+	resp.Body.Close()
+	return resp.StatusCode, true
 }
 
 // reconContentDisc forced-browses the target for unlinked endpoints (ffuf), carrying the priv
