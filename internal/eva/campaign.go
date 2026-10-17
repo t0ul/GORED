@@ -1018,6 +1018,32 @@ func toolNames(hint string) []string {
 	return out
 }
 
+// primaryTool picks the best FIRST tool to few-shot for an endpoint: normally the class hint's first
+// tool, but refined by path signal where one class spans sub-types — an "auth" path that is a
+// register / sign-up / password-reset is a weak-password target, not an injection target, so the
+// example should point at password_policy rather than the class's default (nosqli).
+func primaryTool(ep rankedEndpoint) string {
+	names := toolNames(ep.Tool)
+	if len(names) == 0 {
+		return ""
+	}
+	if ep.Class == "auth" {
+		lp := strings.ToLower(ep.Path)
+		if strings.Contains(lp, "register") || strings.Contains(lp, "signup") || strings.Contains(lp, "sign-up") || strings.Contains(lp, "password") || strings.Contains(lp, "reset") {
+			for _, n := range names {
+				if n == "password_policy" {
+					return n
+				}
+			}
+		}
+	}
+	return names[0]
+}
+
+// examplePath makes a templated path runnable in a few-shot example by filling a concrete id, so a
+// weak model copies `/api/tickets/1` rather than sending the literal `{id}`.
+func examplePath(p string) string { return strings.ReplaceAll(p, "{id}", "1") }
+
 func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are an authorized red-team agent. The app at %s is ALREADY MAPPED. Attack ONLY the one endpoint below with the tool(s) you have — do not look for other paths.\n", tg.Base)
@@ -1038,8 +1064,8 @@ func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string
 	// Few-shot: show the exact first call for this endpoint's primary tool, so a weak model imitates
 	// the right call instead of casting about. The tool defaults the rest (method, body) from the
 	// contract; the model adapts from the result.
-	if names := toolNames(ep.Tool); len(names) > 0 {
-		fmt.Fprintf(&b, "\nStart with this call, then read the result and adapt: %s {\"path\":%q}", names[0], ep.Path)
+	if prim := primaryTool(ep); prim != "" {
+		fmt.Fprintf(&b, "\nStart with this call, then read the result and adapt: %s {\"path\":%q}", prim, examplePath(ep.Path))
 	}
 	if (ep.Class == "ingest" || ep.Class == "upload") && len(renderPages) > 0 {
 		fmt.Fprintf(&b, "\nRender pages (where stored data is shown — pass these to stored_xss as \"render\"): %s", strings.Join(renderPages, ", "))
@@ -1055,7 +1081,7 @@ func exploitHint(ep rankedEndpoint) string {
 	case "idor":
 		return "This is an object/collection addressed by id. Read your own record, then request OTHER ids (adjacent numbers, and round numbers like 100/1000) with api_request; a record you do not own served without an ownership check is the finding. The bola tool automates the comparison."
 	case "admin":
-		return "This is an admin / function-level path. With the bola tool (or http_request as session:\"low\" vs session:\"priv\" on the same path), test whether the low-privilege identity can reach it; a low identity receiving privileged data or function is the finding."
+		return "This is an admin / function-level path. Use the bola tool to test whether the low-privilege identity can reach it; a low identity receiving privileged data or function is the finding."
 	case "auth":
 		return "This is an auth endpoint. Try the nosqli tool for operator-injection authentication bypass, or jwt_forge on a token the app issued and replay the escalated token on a protected path. On a login/sign-in path, throttle_probe checks for a missing rate-limit/lockout; on a register/sign-up path, password_policy checks whether a weak password is accepted."
 	case "upload", "ingest":
