@@ -92,7 +92,7 @@ func formatEndpointLine(r store.SurfaceRow) string {
 		}
 	}
 	fmt.Fprintf(&sb, "  tried:%d", r.Attempts)
-	if r.Captured {
+	if r.Found {
 		sb.WriteString(" [found]")
 	}
 	return sb.String()

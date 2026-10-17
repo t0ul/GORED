@@ -24,22 +24,22 @@ func (s *Server) campaignReportMD(w http.ResponseWriter, r *http.Request) {
 	if rep.Elapsed != "" {
 		fmt.Fprintf(&b, " · %s", rep.Elapsed)
 	}
-	fmt.Fprintf(&b, "\n\nTargets: %d · Captures: %d · Findings: %d · Paths touched: %d\n\n",
-		len(rep.Targets), rep.TotalCaptures, rep.TotalFinds, rep.TotalPaths)
+	fmt.Fprintf(&b, "\n\nTargets: %d · Findings: %d · Candidates: %d · Paths touched: %d\n\n",
+		len(rep.Targets), rep.TotalFindings, rep.TotalFinds, rep.TotalPaths)
 	for _, t := range rep.Targets {
-		verdict := "no capture"
-		if t.Captures > 0 {
-			verdict = fmt.Sprintf("%d CAPTURED", t.Captures)
+		verdict := "nothing found"
+		if t.Findings > 0 {
+			verdict = fmt.Sprintf("%d FOUND", t.Findings)
 		}
 		fmt.Fprintf(&b, "## %s (%s) — %s\n\n", t.Name, t.Base, verdict)
-		fmt.Fprintf(&b, "Stages: %s · Paths: %d · Findings: %d · Sorties: %d\n\n",
+		fmt.Fprintf(&b, "Stages: %s · Paths: %d · Candidates: %d · Sorties: %d\n\n",
 			strings.Join(t.Stages, ", "), t.PathCount, t.FindCount, len(t.Children))
 		for _, ch := range t.Children {
-			capTag := ""
-			if ch.Captured {
-				capTag = " — CAPTURED"
+			foundTag := ""
+			if ch.Found {
+				foundTag = " — FOUND"
 			}
-			fmt.Fprintf(&b, "### %s [%s]%s\n\n", ch.Stage, ch.Status, capTag)
+			fmt.Fprintf(&b, "### %s [%s]%s\n\n", ch.Stage, ch.Status, foundTag)
 			fmt.Fprintf(&b, "%d tool calls", ch.ToolCalls)
 			if len(ch.Tools) > 0 {
 				fmt.Fprintf(&b, " (%s)", strings.Join(ch.Tools, ", "))

@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS project_surface (
   reach_low     INTEGER DEFAULT 0, -- derived: a low-privilege identity gets a 2xx (a BAC/IDOR candidate)
   contract      TEXT,              -- JSON EndpointContract: typed fields, required flags, query/path params, headers, per-identity auth
   attempts      INTEGER DEFAULT 0, -- exploit frontier: how many times the exploit phase has worked this endpoint (so later passes advance, not restart)
-  captured      INTEGER DEFAULT 0, -- 1 once a finding landed here (never re-attacked)
+  found         INTEGER DEFAULT 0, -- 1 once a finding landed here (never re-attacked)
   last_attacked TEXT,
   PRIMARY KEY (target, method, path)
 );
