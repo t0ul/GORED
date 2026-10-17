@@ -105,11 +105,15 @@ CREATE TABLE IF NOT EXISTS campaigns (
   pass    INTEGER
 );
 CREATE TABLE IF NOT EXISTS project_surface (
-  target TEXT NOT NULL,
-  method TEXT NOT NULL,
-  path   TEXT NOT NULL,
-  last   TEXT,
-  ts     TEXT,
+  target        TEXT NOT NULL,
+  method        TEXT NOT NULL,
+  path          TEXT NOT NULL,
+  last          TEXT,
+  ts            TEXT,
+  shape         TEXT,              -- reverse-engineered request body shape (fields=…); its own column so a crawl/ffuf label never clobbers it
+  attempts      INTEGER DEFAULT 0, -- how many times the exploit phase has worked this endpoint (so later passes advance the frontier, not restart)
+  captured      INTEGER DEFAULT 0, -- 1 once a finding landed here (never re-attacked)
+  last_attacked TEXT,
   PRIMARY KEY (target, method, path)
 );
 CREATE INDEX IF NOT EXISTS idx_psurface_target ON project_surface(target);
@@ -164,6 +168,12 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE targets ADD COLUMN zap_report TEXT`)
 	_, _ = db.Exec(`ALTER TABLE campaigns ADD COLUMN loop INTEGER`)
 	_, _ = db.Exec(`ALTER TABLE campaigns ADD COLUMN pass INTEGER`)
+	// Per-endpoint durable state: the reverse-engineered body shape, and the exploit-progress counters
+	// so a later run picks up the frontier instead of restarting from the first endpoint every pass.
+	_, _ = db.Exec(`ALTER TABLE project_surface ADD COLUMN shape TEXT`)
+	_, _ = db.Exec(`ALTER TABLE project_surface ADD COLUMN attempts INTEGER DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE project_surface ADD COLUMN captured INTEGER DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE project_surface ADD COLUMN last_attacked TEXT`)
 	return &Store{db: db}, nil
 }
 

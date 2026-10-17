@@ -383,6 +383,7 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 	discover := probes.NewDiscoverTool(tg.Base, egress)
 	discover.Sessions = sessions
 	seenAPI := false
+	jsPaths := map[string]bool{}
 	for _, id := range reconIdentities(tg) {
 		out, err := discover.Call(ctx, map[string]any{"path": "/", "session": id})
 		if err != nil {
@@ -397,12 +398,74 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 			if strings.HasPrefix(p, "/api") {
 				seenAPI = true
 			}
+			if strings.HasSuffix(strings.ToLower(p), ".js") {
+				jsPaths[p] = true
+			}
 		}
 	}
+	// Reverse-engineer the API from the app's OWN client code: fetch each discovered script and record
+	// the method + request-body shape of every fetch/XHR it makes, so the exploit phase sends a body
+	// that matches instead of guessing. Pure recon of the app's JS — no app-specific strings.
+	s.reconAPIShapes(ctx, tg, sessions, egress, jsPaths)
+	// Active probing (dynamic reverse-engineering): drive the mapped HTML pages in a real browser,
+	// submit their forms and fire their htmx/fetch triggers, and record the REAL requests — covers
+	// forms/htmx/axios that static JS mining cannot see. It submits, so it is for local throwaway
+	// targets; containment still blocks off-target hosts.
+	s.reconActiveProbe(ctx, tg, sessions, egress)
 	// Content discovery (ffuf fusion): the crawl only finds LINKED paths, so forced-browse the common
 	// unlinked ones (admin, backups, .git, .env, common /api/<word>), authenticated with the priv
 	// session cookie so it reaches the signed-in surface too. Fuzz the root and any /api prefix.
 	s.reconContentDisc(ctx, c, tg, sessions, egress, seenAPI)
+}
+
+// reconAPIShapes reverse-engineers the API from the app's client JS: it GETs each discovered script
+// (as the privileged identity) and records, for every fetch/XHR it finds, the endpoint's method and
+// body field names into project memory — so a later write/stored-XSS probe can build a body in the
+// shape the endpoint actually wants. Best-effort, read-only, egress-gated.
+func (s *Server) reconAPIShapes(ctx context.Context, tg store.Target, sessions *tools.Sessions, egress *tools.Egress, jsPaths map[string]bool) {
+	client := sessions.Client("priv") // authed jar; an empty jar just fetches the public scripts
+	for jp := range jsPaths {
+		raw := strings.TrimRight(tg.Base, "/") + jp
+		if !egress.Allowed(raw) {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+		resp.Body.Close()
+		for _, sh := range probes.ReverseAPIShapes(string(body)) {
+			_ = s.store.SaveShape(tg.Name, sh.Method, sh.Path, strings.Join(sh.Fields, ","))
+		}
+	}
+}
+
+// reconActiveProbe drives the mapped HTML pages in a real browser (as the priv identity), submits
+// their forms / fires their htmx+fetch triggers, and records the real request shapes the app sends —
+// framework-agnostic reverse-engineering from traffic. Best-effort (no Chrome = no-op); bounded to
+// the HTML pages the crawl found. It mutates (it submits), so it is for the local throwaway target.
+func (s *Server) reconActiveProbe(ctx context.Context, tg store.Target, sessions *tools.Sessions, egress *tools.Egress) {
+	rows, err := s.store.ListSurface(tg.Name)
+	if err != nil {
+		return
+	}
+	pages := htmlRenderPages(rows)
+	if len(pages) == 0 {
+		pages = []string{"/"}
+	}
+	ap := &probes.ActiveProbe{Base: tg.Base, Egress: egress, Sessions: sessions, Session: "priv"}
+	shapes, err := ap.Probe(ctx, pages)
+	if err != nil {
+		return
+	}
+	for _, sh := range shapes {
+		_ = s.store.SaveShape(tg.Name, sh.Method, sh.Path, strings.Join(sh.Fields, ","))
+	}
 }
 
 // reconContentDisc forced-browses the target for unlinked endpoints (ffuf), carrying the priv
@@ -672,6 +735,10 @@ done:
 // large surface cannot spawn an unbounded number of model runs in one pass (later passes re-walk).
 const exploitEndpointCap = 12
 
+// exploitAttemptCap bounds how many times a looping campaign re-works one endpoint that never yields
+// a finding, so the loop advances the frontier instead of grinding the same endpoints every pass.
+const exploitAttemptCap = 2
+
 // endpointPhase reports whether a stage attacks the mapped surface endpoint-by-endpoint, so the
 // scheduler decomposes it into one focused run per endpoint instead of a single whole-surface run.
 func endpointPhase(stage string) bool { return stage == "apiexploit" }
@@ -729,18 +796,20 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		return false
 	}
 	eps, _ := prioritizedEndpoints(rows)
-	if !appsweep.BolaEnabled() {
-		// bola is the hardest class and false-positives on shared resources, so unless opted in it is
-		// out of the loop: drop the idor/admin endpoints it owns so they are not even routed.
-		kept := eps[:0]
-		for _, e := range eps {
-			if e.Class == "idor" || e.Class == "admin" {
-				continue
-			}
-			kept = append(kept, e)
+	// Work the FRONTIER, not the start: skip endpoints already captured, and ones already worked
+	// exploitAttemptCap times with nothing, so a looping campaign advances through the surface instead
+	// of re-attacking the first endpoints every pass. bola's classes stay out unless opted in.
+	kept := eps[:0]
+	for _, e := range eps {
+		if e.Captured || e.Attempts >= exploitAttemptCap {
+			continue
 		}
-		eps = kept
+		if !appsweep.BolaEnabled() && (e.Class == "idor" || e.Class == "admin") {
+			continue
+		}
+		kept = append(kept, e)
 	}
+	eps = kept
 	eps = diverseEndpoints(eps, exploitEndpointCap) // spread across classes so one class can't eat the cap
 	renderPages := htmlRenderPages(rows)            // where a stored payload could execute (for the ingest/upload class)
 	for _, ep := range eps {
@@ -759,6 +828,25 @@ func (s *Server) runExploitPhase(ctx context.Context, c *campaign, tg store.Targ
 		rn := s.launchCampaignRunInst(c, tg, stage, slot, exploitInstruction(tg, ep, renderPages))
 		s.execute(rn, rn.flags, stage)
 		s.recordProjectMemory(tg.Name, rn)
+		// Mark the endpoint worked (and captured if a finding landed) so the next pass does not redo it
+		// — but ONLY if the run actually executed (made a tool call). A run that died at boot/context
+		// with zero tool calls did not attack the endpoint, so it must not burn its attempt budget
+		// (else the frontier would skip endpoints that were never really tried).
+		events, _, _, _, breached := parseRunTrace(rn.Trace)
+		if runMadeToolCall(events) {
+			_ = s.store.MarkAttacked(tg.Name, ep.Method, ep.Path, breached)
+		}
+	}
+	return false
+}
+
+// runMadeToolCall reports whether a run reached the loop and issued at least one tool call — the
+// signal that the endpoint was actually worked (vs a run that failed to boot or died immediately).
+func runMadeToolCall(events []traceEvt) bool {
+	for _, e := range events {
+		if e.Span == "tool" && e.Event == "tool_call" {
+			return true
+		}
 	}
 	return false
 }
@@ -774,6 +862,9 @@ func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string
 	}
 	fmt.Fprintf(&b, "\nAttack EXACTLY this one endpoint:\n  %s %s   [%s — %s]\n\n", ep.Method, ep.Path, ep.Class, ep.Why)
 	b.WriteString(exploitHint(ep))
+	if ep.Shape != "" {
+		fmt.Fprintf(&b, "\nThe app's own client calls this endpoint with body fields: %s — build your request body with those fields (object or array as the endpoint requires).", ep.Shape)
+	}
 	if (ep.Class == "ingest" || ep.Class == "upload") && len(renderPages) > 0 {
 		fmt.Fprintf(&b, "\nRender pages (where stored data is shown — pass these to stored_xss as \"render\"): %s", strings.Join(renderPages, ", "))
 	}
