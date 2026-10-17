@@ -66,6 +66,11 @@ func NewServer(traceDir string, st *store.Store, maxConc int) *Server {
 		slots <- i
 	}
 	s := &Server{runs: map[string]*run{}, campaigns: map[string]*campaign{}, traces: traceDir, store: st, slots: slots}
+	if st != nil {
+		// Let the store tag each surface row with its attack class (store stays free of an eva import;
+		// classifyEndpoint lives here). The recon tool and ranker filter/sort on this column.
+		st.Classify = func(method, path string) string { return classifyEndpoint(method, path).class }
+	}
 	s.loadFromStore()
 	s.loadCampaigns()
 	if st != nil {
@@ -219,7 +224,11 @@ func (s *Server) execute(rn *run, f *bench.Flags, stage string) {
 	// model's map is its own (not scraped from the trace, not co-mingled). Campaign runs carry a
 	// target name; an interactive sortie without one simply has no recorder.
 	if s.store != nil && rn.targetName != "" {
-		opts = append(opts, appsweep.WithExtraTools(surfaceSaveTool{store: s.store, target: rn.targetName, model: rn.Model, runID: rn.ID}))
+		opts = append(opts, appsweep.WithExtraTools(
+			surfaceSaveTool{store: s.store, target: rn.targetName, model: rn.Model, runID: rn.ID},
+			// the read side: let the model pull the scoped frontier + each endpoint's contract on demand
+			reconTool{store: s.store, target: rn.targetName, attemptCap: exploitAttemptCap},
+		))
 	}
 
 	results, err := appsweep.Run(ctx, f, stage, opts...)

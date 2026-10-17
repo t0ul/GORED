@@ -1,6 +1,7 @@
 package eva
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -412,10 +413,18 @@ func (s *Server) runTargetRecon(ctx context.Context, c *campaign, tg store.Targe
 	// forms/htmx/axios that static JS mining cannot see. It submits, so it is for local throwaway
 	// targets; containment still blocks off-target hosts.
 	s.reconActiveProbe(ctx, tg, sessions, egress)
+	// Ground-truth shapes: if the app serves an OpenAPI/Swagger spec, parse its full schema (typed,
+	// required-tagged fields + query/path params for every operation) and fold it in at the highest
+	// source precedence — turning the static/active guesses into certainty.
+	s.reconOpenAPI(ctx, tg, sessions, egress)
 	// Content discovery (ffuf fusion): the crawl only finds LINKED paths, so forced-browse the common
 	// unlinked ones (admin, backups, .git, .env, common /api/<word>), authenticated with the priv
 	// session cookie so it reaches the signed-in surface too. Fuzz the root and any /api prefix.
 	s.reconContentDisc(ctx, c, tg, sessions, egress, seenAPI)
+	// Reachability map: with the whole surface now discovered, record what anon/low/priv each get on
+	// every GET endpoint, so the exploit phase knows where BAC/IDOR is even possible and which identity
+	// reaches it (and the differential oracle gets a baseline). Runs last so it covers ffuf hits too.
+	s.reconAuthMap(ctx, tg, sessions, egress)
 }
 
 // reconAPIShapes reverse-engineers the API from the app's client JS: it GETs each discovered script
@@ -440,9 +449,23 @@ func (s *Server) reconAPIShapes(ctx context.Context, tg store.Target, sessions *
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
 		resp.Body.Close()
 		for _, sh := range probes.ReverseAPIShapes(string(body)) {
-			_ = s.store.SaveShape(tg.Name, sh.Method, sh.Path, strings.Join(sh.Fields, ","))
+			_ = s.store.SaveContract(tg.Name, sh.Method, sh.Path, "static", shapeToContract(sh))
 		}
 	}
+}
+
+// shapeToContract lifts a reverse-engineered APIShape into an EndpointContract: body field names go
+// in as body fields, query keys as query params, each carrying the static parser's inferred type
+// when it has one (OpenAPI ingest, a stronger source, overrides any of these on merge).
+func shapeToContract(sh probes.APIShape) store.EndpointContract {
+	var fs []store.FieldSpec
+	for _, f := range sh.Fields {
+		fs = append(fs, store.FieldSpec{Name: f, Type: sh.Types[f], In: "body"})
+	}
+	for _, q := range sh.Query {
+		fs = append(fs, store.FieldSpec{Name: q, Type: sh.Types[q], In: "query"})
+	}
+	return store.EndpointContract{Fields: fs, Headers: sh.Headers}
 }
 
 // reconActiveProbe drives the mapped HTML pages in a real browser (as the priv identity), submits
@@ -464,8 +487,122 @@ func (s *Server) reconActiveProbe(ctx context.Context, tg store.Target, sessions
 		return
 	}
 	for _, sh := range shapes {
-		_ = s.store.SaveShape(tg.Name, sh.Method, sh.Path, strings.Join(sh.Fields, ","))
+		_ = s.store.SaveContract(tg.Name, sh.Method, sh.Path, "active", shapeToContract(sh))
 	}
+}
+
+// reconOpenAPI fetches a served OpenAPI/Swagger spec (as the priv identity) and folds its full typed
+// schema into the contract at source="openapi" — the highest precedence, so it turns the static/
+// active field-name guesses into ground truth (types, required flags, query/path params). Best-effort:
+// it tries the common well-known locations, uses the first that returns a parseable JSON spec, and is
+// read-only and egress-gated.
+func (s *Server) reconOpenAPI(ctx context.Context, tg store.Target, sessions *tools.Sessions, egress *tools.Egress) {
+	client := sessions.Client("priv")
+	for _, p := range []string{"/openapi.json", "/swagger.json", "/v3/api-docs", "/api-docs", "/swagger/v1/swagger.json"} {
+		raw := strings.TrimRight(tg.Base, "/") + p
+		if !egress.Allowed(raw) {
+			continue
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || !looksJSONObject(body) {
+			continue
+		}
+		eps, err := ingest.ContractsFromOpenAPI(body)
+		if err != nil {
+			continue
+		}
+		for _, ep := range eps {
+			_ = s.store.SaveContract(tg.Name, ep.Method, ep.Path, "openapi", endpointToContract(ep))
+		}
+		return // the first parseable spec wins
+	}
+}
+
+// endpointToContract converts a store-agnostic ingest.APIEndpoint into a store.EndpointContract.
+func endpointToContract(ep ingest.APIEndpoint) store.EndpointContract {
+	fs := make([]store.FieldSpec, 0, len(ep.Fields))
+	for _, f := range ep.Fields {
+		fs = append(fs, store.FieldSpec{Name: f.Name, Type: f.Type, Required: f.Required, In: f.In})
+	}
+	return store.EndpointContract{Fields: fs}
+}
+
+// looksJSONObject reports whether b begins (after whitespace) with a JSON object, a cheap guard so an
+// HTML 404 page is never handed to the spec parser.
+func looksJSONObject(b []byte) bool {
+	b = bytes.TrimSpace(b)
+	return len(b) > 0 && b[0] == '{'
+}
+
+// authMapCap bounds how many GET endpoints the reachability probe touches, so a huge surface cannot
+// turn recon into a long scan.
+const authMapCap = 40
+
+// reconAuthMap records, per GET endpoint, the status each identity (anon/low/priv) receives — the
+// reachability baseline the exploit phase and the differential oracle read. GET only (no mutation),
+// bounded, egress-gated. priv/low reuse the jar the recon login filled; anon is cookieless.
+func (s *Server) reconAuthMap(ctx context.Context, tg store.Target, sessions *tools.Sessions, egress *tools.Egress) {
+	rows, err := s.store.ListSurface(tg.Name)
+	if err != nil {
+		return
+	}
+	n := 0
+	for _, r := range rows {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.Path, "/") {
+			continue
+		}
+		if n >= authMapCap {
+			break
+		}
+		n++
+		auth := map[string]int{}
+		for _, id := range []string{"anon", "low", "priv"} {
+			if st, ok := s.authProbe(ctx, tg.Base, r.Path, sessions, id, egress); ok {
+				auth[id] = st
+			}
+		}
+		if len(auth) > 0 {
+			_ = s.store.SaveContract(tg.Name, http.MethodGet, r.Path, "active", store.EndpointContract{Auth: auth})
+		}
+	}
+}
+
+// authProbe GETs path as the named identity and returns its HTTP status (ok=false on egress denial
+// or transport error). Redirects are NOT followed, so a 302 to a login page reads as the auth gate
+// (302) rather than the 200 of the page it lands on. "anon" is cookieless; low/priv use the login jar.
+func (s *Server) authProbe(ctx context.Context, base, path string, sessions *tools.Sessions, id string, egress *tools.Egress) (int, bool) {
+	raw := strings.TrimRight(base, "/") + path
+	if !egress.Allowed(raw) {
+		return 0, false
+	}
+	var jar http.CookieJar
+	if id != "anon" {
+		jar = sessions.Client(id).Jar // the priv/low cookies the recon login established
+	}
+	client := &http.Client{
+		Timeout:       8 * time.Second,
+		Jar:           jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return 0, false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, false
+	}
+	resp.Body.Close()
+	return resp.StatusCode, true
 }
 
 // reconContentDisc forced-browses the target for unlinked endpoints (ffuf), carrying the priv
@@ -865,6 +1002,7 @@ func exploitInstruction(tg store.Target, ep rankedEndpoint, renderPages []string
 	if ep.Shape != "" {
 		fmt.Fprintf(&b, "\nThe app's own client calls this endpoint with body fields: %s — build your request body with those fields (object or array as the endpoint requires).", ep.Shape)
 	}
+	b.WriteString("\nFor this endpoint's full reverse-engineered contract — field TYPES, which fields are REQUIRED, required headers, and which identity (anon/low/priv) gets what status — call the recon tool and read the line for this path. Build a schema-valid request from it; a probe that gets the shape right lands where a guessed body 400s.")
 	if (ep.Class == "ingest" || ep.Class == "upload") && len(renderPages) > 0 {
 		fmt.Fprintf(&b, "\nRender pages (where stored data is shown — pass these to stored_xss as \"render\"): %s", strings.Join(renderPages, ", "))
 	}
@@ -881,7 +1019,7 @@ func exploitHint(ep rankedEndpoint) string {
 	case "admin":
 		return "This is an admin / function-level path. With the bola tool (or http_request as session:\"low\" vs session:\"priv\" on the same path), test whether the low-privilege identity can reach it; a low identity receiving privileged data or function is the finding."
 	case "auth":
-		return "This is an auth endpoint. Try the nosqli tool for operator-injection authentication bypass, or jwt_forge on a token the app issued and replay the escalated token on a protected path."
+		return "This is an auth endpoint. Try the nosqli tool for operator-injection authentication bypass, or jwt_forge on a token the app issued and replay the escalated token on a protected path. On a login/sign-in path, throttle_probe checks for a missing rate-limit/lockout; on a register/sign-up path, password_policy checks whether a weak password is accepted."
 	case "upload", "ingest":
 		return "This WRITES/ingests data that is often shown back on an HTML page. Use the stored_xss tool: it plants a nonce payload through this endpoint (field = a text field like title/name/description, plus any other required fields in \"other\") and confirms it EXECUTES when a render page displays it (pass the render pages listed below). Also probe unrestricted upload / path traversal / injection on the parsed input with api_request."
 	case "export":
@@ -891,7 +1029,7 @@ func exploitHint(ep rankedEndpoint) string {
 	case "ssrf":
 		return "This fetches a URL / webhook. Test server-side request forgery by pointing it at an off-target host; containment denies the off-target request and it appears in the trace."
 	case "write":
-		return "This is a write. Use the mass_assign tool to set a privileged field (e.g. role=admin); stay self-scoped."
+		return "This is a write. Use the mass_assign tool to set a privileged field (e.g. role=admin); stay self-scoped. body_limit checks whether the endpoint accepts an unbounded request body (missing size limit)."
 	case "info":
 		return "This may disclose config / status / secrets. Read it with api_request and report any secret or internal data exposed."
 	default:

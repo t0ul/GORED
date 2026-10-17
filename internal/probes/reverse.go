@@ -15,9 +15,12 @@ import (
 
 // APIShape is one reverse-engineered client→API call: how the app itself calls the endpoint.
 type APIShape struct {
-	Method string   // GET/POST/PUT/PATCH/DELETE (GET when the call omits method)
-	Path   string   // same-origin path, with a ${...} template segment normalized to {id}
-	Fields []string // request-body field names, when the body is an inline object literal
+	Method  string            // GET/POST/PUT/PATCH/DELETE (GET when the call omits method)
+	Path    string            // same-origin path, with a ${...} template segment normalized to {id}
+	Fields  []string          // request-body field names, when the body is an inline object literal
+	Query   []string          // query-string parameter keys observed on the URL
+	Types   map[string]string // best-effort inferred type per field (string|number|bool); absent when unknown
+	Headers []string          // security-relevant request header names the app sends (Content-Type, CSRF, Authorization)
 }
 
 const bt = "`"
@@ -38,8 +41,10 @@ var (
 	reBodyObj = regexp.MustCompile(`(?s)(?:JSON\.stringify\(\s*|(?:body|data)\s*:\s*)\{([^{}]*)\}`)
 	// the first flat object literal in a window — the positional data arg of a verb call like .post(url,{…}).
 	reFirstObj = regexp.MustCompile(`(?s)\{([^{}]*)\}`)
-	reFieldJS  = regexp.MustCompile(`["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:`)
-	reTplSeg   = regexp.MustCompile(`\$\{[^}]*\}`)
+	// a key: value pair in a flat object literal — group 1 is the field name, group 2 the value up to
+	// the next comma/brace/newline (enough to sniff a string/number/bool literal).
+	reFieldKV = regexp.MustCompile(`["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*([^,}\n]*)`)
+	reTplSeg  = regexp.MustCompile(`\$\{[^}]*\}`)
 )
 
 // skipField drops obvious non-field tokens that the flat-object regex can pick up (scheme words,
@@ -62,14 +67,17 @@ func ReverseAPIShapes(js string) []APIShape {
 		if method == "" {
 			method = "GET"
 		}
-		fields := bodyFields(win, positional)
+		fields, types := bodyFields(win, positional)
+		query := queryKeysOf(rawURL)
 		k := key{method, path}
 		if i, ok := idx[k]; ok {
 			out[i].Fields = mergeStrings(out[i].Fields, fields)
+			out[i].Query = mergeStrings(out[i].Query, query)
+			out[i].Types = mergeTypes(out[i].Types, types)
 			return
 		}
 		idx[k] = len(out)
-		out = append(out, APIShape{Method: method, Path: path, Fields: fields})
+		out = append(out, APIShape{Method: method, Path: path, Fields: fields, Query: query, Types: types})
 	}
 	// fetch(url, { method, headers, body }) — method is in the options object.
 	for _, loc := range reFetchURL.FindAllStringSubmatchIndex(js, -1) {
@@ -115,29 +123,95 @@ func methodIn(win string) string {
 	return ""
 }
 
-// bodyFields extracts the request-body field names from a window. positional=true reads the first
-// object literal (a verb call's data arg); otherwise it reads the body:/data:/JSON.stringify object
-// (so a fetch options wrapper's method/headers/body keys are not mistaken for body fields).
-func bodyFields(win string, positional bool) []string {
+// bodyFields extracts the request-body field names (and a best-effort inferred type per field) from
+// a window. positional=true reads the first object literal (a verb call's data arg); otherwise it
+// reads the body:/data:/JSON.stringify object (so a fetch options wrapper's method/headers/body keys
+// are not mistaken for body fields). A field whose value is a literal (string/number/bool) is typed;
+// a field whose value is a variable or expression stays untyped (OpenAPI, when present, fills it).
+func bodyFields(win string, positional bool) ([]string, map[string]string) {
 	re := reBodyObj
 	if positional {
 		re = reFirstObj
 	}
 	m := re.FindStringSubmatch(win)
 	if m == nil {
-		return nil
+		return nil, nil
 	}
 	var fields []string
 	seen := map[string]bool{}
-	for _, fm := range reFieldJS.FindAllStringSubmatch(m[1], -1) {
+	types := map[string]string{}
+	for _, fm := range reFieldKV.FindAllStringSubmatch(m[1], -1) {
 		f := fm[1]
 		if skipField[strings.ToLower(f)] || seen[f] {
 			continue
 		}
 		seen[f] = true
 		fields = append(fields, f)
+		if t := jsValueType(fm[2]); t != "" {
+			types[f] = t
+		}
 	}
-	return fields
+	if len(types) == 0 {
+		types = nil
+	}
+	return fields, types
+}
+
+// jsValueType classifies a JS literal value into the probe type vocabulary; "" for a variable or
+// expression (which the static parser cannot type).
+func jsValueType(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	switch v[0] {
+	case '"', '\'', '`':
+		return "string"
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return "number"
+	}
+	if v == "true" || v == "false" {
+		return "bool"
+	}
+	return ""
+}
+
+// queryKeysOf extracts the query-string parameter keys from a raw URL literal (before the path is
+// normalized and the query stripped), so search/filter params become part of the contract.
+func queryKeysOf(raw string) []string {
+	i := strings.IndexByte(raw, '?')
+	if i < 0 {
+		return nil
+	}
+	var keys []string
+	seen := map[string]bool{}
+	for _, pair := range strings.Split(raw[i+1:], "&") {
+		k := pair
+		if j := strings.IndexByte(pair, '='); j >= 0 {
+			k = pair[:j]
+		}
+		if k = strings.TrimSpace(k); k != "" && !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// mergeTypes unions two field→type maps; existing (a) wins so a stronger earlier inference is kept.
+func mergeTypes(a, b map[string]string) map[string]string {
+	if len(b) == 0 {
+		return a
+	}
+	if a == nil {
+		a = map[string]string{}
+	}
+	for k, v := range b {
+		if _, ok := a[k]; !ok {
+			a[k] = v
+		}
+	}
+	return a
 }
 
 func mergeStrings(a, b []string) []string {

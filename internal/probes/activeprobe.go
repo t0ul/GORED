@@ -51,6 +51,28 @@ const driveJS = `(() => {
   document.querySelectorAll('form').forEach(f=>{ try{ f.requestSubmit ? f.requestSubmit() : f.submit(); }catch(e){} });
 })();`
 
+// collectTypesJS returns {inputName: htmlType} for every named control on the page, so a field's
+// type can be recovered for a server-rendered form that has no OpenAPI spec and no typed JS literal
+// (the htmx / classic-form case the static and OpenAPI sources miss).
+const collectTypesJS = `(() => { const m={};
+  document.querySelectorAll('input,select,textarea').forEach(el=>{ const n=el.name||el.id; if(n && !(n in m)){ m[n]=(el.type||el.tagName||'').toLowerCase(); } });
+  return m; })()`
+
+// mapInputType maps an HTML control type to the probe type vocabulary ("" when it adds nothing).
+func mapInputType(ht string) string {
+	switch ht {
+	case "email":
+		return "email"
+	case "number", "range":
+		return "number"
+	case "checkbox", "radio":
+		return "bool"
+	case "password", "text", "search", "tel", "url", "textarea", "select-one", "select-multiple", "select", "":
+		return "string"
+	}
+	return ""
+}
+
 // Probe drives each page and returns the API shapes it observed the app fire. Best-effort: a page
 // that fails to load is skipped; the browser's own requests are the source of truth.
 func (p *ActiveProbe) Probe(ctx context.Context, pages []string) ([]APIShape, error) {
@@ -86,7 +108,7 @@ func (p *ActiveProbe) Probe(ctx context.Context, pages []string) ([]APIShape, er
 		}
 		if u, err := url.Parse(e.Request.URL); err == nil && u.Host == allowHost {
 			mu.Lock()
-			caps = append(caps, capturedReq{e.Request.Method, e.Request.URL, postDataOf(e.Request)})
+			caps = append(caps, capturedReq{e.Request.Method, e.Request.URL, postDataOf(e.Request), interestingHeaders(e.Request.Headers)})
 			mu.Unlock()
 		}
 	})
@@ -94,27 +116,56 @@ func (p *ActiveProbe) Probe(ctx context.Context, pages []string) ([]APIShape, er
 		return nil, err
 	}
 
+	inputTypes := map[string]string{}
 	for _, pg := range pages {
 		u := strings.TrimRight(p.Base, "/") + ensureLeadingSlash(pg)
 		if p.Egress == nil || !p.Egress.Allowed(u) {
 			continue
 		}
-		// Navigate, let it settle, drive the controls, let the fired requests land.
+		// Navigate, let it settle, read the control types BEFORE submitting (a form submit navigates
+		// away and the inputs are gone), then drive the controls and let the fired requests land.
+		var pageTypes map[string]string
 		_ = chromedp.Run(bctx,
 			chromedp.Navigate(u),
 			chromedp.Sleep(400*time.Millisecond),
+			chromedp.Evaluate(collectTypesJS, &pageTypes),
 			chromedp.Evaluate(driveJS, nil),
 			chromedp.Sleep(700*time.Millisecond),
 		)
+		for name, ht := range pageTypes { // merge first-seen control types into the run map
+			if _, ok := inputTypes[name]; !ok {
+				if t := mapInputType(ht); t != "" {
+					inputTypes[name] = t
+				}
+			}
+		}
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
-	return shapesFromCaptures(caps), nil
+	return shapesFromCaptures(caps, inputTypes), nil
 }
 
-// capturedReq is one request the browser fired while being driven (method, full URL, body).
-type capturedReq struct{ method, url, body string }
+// capturedReq is one request the browser fired while being driven (method, full URL, body, and the
+// security-relevant request header names).
+type capturedReq struct {
+	method, url, body string
+	headers           []string
+}
+
+// interestingHeaders pulls the security-relevant request header NAMES (never values) out of a
+// captured request: the content type the endpoint expects, and any auth/CSRF header the app sends —
+// so a probe knows it must carry them or be rejected with a 400/403.
+func interestingHeaders(h network.Headers) []string {
+	var out []string
+	for k := range h {
+		lk := strings.ToLower(k)
+		if lk == "content-type" || lk == "authorization" || strings.Contains(lk, "csrf") || strings.Contains(lk, "xsrf") {
+			out = append(out, k)
+		}
+	}
+	return out
+}
 
 // postDataOf reconstructs a request body from the CDP post-data entries (each a base64 chunk). The
 // network.Request has no flat PostData field in this cdproto; the body is split into entries.
@@ -136,7 +187,7 @@ func postDataOf(req *network.Request) string {
 // shapesFromCaptures turns observed requests into deduped API shapes: method, normalized path, and
 // the body field names parsed from a form-encoded or JSON body (and query keys for a GET with a
 // query). It drops the asset/navigation noise a page load makes.
-func shapesFromCaptures(caps []capturedReq) []APIShape {
+func shapesFromCaptures(caps []capturedReq, inputTypes map[string]string) []APIShape {
 	type key struct{ m, p string }
 	idx := map[key]int{}
 	var out []APIShape
@@ -154,18 +205,35 @@ func shapesFromCaptures(caps []capturedReq) []APIShape {
 			method = "GET"
 		}
 		fields := bodyFieldNames(c.body)
-		if method == "GET" && len(fields) == 0 {
-			for k := range u.Query() {
-				fields = append(fields, k)
-			}
+		var query []string
+		for k := range u.Query() {
+			query = append(query, k)
 		}
 		k := key{method, path}
 		if i, ok := idx[k]; ok {
 			out[i].Fields = mergeStrings(out[i].Fields, fields)
+			out[i].Query = mergeStrings(out[i].Query, query)
+			out[i].Headers = mergeStrings(out[i].Headers, c.headers)
 			continue
 		}
 		idx[k] = len(out)
-		out = append(out, APIShape{Method: method, Path: path, Fields: fields})
+		out = append(out, APIShape{Method: method, Path: path, Fields: fields, Query: query, Headers: c.headers})
+	}
+	// Type any captured field whose name matches a control the page declared (email/number/bool/
+	// string), so a server-rendered form without an OpenAPI spec still yields typed fields.
+	if len(inputTypes) > 0 {
+		for i := range out {
+			for _, name := range append(append([]string{}, out[i].Fields...), out[i].Query...) {
+				if t, ok := inputTypes[name]; ok {
+					if out[i].Types == nil {
+						out[i].Types = map[string]string{}
+					}
+					if _, typed := out[i].Types[name]; !typed {
+						out[i].Types[name] = t
+					}
+				}
+			}
+		}
 	}
 	return out
 }
