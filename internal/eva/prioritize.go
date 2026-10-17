@@ -43,7 +43,7 @@ func classifyEndpoint(method, path string) endpointClass {
 	}
 	switch {
 	case has("login", "signin", "sign-in", "/auth", "token", "register", "signup", "password", "reset", "activate", "session"):
-		return endpointClass{1, "auth", "nosqli / jwt_forge", "authn bypass (operator injection) or forge/replay a token", 2}
+		return endpointClass{1, "auth", "nosqli / jwt_forge / throttle_probe / password_policy", "authn bypass (operator injection) or forge/replay a token; missing login rate-limit; weak-password acceptance on register", 2}
 	case has("/admin", "krabmin", "administrator"):
 		return endpointClass{1, "admin", "bola", "function-level authz: can the low identity reach it?", 3}
 	case has("upload", "/images/"):
@@ -59,7 +59,7 @@ func classifyEndpoint(method, path string) endpointClass {
 	case has("fetch", "proxy", "webhook", "integration", "url="):
 		return endpointClass{3, "ssrf", "api_request", "server-side request forgery", 2}
 	case m == "POST" || m == "PUT" || m == "PATCH" || m == "DELETE":
-		return endpointClass{2, "write", "mass_assign", "mass assignment / broken-object-write (read-first; self-scoped)", 2}
+		return endpointClass{2, "write", "mass_assign / body_limit", "mass assignment / broken-object-write (read-first; self-scoped); unbounded request body", 2}
 	case reIDSeg.MatchString(path) || strings.HasPrefix(lp, "/api/"):
 		return endpointClass{1, "idor", "api_request / bola", "object-level authz: read your id, then enumerate others'", 3}
 	}
