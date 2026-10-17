@@ -98,6 +98,33 @@ func formatEndpointLine(r store.SurfaceRow) string {
 	return sb.String()
 }
 
+// contractBlock renders an endpoint's contract as an indented multi-line block for the focused
+// exploit prompt (body/query/path fields as name:type!, required headers, per-identity reachability).
+// Empty when there is no contract, so the caller can fall back to the legacy shape line.
+func contractBlock(c *store.EndpointContract) string {
+	if c == nil {
+		return ""
+	}
+	body, query, path := splitFieldsByIn(c.Fields)
+	var b strings.Builder
+	if s := fieldList(body); s != "" {
+		b.WriteString("\n  body: " + s)
+	}
+	if s := fieldList(query); s != "" {
+		b.WriteString("\n  query: " + s)
+	}
+	if s := fieldList(path); s != "" {
+		b.WriteString("\n  path: " + s)
+	}
+	if len(c.Headers) > 0 {
+		b.WriteString("\n  required headers: " + strings.Join(c.Headers, " "))
+	}
+	if a := authList(c.Auth); a != "" {
+		b.WriteString("\n  reachability: " + a)
+	}
+	return b.String()
+}
+
 func splitFieldsByIn(fs []store.FieldSpec) (body, query, path []store.FieldSpec) {
 	for _, f := range fs {
 		switch f.In {

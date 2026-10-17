@@ -79,10 +79,11 @@ type rankedEndpoint struct {
 	Method, Path     string
 	Class, Tool, Why string
 	Tier             int
-	Difficulty       int    // 1 easy .. 3 hard; the exploit phase works easiest-first
-	Shape            string // reverse-engineered request body fields, when known
-	Attempts         int    // times the exploit phase already worked this endpoint (frontier tracking)
-	Captured         bool   // a finding already landed here
+	Difficulty       int                     // 1 easy .. 3 hard; the exploit phase works easiest-first
+	Shape            string                  // reverse-engineered request body fields, when known
+	Contract         *store.EndpointContract // the full typed contract (types/required/headers/auth), when reconned
+	Attempts         int                     // times the exploit phase already worked this endpoint (frontier tracking)
+	Captured         bool                    // a finding already landed here
 }
 
 // prioritizedEndpoints classifies the mapped surface and returns the tiered endpoints, crown jewels
@@ -101,7 +102,7 @@ func prioritizedEndpoints(rows []store.SurfaceRow) (eps []rankedEndpoint, untier
 			untiered++
 			continue
 		}
-		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty, Shape: r.Shape(), Attempts: r.Attempts, Captured: r.Captured})
+		eps = append(eps, rankedEndpoint{Method: r.Method, Path: r.Path, Class: c.class, Tool: c.tool, Why: c.why, Tier: c.tier, Difficulty: c.difficulty, Shape: r.Shape(), Contract: r.Contract, Attempts: r.Attempts, Captured: r.Captured})
 	}
 	sort.SliceStable(eps, func(i, j int) bool {
 		if eps[i].Tier != eps[j].Tier {
