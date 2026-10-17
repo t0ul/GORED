@@ -54,6 +54,21 @@ const (
 	// with the repo can forge a token with role=admin. The hardened build replaces it with
 	// a strong per-process secret that is not in the source.
 	jwtDevSecret = "dev-signing-key-do-not-ship"
+
+	// maxLoginAttempts is the per-client-IP login-attempt ceiling the HARDENED build enforces
+	// (CWE-307 control). The vulnerable build counts nothing, so a credential-stuffing burst is
+	// never slowed — what the throttle_probe confirms.
+	maxLoginAttempts = 5
+
+	// maxWriteBody is the request-body-size cap the HARDENED build puts on writes (CWE-770
+	// control, via http.MaxBytesReader). The vulnerable build reads an unbounded body — what the
+	// body_limit probe confirms.
+	maxWriteBody = 1 << 20 // 1 MiB
+
+	// minPasswordLen is the password-strength floor the HARDENED build enforces on registration
+	// (CWE-521 control). The vulnerable build accepts any password — what the password_policy
+	// probe confirms.
+	minPasswordLen = 8
 )
 
 // ownerForSession maps a session header to the identity that holds it, or "" for an
@@ -101,6 +116,7 @@ type Server struct {
 	internalK string             // per-process secret header the fetch proxy injects
 	jwtSecret string             // HS256 signing secret: weak/in-source (vuln) or strong/per-process (hardened)
 	hardened  bool               // when true, the controls are wired and neither flag is reachable
+	loginHits map[string]int     // per-client-IP login-attempt counter; the hardened build throttles on it
 }
 
 // Option configures a demo target.
@@ -151,6 +167,7 @@ func New(opts ...Option) (*Server, error) {
 		profiles:  map[string]profile{},
 		users:     map[string]string{"alice": "correct-horse-battery", "admin": "s3cr3t-admin-" + mint()[:8]},
 		internalK: mint(),
+		loginHits: map[string]int{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -217,6 +234,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/memos/{id}", s.handleGetMemo)
 	s.mux.HandleFunc("POST /api/memos", s.handleCreateMemo)
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/register", s.handleRegister)
 	s.mux.HandleFunc("GET /search", s.handleSearch)
 	s.mux.HandleFunc("GET /backup.zip", s.handleBackup)
 	s.mux.HandleFunc("POST /graphql", s.handleGraphQL)
@@ -356,7 +374,16 @@ func (s *Server) handleCreateMemo(w http.ResponseWriter, r *http.Request) {
 		Title string `json:"title"`
 		Body  string `json:"body"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
+	// The control (hardened build): cap the request body (CWE-770). The vulnerable build reads an
+	// unbounded body, so a multi-megabyte request is accepted — what the body_limit probe confirms.
+	if s.hardened {
+		r.Body = http.MaxBytesReader(w, r.Body, maxWriteBody)
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		if s.hardened && strings.Contains(err.Error(), "request body too large") {
+			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
 		return
 	}
@@ -373,6 +400,20 @@ func (s *Server) handleCreateMemo(w http.ResponseWriter, r *http.Request) {
 // ($ne/$gt/$regex) matches any user/password — an operator-injection auth bypass that discloses
 // the flag. The hardened build requires scalar strings, closing it.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	// The control (hardened build): rate-limit authentication per client IP. The vulnerable build
+	// counts nothing, so a wrong-credential burst is never blocked (CWE-307, what throttle_probe finds).
+	if s.hardened {
+		ip := clientIP(r)
+		s.mu.Lock()
+		s.loginHits[ip]++
+		over := s.loginHits[ip] > maxLoginAttempts
+		s.mu.Unlock()
+		if over {
+			w.Header().Set("Retry-After", "60")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many attempts, slow down"})
+			return
+		}
+	}
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
 	var in map[string]any
 	if err := json.Unmarshal(body, &in); err != nil {
@@ -436,6 +477,54 @@ func matchVal(v any, actual string) bool {
 }
 
 func isOperator(v any) bool { _, ok := v.(map[string]any); return ok }
+
+// handleRegister is the PASSWORD-POLICY surface (CWE-521). The vulnerable build creates an
+// account with whatever password is sent; the hardened build rejects a password below the
+// strength floor. There is no planted flag — a weak password being accepted is the finding
+// (what the password_policy probe confirms).
+func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+		return
+	}
+	if in.Username == "" || in.Password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username and password required"})
+		return
+	}
+	if s.hardened && weakPassword(in.Password) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password too weak: use at least 8 characters and avoid common passwords"})
+		return
+	}
+	s.mu.Lock()
+	s.users[in.Username] = in.Password
+	s.mu.Unlock()
+	writeJSON(w, http.StatusCreated, map[string]any{"registered": true, "user": in.Username})
+}
+
+// weakPassword is the hardened build's strength check: too short, or a well-known common password.
+func weakPassword(p string) bool {
+	if len(p) < minPasswordLen {
+		return true
+	}
+	switch strings.ToLower(p) {
+	case "password", "12345678", "qwerty123", "iloveyou", "admin123":
+		return true
+	}
+	return false
+}
+
+// clientIP extracts the client's IP (no port) from the request, for per-client throttling.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
 
 // handleSearch is the reflected cross-site scripting surface (CWE-79). The vulnerable build writes
 // the q query parameter straight into the HTML response UNESCAPED, so a payload in q executes in the

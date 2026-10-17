@@ -23,6 +23,9 @@ var sentinelProof = []struct{ sentinel, cwe, kind string }{
 	{"BOLA-CONFIRMED", "CWE-639", "broken object-level authorization"},
 	{"NOSQLI-CONFIRMED", "CWE-943", "NoSQL injection (operator-injection auth bypass)"},
 	{"DOMXSS-CONFIRMED", "CWE-79", "DOM/reflected XSS (payload executed in the browser)"},
+	{"NOTHROTTLE-CONFIRMED", "CWE-307", "missing authentication rate-limiting / lockout"},
+	{"NOBODYLIMIT-CONFIRMED", "CWE-770", "no request body-size limit (unbounded body)"},
+	{"WEAKPW-CONFIRMED", "CWE-521", "weak password requirements (weak password accepted)"},
 }
 
 // campaignProofs builds core.Proofs from the campaign's child-run traces: every probe-tool
