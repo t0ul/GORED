@@ -99,6 +99,7 @@ type options struct {
 	skillInstruction string
 	goal             string
 	extraTools       []core.Tool
+	allowedTools     []string
 }
 
 // WithCheckpoint installs a human-in-the-loop checkpoint on the stage's Runner, so the
@@ -123,6 +124,14 @@ func WithGoal(s string) Option {
 // the orchestrator binds to this run's target and model. The stage's own tools are unchanged.
 func WithExtraTools(ts ...core.Tool) Option {
 	return func(o *options) { o.extraTools = append(o.extraTools, ts...) }
+}
+
+// WithAllowedTools phase-scopes this run's toolbox to exactly the named tools (after any
+// WithExtraTools), dropping every other tool — so a focused exploit run on an already-classified
+// endpoint carries only that class's attack tool(s) and a weak model cannot wander into a generic
+// request or a crawl. Empty leaves the full toolbox.
+func WithAllowedTools(names ...string) Option {
+	return func(o *options) { o.allowedTools = append(o.allowedTools, names...) }
 }
 
 // Run executes the named stage as a bench sweep against f.Base and returns the per-trial
@@ -193,6 +202,10 @@ func Run(ctx context.Context, f *bench.Flags, stageName string, opts ...Option) 
 			if len(o.extraTools) > 0 {
 				tb.Add(o.extraTools...) // run-scoped injected tools (e.g. the surface recorder)
 			}
+			// Phase-scope: drop every tool but this run's allowed set (a focused exploit run gets
+			// only its endpoint class's attack tools). Applied AFTER Add, so injected recon/recorder
+			// tools are trimmed too unless explicitly allowed.
+			tb.Restrict(o.allowedTools)
 			return &core.Runner{
 				Model: cl, Tools: tb, Skill: st.Skill, Target: rt.Target,
 				Board: core.NewUnscrubbedBlackboard(), Audit: audit, Bounds: f.Bounds(),

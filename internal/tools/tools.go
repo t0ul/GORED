@@ -68,6 +68,34 @@ func (b *Toolbox) Add(ts ...Tool) {
 // list into the model prompt).
 func (b *Toolbox) Names() []string { return b.order }
 
+// Restrict keeps only the named tools (preserving their order) and drops the rest. Empty names is a
+// no-op, so an unscoped run keeps the full toolbox. It is how a run is phase-scoped to one endpoint
+// class's tools, so a weak model has no off-task tool to reach for. A requested name that is not
+// present is simply ignored.
+func (b *Toolbox) Restrict(names []string) {
+	if len(names) == 0 {
+		return
+	}
+	keep := make(map[string]bool, len(names))
+	for _, n := range names {
+		keep[n] = true
+	}
+	var order []string
+	for _, n := range b.order {
+		if keep[n] {
+			order = append(order, n)
+		}
+	}
+	if len(order) == 0 {
+		return // no requested tool exists here: leave the toolbox intact rather than strand the model
+	}
+	kept := make(map[string]Tool, len(order))
+	for _, n := range order {
+		kept[n] = b.tools[n]
+	}
+	b.order, b.tools = order, kept
+}
+
 // Resolve looks up a tool tolerantly. Weak models sometimes echo a placeholder
 // like "http_request|exec" or "http_request (GET)"; Resolve first tries an exact
 // match, then returns the first registered tool named in the string. It reports the
